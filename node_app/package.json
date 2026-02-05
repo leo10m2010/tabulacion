@@ -1,0 +1,15 @@
+{
+  "name": "tabulacion-xlsx-populate",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Genera Tabulacion.xlsx preservando graficos con xlsx-populate",
+  "type": "module",
+  "scripts": {
+    "generate": "node index.js",
+    "api": "node server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "xlsx-populate": "^1.21.0"
+  }
+}

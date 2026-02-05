@@ -1,0 +1,47 @@
+{
+  "muestra": "289",
+  "item": "18",
+  "variable": "2",
+  "nommuestra": "Beneficiarios",
+  "escala": "3",
+  "nombre_escala": ["Bajo", "Medio", "Alto"],
+  "respuesta": "5",
+  "nombre_respuesta": [
+    "Totalmente en desacuerdo",
+    "En desacuerdo",
+    "Ni de acuerdo ni en desacuerdo",
+    "De acuerdo",
+    "Totalmente de acuerdo"
+  ],
+  "resitem": "Item",
+  "relacionversa": "0",
+  "desde": ["18", "42", "66"],
+  "hasta": ["41", "65", "90"],
+  "porcentaje": ["46", "35", "19"],
+  "cantidad": ["133", "101", "55"],
+  "itemv2": "9",
+  "nombre_escalav2": ["Bajo", "Medio", "Alto"],
+  "nombre_respuestav2": [
+    "Totalmente en desacuerdo",
+    "En desacuerdo",
+    "Ni de acuerdo ni en desacuerdo",
+    "De acuerdo",
+    "Totalmente de acuerdo"
+  ],
+  "porcentajevar": "0",
+  "nombre_dimension": [
+    "Gestion de abastecimiento",
+    "Satisfaccion de los comites del Programa Vaso de Leche"
+  ],
+  "numero_indicador0": ["3", "1"],
+  "nombre_indicador": [
+    "Planificacion",
+    "Transparencia",
+    "Cumplimiento normativo",
+    "Satisfaccion del servicio"
+  ],
+  "numero_pregunta0": ["6", "6", "6"],
+  "numero_pregunta1": ["9"],
+  "nombre_variable": ["Dimension 1"],
+  "numero_dimension": ["1"]
+}

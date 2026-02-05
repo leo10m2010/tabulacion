@@ -1,0 +1,8 @@
+node_app/node_modules/
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
+Tabulacion_generada.xlsx
+Tabulacion_base.csv
+~$*.xlsx

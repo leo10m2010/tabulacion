@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 220 33% 98%;
+  --foreground: 222 28% 14%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 28% 14%;
+  --primary: 221 78% 52%;
+  --primary-foreground: 0 0% 98%;
+  --muted: 220 24% 93%;
+  --muted-foreground: 220 11% 40%;
+  --accent: 212 78% 95%;
+  --accent-foreground: 222 40% 23%;
+  --danger: 2 76% 50%;
+  --danger-foreground: 0 0% 100%;
+  --border: 220 20% 84%;
+  --input: 220 20% 84%;
+  --ring: 221 78% 52%;
+}
+
+.dark {
+  --background: 222 28% 10%;
+  --foreground: 220 15% 92%;
+  --card: 222 26% 13%;
+  --card-foreground: 220 15% 92%;
+  --primary: 214 88% 62%;
+  --primary-foreground: 222 47% 14%;
+  --muted: 222 18% 20%;
+  --muted-foreground: 220 10% 72%;
+  --accent: 222 18% 24%;
+  --accent-foreground: 220 15% 90%;
+  --danger: 2 72% 58%;
+  --danger-foreground: 0 0% 100%;
+  --border: 222 16% 27%;
+  --input: 222 16% 27%;
+  --ring: 214 88% 62%;
+}
+
+* {
+  @apply border-border;
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+  font-family: "Inter", "Manrope", "Segoe UI", system-ui, sans-serif;
+  transition: background-color 220ms ease, color 220ms ease;
+}
