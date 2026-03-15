@@ -161,6 +161,37 @@ const writeSheetData = (sheet, headerRow, rows, rowLabels) => {
   });
 };
 
+const writeBaremoToSheet = (sheet, config, prefix = "") => {
+  const nombres = Array.isArray(config.nombre_escala) ? config.nombre_escala : [];
+  const desde = Array.isArray(config[`desde${prefix}`]) ? config[`desde${prefix}`] : [];
+  const hasta = Array.isArray(config[`hasta${prefix}`]) ? config[`hasta${prefix}`] : [];
+  const porcentaje = Array.isArray(config[`porcentaje${prefix}`]) ? config[`porcentaje${prefix}`] : [];
+  const cantidad = Array.isArray(config[`cantidad${prefix}`]) ? config[`cantidad${prefix}`] : [];
+
+  if (!nombres.length) return;
+
+  const used = sheet.usedRange();
+  if (!used) return;
+  const maxRow = used.endCell().rowNumber();
+  const maxCol = used.endCell().columnNumber();
+
+  nombres.forEach((nombre, idx) => {
+    if (!nombre) return;
+    const nombreNorm = String(nombre).trim().toLowerCase();
+    for (let r = 1; r <= maxRow; r += 1) {
+      for (let c = 1; c <= maxCol; c += 1) {
+        const v = sheet.cell(r, c).value();
+        if (typeof v === "string" && v.trim().toLowerCase() === nombreNorm) {
+          if (desde[idx] !== undefined) sheet.cell(r, c + 1).value(toInt(desde[idx], 0));
+          if (hasta[idx] !== undefined) sheet.cell(r, c + 2).value(toInt(hasta[idx], 0));
+          if (cantidad[idx] !== undefined) sheet.cell(r, c + 3).value(toInt(cantidad[idx], 0));
+          if (porcentaje[idx] !== undefined) sheet.cell(r, c + 4).value(toInt(porcentaje[idx], 0));
+        }
+      }
+    }
+  });
+};
+
 const updateRightOfLabel = (sheet, label, value) => {
   const used = sheet.usedRange();
   if (!used) return;
@@ -328,6 +359,9 @@ export const generateArtifacts = async (config, opts = {}) => {
     updateRightOfLabel(sheet, "Cantidad de Escalas Valorativas", toInt(config.escala, 3));
     updateRightOfLabel(sheet, "Valor M\u00ednimo por item", 1);
     updateRightOfLabel(sheet, "Valor M\u00e1ximo por item", toInt(config.respuesta, 5));
+
+    const baremoPrefix = idx === 0 ? "" : "_v2";
+    writeBaremoToSheet(sheet, config, baremoPrefix);
   });
 
   const conteoSheets = ["Por conteo Dimension", "Por conteo Dimension 2"];

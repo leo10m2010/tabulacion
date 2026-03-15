@@ -110,6 +110,10 @@ const FALLBACK_CONFIG: TabConfig = {
   hasta: ["41", "65", "90"],
   porcentaje: ["46", "35", "19"],
   cantidad: ["133", "101", "55"],
+  desde_v2: ["9", "21", "33"],
+  hasta_v2: ["20", "32", "45"],
+  porcentaje_v2: ["46", "35", "19"],
+  cantidad_v2: ["133", "101", "55"],
   nombre_dimension: ["Gestion de abastecimiento", "Satisfaccion del servicio"],
   numero_dimension: ["1", "2"],
   nombre_indicador: ["Planificacion", "Transparencia", "Cumplimiento normativo", "Satisfaccion del servicio"],
@@ -173,13 +177,25 @@ const LIST_GROUPS = [
     ],
   },
   {
-    title: "Rangos de puntajes (baremos)",
-    description: "Define el rango de puntajes para cada nivel. La cantidad de filas debe coincidir con los niveles.",
+    title: "Baremo de Variable 1",
+    description: "Rangos de puntajes para la primera variable. Filas = cantidad de niveles del baremo.",
+    variable: "v1" as const,
     fields: [
       { key: "desde", label: "Puntaje desde", placeholder: "Ej: 18" },
       { key: "hasta", label: "Puntaje hasta", placeholder: "Ej: 41" },
       { key: "porcentaje", label: "Porcentaje (%)", placeholder: "Ej: 46" },
       { key: "cantidad", label: "Cantidad de personas", placeholder: "Ej: 133" },
+    ],
+  },
+  {
+    title: "Baremo de Variable 2",
+    description: "Rangos de puntajes para la segunda variable. Filas = cantidad de niveles del baremo.",
+    variable: "v2" as const,
+    fields: [
+      { key: "desde_v2", label: "Puntaje desde", placeholder: "Ej: 9" },
+      { key: "hasta_v2", label: "Puntaje hasta", placeholder: "Ej: 20" },
+      { key: "porcentaje_v2", label: "Porcentaje (%)", placeholder: "Ej: 46" },
+      { key: "cantidad_v2", label: "Cantidad de personas", placeholder: "Ej: 133" },
     ],
   },
   {
@@ -287,6 +303,13 @@ function workbookToSheetRows(arrayBuffer: Uint8Array): { names: string[]; data: 
     });
   });
   return { names: workbook.SheetNames, data };
+}
+
+function calcBaremoRange(items: string, respuesta: string): string {
+  const n = parseInt(items, 10);
+  const r = parseInt(respuesta, 10);
+  if (!Number.isFinite(n) || !Number.isFinite(r) || n <= 0 || r <= 0) return "";
+  return `Rango sugerido: ${n} (mínimo) a ${n * r} (máximo)`;
 }
 
 function correlationInfo(r: number): { label: string; colorClass: string; explanation: string } {
@@ -1237,6 +1260,18 @@ export default function App() {
                       <CardHeader>
                         <CardTitle>{group.title}</CardTitle>
                         <CardDescription>{group.description}</CardDescription>
+                        {"variable" in group && group.variable === "v1" && (
+                          <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                            <HelpCircle className="h-3 w-3" />
+                            {calcBaremoRange(getScalar("item"), getScalar("respuesta")) || "Completa los ítems y escala en el paso 1"}
+                          </div>
+                        )}
+                        {"variable" in group && group.variable === "v2" && (
+                          <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                            <HelpCircle className="h-3 w-3" />
+                            {calcBaremoRange(getScalar("itemv2"), getScalar("respuesta")) || "Completa los ítems y escala en el paso 1"}
+                          </div>
+                        )}
                       </CardHeader>
                       <CardContent className="grid gap-3 md:grid-cols-2">
                         {group.fields.map((field) => (
