@@ -1,20 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowLeft,
   ArrowRight,
   Building2,
   ChartNoAxesCombined,
   Check,
+  ChevronRight,
   Clock3,
   Download,
   FileSpreadsheet,
+  HelpCircle,
   Loader2,
+  LogOut,
   Moon,
-  RefreshCw,
   Server,
   ShieldCheck,
   Sparkles,
   Sun,
   UserRound,
+  Users,
   Zap,
 } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -25,6 +29,7 @@ import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";
 import { cn } from "./lib/utils";
 
+// ─── Types ───────────────────────────────────────────────────────────────────
 type ConfigValue = string | string[] | number | boolean | null | undefined;
 type TabConfig = Record<string, ConfigValue>;
 type TableCell = string | number | boolean | null;
@@ -78,8 +83,10 @@ interface AuthUsersResponse {
 
 type ThemeMode = "light" | "dark";
 type AppView = "landing" | "app";
-type AppTabId = "config" | "excel" | "admin";
+type AppSection = "tabulacion" | "usuarios";
+type WizardStep = 1 | 2 | 3;
 
+// ─── Constants ───────────────────────────────────────────────────────────────
 const DEFAULT_API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
 
 const FALLBACK_CONFIG: TabConfig = {
@@ -111,68 +118,97 @@ const FALLBACK_CONFIG: TabConfig = {
   numero_pregunta1: ["9"],
 };
 
-const BASE_TABS = [
-  { id: "config", label: "Configuración" },
-  { id: "excel", label: "Tabulación Excel" },
-] as const;
-
-const ADMIN_TAB = { id: "admin", label: "Usuarios" } as const;
-
-const scalarFieldRows = [
-  [
-    { key: "nommuestra", label: "Nombre de muestra", hint: "Etiqueta que aparece en filas y tablas." },
-    { key: "muestra", label: "N° de muestra", hint: "Cantidad de registros (mínimo 2)." },
-    { key: "variable", label: "N° de variables", hint: "Solo referencia para tu instrumento." },
-  ],
-  [
-    { key: "item", label: "N° de items (V1)", hint: "Preguntas de la variable 1." },
-    { key: "itemv2", label: "N° de items (V2)", hint: "Preguntas de la variable 2." },
-    { key: "escala", label: "Cantidad de escalas", hint: "Niveles valorativos." },
-  ],
-  [
-    { key: "respuesta", label: "N° de respuestas", hint: "Valor máximo por item (ej: 5)." },
-  ],
-] as const;
-
-const listGroups = [
+const STEP_1_FIELDS = [
   {
-    title: "Escalas y respuestas",
-    description: "Catálogos de texto que se imprimen en las hojas de tabulación.",
+    key: "nommuestra",
+    label: "Nombre de la muestra",
+    hint: "¿Cómo se llaman las personas encuestadas? Ej: Beneficiarios, Estudiantes, Trabajadores.",
+    placeholder: "Ej: Beneficiarios",
+  },
+  {
+    key: "muestra",
+    label: "Cantidad de personas encuestadas",
+    hint: "Total de personas que respondieron la encuesta. Mínimo 2.",
+    placeholder: "Ej: 289",
+  },
+  {
+    key: "variable",
+    label: "Número de variables",
+    hint: "Cuántas variables tiene tu instrumento. Generalmente 2.",
+    placeholder: "Ej: 2",
+  },
+  {
+    key: "item",
+    label: "Preguntas de la Variable 1",
+    hint: "Cuántas preguntas (ítems) tiene la primera variable de tu encuesta.",
+    placeholder: "Ej: 18",
+  },
+  {
+    key: "itemv2",
+    label: "Preguntas de la Variable 2",
+    hint: "Cuántas preguntas (ítems) tiene la segunda variable de tu encuesta.",
+    placeholder: "Ej: 9",
+  },
+  {
+    key: "escala",
+    label: "Niveles del baremo",
+    hint: "Cuántos niveles tiene tu escala valorativa. Ej: 3 niveles = Bajo / Medio / Alto.",
+    placeholder: "Ej: 3",
+  },
+  {
+    key: "respuesta",
+    label: "Escala de respuesta (Likert)",
+    hint: "Cuántos valores tiene la escala de respuesta. Ej: 5 significa respuestas del 1 al 5.",
+    placeholder: "Ej: 5",
+  },
+] as const;
+
+const LIST_GROUPS = [
+  {
+    title: "Nombres de los niveles",
+    description: "Los nombres que aparecen en el baremo. La cantidad debe coincidir con los niveles definidos en el paso 1.",
     fields: [
-      { key: "nombre_escala", label: "Nombre escala", placeholder: "Ej: Bajo" },
-      { key: "nombre_respuesta", label: "Nombre respuesta", placeholder: "Ej: De acuerdo" },
+      { key: "nombre_escala", label: "Niveles del baremo", placeholder: "Ej: Bajo" },
+      { key: "nombre_respuesta", label: "Opciones de respuesta", placeholder: "Ej: De acuerdo" },
     ],
   },
   {
-    title: "Baremos",
-    description: "Rangos y distribución para interpretación.",
+    title: "Rangos de puntajes (baremos)",
+    description: "Define el rango de puntajes para cada nivel. La cantidad de filas debe coincidir con los niveles.",
     fields: [
-      { key: "desde", label: "Desde", placeholder: "Ej: 18" },
-      { key: "hasta", label: "Hasta", placeholder: "Ej: 41" },
-      { key: "porcentaje", label: "Porcentaje", placeholder: "Ej: 46" },
-      { key: "cantidad", label: "Cantidad", placeholder: "Ej: 133" },
+      { key: "desde", label: "Puntaje desde", placeholder: "Ej: 18" },
+      { key: "hasta", label: "Puntaje hasta", placeholder: "Ej: 41" },
+      { key: "porcentaje", label: "Porcentaje (%)", placeholder: "Ej: 46" },
+      { key: "cantidad", label: "Cantidad de personas", placeholder: "Ej: 133" },
     ],
   },
   {
     title: "Dimensiones e indicadores",
-    description: "Estructura conceptual de tu instrumento.",
+    description: "La estructura conceptual de tu instrumento de investigación.",
     fields: [
-      { key: "nombre_dimension", label: "Nombre dimensión", placeholder: "Ej: Gestión de abastecimiento" },
-      { key: "numero_dimension", label: "Número dimensión", placeholder: "Ej: 1" },
-      { key: "nombre_indicador", label: "Nombre indicador", placeholder: "Ej: Transparencia" },
-      { key: "numero_indicador0", label: "Número indicador", placeholder: "Ej: 3" },
+      { key: "nombre_dimension", label: "Nombre de cada dimensión", placeholder: "Ej: Gestión de abastecimiento" },
+      { key: "numero_dimension", label: "Número de dimensión", placeholder: "Ej: 1" },
+      { key: "nombre_indicador", label: "Nombre de cada indicador", placeholder: "Ej: Transparencia" },
+      { key: "numero_indicador0", label: "Indicadores por dimensión", placeholder: "Ej: 3" },
     ],
   },
   {
-    title: "Preguntas por variable",
-    description: "Cantidad de preguntas por bloque.",
+    title: "Preguntas por dimensión",
+    description: "Cuántas preguntas hay en cada bloque de cada variable.",
     fields: [
-      { key: "numero_pregunta0", label: "Preguntas V1", placeholder: "Ej: 6" },
-      { key: "numero_pregunta1", label: "Preguntas V2", placeholder: "Ej: 9" },
+      { key: "numero_pregunta0", label: "Preguntas de V1 por dimensión", placeholder: "Ej: 6" },
+      { key: "numero_pregunta1", label: "Preguntas de V2 por dimensión", placeholder: "Ej: 9" },
     ],
   },
 ];
 
+const WIZARD_STEPS = [
+  { step: 1 as const, label: "Tu encuesta", description: "Datos básicos de tu muestra" },
+  { step: 2 as const, label: "Escalas y estructura", description: "Baremos, dimensiones e indicadores" },
+  { step: 3 as const, label: "Generar", description: "Revisa y descarga tu Excel" },
+];
+
+// ─── Utilities ───────────────────────────────────────────────────────────────
 function toStringValue(value: ConfigValue): string {
   if (value === null || value === undefined) return "";
   if (Array.isArray(value)) return String(value[0] ?? "");
@@ -253,6 +289,30 @@ function workbookToSheetRows(arrayBuffer: Uint8Array): { names: string[]; data: 
   return { names: workbook.SheetNames, data };
 }
 
+function correlationInfo(r: number): { label: string; colorClass: string; explanation: string } {
+  const abs = Math.abs(r);
+  if (abs >= 0.8) return { label: "Muy alta", colorClass: "text-green-600 dark:text-green-400", explanation: "Relación muy fuerte entre las variables." };
+  if (abs >= 0.6) return { label: "Alta", colorClass: "text-green-500 dark:text-green-300", explanation: "Relación fuerte entre las variables." };
+  if (abs >= 0.4) return { label: "Moderada", colorClass: "text-yellow-600 dark:text-yellow-400", explanation: "Relación moderada entre las variables." };
+  if (abs >= 0.2) return { label: "Baja", colorClass: "text-orange-500", explanation: "Relación débil entre las variables." };
+  return { label: "Muy baja", colorClass: "text-red-500", explanation: "Relación muy débil o casi nula entre las variables." };
+}
+
+function resolveViewFromPath(): AppView {
+  return window.location.pathname.startsWith("/app") ? "app" : "landing";
+}
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+function FieldHint({ text }: { text: string }) {
+  return (
+    <p className="mt-1 flex items-start gap-1 text-xs text-muted-foreground">
+      <HelpCircle className="mt-0.5 h-3 w-3 shrink-0 opacity-60" />
+      {text}
+    </p>
+  );
+}
+
 function ListEditorField({
   label,
   placeholder,
@@ -277,15 +337,11 @@ function ListEditorField({
     onChange(normalizeList(next));
   };
 
-  const addItem = () => {
-    onChange([...safeValues, ""]);
-  };
-
   return (
     <div className="rounded-md border border-border/80 bg-background/70 p-3">
       <div className="mb-3 flex items-center justify-between">
         <h4 className="text-sm font-semibold text-foreground">{label}</h4>
-        <Button variant="ghost" size="sm" onClick={addItem}>
+        <Button variant="ghost" size="sm" onClick={() => onChange([...safeValues, ""])}>
           + Agregar
         </Button>
       </div>
@@ -311,10 +367,8 @@ function PreviewTable({ rows, maxRows = 12 }: { rows: TableRows; maxRows?: numbe
   if (!rows.length) {
     return <p className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Sin datos para mostrar.</p>;
   }
-
   const header = rows[0] ?? [];
   const body = rows.slice(1, maxRows + 1);
-
   return (
     <div className="overflow-auto rounded-md border border-border">
       <table className="w-full min-w-[640px] border-collapse text-sm">
@@ -343,10 +397,50 @@ function PreviewTable({ rows, maxRows = 12 }: { rows: TableRows; maxRows?: numbe
   );
 }
 
-function resolveViewFromPath(): AppView {
-  return window.location.pathname.startsWith("/app") ? "app" : "landing";
+function WizardProgress({ currentStep }: { currentStep: WizardStep }) {
+  return (
+    <div className="mb-8 flex items-start">
+      {WIZARD_STEPS.map((stepInfo, index) => {
+        const isCompleted = currentStep > stepInfo.step;
+        const isActive = currentStep === stepInfo.step;
+        return (
+          <div key={stepInfo.step} className="flex flex-1 items-start">
+            <div className="flex flex-col items-center">
+              <div
+                className={cn(
+                  "flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-bold transition-all",
+                  isCompleted
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : isActive
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-background text-muted-foreground",
+                )}
+              >
+                {isCompleted ? <Check className="h-4 w-4" /> : stepInfo.step}
+              </div>
+              <div className="mt-2 text-center">
+                <p className={cn("text-xs font-semibold", isActive ? "text-foreground" : "text-muted-foreground")}>
+                  {stepInfo.label}
+                </p>
+                <p className="hidden text-xs text-muted-foreground sm:block">{stepInfo.description}</p>
+              </div>
+            </div>
+            {index < WIZARD_STEPS.length - 1 && (
+              <div
+                className={cn(
+                  "mx-3 mt-4 h-0.5 flex-1 transition-all",
+                  currentStep > stepInfo.step ? "bg-primary" : "bg-border",
+                )}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
+// ─── Landing Page ─────────────────────────────────────────────────────────────
 function LandingPage({
   themeMode,
   onToggleTheme,
@@ -370,12 +464,7 @@ function LandingPage({
         priceMonthlyPen: "S/ 109",
         priceYearlyPen: "S/ 1,090",
         description: "Ideal para tesistas y asesores que trabajan de forma independiente.",
-        highlights: [
-          "1 usuario",
-          "Hasta 15 proyectos activos",
-          "Generación de Excel y CSV",
-          "Soporte por correo",
-        ],
+        highlights: ["1 usuario", "Hasta 15 proyectos activos", "Generación de Excel y CSV", "Soporte por correo"],
         cta: "Comenzar ahora",
       },
       {
@@ -388,41 +477,17 @@ function LandingPage({
         priceMonthlyPen: "S/ 485",
         priceYearlyPen: "S/ 4,850",
         description: "Pensado para equipos con múltiples tesis, control administrativo y trazabilidad.",
-        highlights: [
-          "Hasta 20 usuarios",
-          "Proyectos ilimitados",
-          "Panel administrador + roles",
-          "Soporte prioritario y onboarding",
-        ],
+        highlights: ["Hasta 20 usuarios", "Proyectos ilimitados", "Panel administrador + roles", "Soporte prioritario y onboarding"],
         cta: "Hablar con ventas",
       },
     ],
     [],
   );
 
-  const businessFeatures = [
-    "Gestión de usuarios por administrador",
-    "Asignación de suscripciones por tiempo",
-    "Control de uso por cuenta",
-    "Escalado para múltiples tesis por equipo",
-  ];
-
   const productFeatures = [
-    {
-      title: "Generación automatizada",
-      desc: "Convierte configuración en Excel de tabulación listo para informe en segundos.",
-      icon: Zap,
-    },
-    {
-      title: "Consistencia metodológica",
-      desc: "Mantén reglas, dimensiones e indicadores estandarizados entre tesis.",
-      icon: ShieldCheck,
-    },
-    {
-      title: "Operación escalable",
-      desc: "Maneja desde un tesista hasta equipos institucionales con múltiples proyectos.",
-      icon: ChartNoAxesCombined,
-    },
+    { title: "Generación automatizada", desc: "Convierte configuración en Excel de tabulación listo para informe en segundos.", icon: Zap },
+    { title: "Consistencia metodológica", desc: "Mantén reglas, dimensiones e indicadores estandarizados entre tesis.", icon: ShieldCheck },
+    { title: "Operación escalable", desc: "Maneja desde un tesista hasta equipos institucionales con múltiples proyectos.", icon: ChartNoAxesCombined },
   ];
 
   return (
@@ -451,8 +516,7 @@ function LandingPage({
             Plataforma de tabulación para tesis, con control por suscripción.
           </h1>
           <p className="mt-4 max-w-2xl text-sm text-muted-foreground md:text-base">
-            Centraliza la configuración metodológica, genera archivos Excel automáticamente y reduce el tiempo operativo para
-            cada nueva tesis. Lista para venderse como servicio a usuarios individuales o equipos institucionales.
+            Centraliza la configuración metodológica, genera archivos Excel automáticamente y reduce el tiempo operativo para cada nueva tesis.
           </p>
           <div className="mt-6 flex flex-wrap gap-2">
             <Button size="lg" onClick={onOpenApp}>
@@ -460,7 +524,7 @@ function LandingPage({
               <ArrowRight className="h-4 w-4" />
             </Button>
             <Button size="lg" variant="outline" onClick={onOpenApp}>
-              Ver demo comercial
+              Ver demo
             </Button>
           </div>
           <div className="mt-5 flex flex-wrap gap-2 text-xs">
@@ -481,22 +545,12 @@ function LandingPage({
         <div className="rounded-2xl border border-slate-400/20 bg-[linear-gradient(145deg,#f7fafc_0%,#edf2f7_100%)] p-5 dark:border-slate-200/20 dark:bg-[linear-gradient(145deg,#1e293b_0%,#0f172a_100%)]">
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Qué puedes vender</h3>
           <ul className="space-y-2 text-sm">
-            <li className="flex items-start gap-2">
-              <Check className="mt-0.5 h-4 w-4 text-primary" />
-              Servicio mensual para tesistas.
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="mt-0.5 h-4 w-4 text-primary" />
-              Plan anual para consultoras y universidades.
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="mt-0.5 h-4 w-4 text-primary" />
-              Gestión de cuentas con fecha de vencimiento.
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="mt-0.5 h-4 w-4 text-primary" />
-              Generación rápida para múltiples tesis.
-            </li>
+            {["Servicio mensual para tesistas.", "Plan anual para consultoras y universidades.", "Gestión de cuentas con fecha de vencimiento.", "Generación rápida para múltiples tesis."].map((item) => (
+              <li key={item} className="flex items-start gap-2">
+                <Check className="mt-0.5 h-4 w-4 text-primary" />
+                {item}
+              </li>
+            ))}
           </ul>
         </div>
       </section>
@@ -524,24 +578,18 @@ function LandingPage({
                 <CardDescription>Dos modelos comerciales para distintos tipos de cliente.</CardDescription>
               </div>
               <div className="inline-flex rounded-lg border border-border bg-background/90 p-1">
-                <button
-                  className={cn(
-                    "rounded px-3 py-1 text-sm font-medium",
-                    billingMode === "monthly" ? "bg-primary text-primary-foreground" : "text-muted-foreground",
-                  )}
-                  onClick={() => setBillingMode("monthly")}
-                >
-                  Mensual
-                </button>
-                <button
-                  className={cn(
-                    "rounded px-3 py-1 text-sm font-medium",
-                    billingMode === "yearly" ? "bg-primary text-primary-foreground" : "text-muted-foreground",
-                  )}
-                  onClick={() => setBillingMode("yearly")}
-                >
-                  Anual
-                </button>
+                {(["monthly", "yearly"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    className={cn(
+                      "rounded px-3 py-1 text-sm font-medium",
+                      billingMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground",
+                    )}
+                    onClick={() => setBillingMode(mode)}
+                  >
+                    {mode === "monthly" ? "Mensual" : "Anual"}
+                  </button>
+                ))}
               </div>
             </div>
           </CardHeader>
@@ -557,9 +605,7 @@ function LandingPage({
                 <div className="mt-4">
                   <p className="text-3xl font-bold">
                     {billingMode === "monthly" ? plan.priceMonthlyUsd : plan.priceYearlyUsd}
-                    <span className="ml-1 text-base font-medium text-muted-foreground">
-                      / {billingMode === "monthly" ? "mes" : "año"}
-                    </span>
+                    <span className="ml-1 text-base font-medium text-muted-foreground">/ {billingMode === "monthly" ? "mes" : "año"}</span>
                   </p>
                   <p className="mt-1 text-sm font-medium text-muted-foreground">
                     {billingMode === "monthly" ? plan.priceMonthlyPen : plan.priceYearlyPen}
@@ -583,51 +629,11 @@ function LandingPage({
         </Card>
       </section>
 
-      <section className="mb-8 grid gap-4 md:grid-cols-2">
-        <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-          <CardHeader>
-            <CardTitle>Usuarios normales</CardTitle>
-            <CardDescription>Para quien necesita resolver tesis con rapidez y consistencia.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <p className="flex items-start gap-2">
-              <Check className="mt-0.5 h-4 w-4 text-primary" />
-              Configuración guiada por formulario.
-            </p>
-            <p className="flex items-start gap-2">
-              <Check className="mt-0.5 h-4 w-4 text-primary" />
-              Generación inmediata de `JSON`, `CSV` y `XLSX`.
-            </p>
-            <p className="flex items-start gap-2">
-              <Check className="mt-0.5 h-4 w-4 text-primary" />
-              Vista previa de hojas antes de descargar.
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-          <CardHeader>
-            <CardTitle>Empresas / instituciones</CardTitle>
-            <CardDescription>Orientado a operación continua con control de acceso.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            {businessFeatures.map((item) => (
-              <p key={item} className="flex items-start gap-2">
-                <Check className="mt-0.5 h-4 w-4 text-primary" />
-                {item}
-              </p>
-            ))}
-          </CardContent>
-        </Card>
-      </section>
-
       <footer className="rounded-[28px] border border-border/70 bg-card/95 p-6 shadow-[0_16px_48px_rgba(15,23,42,0.08)]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">¿Listo para venderlo como servicio?</h3>
-            <p className="text-sm text-muted-foreground">
-              Puedes arrancar con esta versión y luego activar login, roles y suscripciones por fecha.
-            </p>
+            <p className="text-sm text-muted-foreground">Arranca con esta versión y activa login, roles y suscripciones por fecha.</p>
           </div>
           <Button size="lg" onClick={onOpenApp}>
             Entrar al sistema
@@ -639,27 +645,27 @@ function LandingPage({
   );
 }
 
+// ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [appView, setAppView] = useState<AppView>(() => resolveViewFromPath());
-  const [activeTab, setActiveTab] = useState<AppTabId>("config");
+  const [activeSection, setActiveSection] = useState<AppSection>("tabulacion");
+  const [wizardStep, setWizardStep] = useState<WizardStep>(1);
+  const [showAdvancedJson, setShowAdvancedJson] = useState(false);
+  const [selectedSheet, setSelectedSheet] = useState<string>("");
+
   const [config, setConfig] = useState<TabConfig>(FALLBACK_CONFIG);
   const [jsonDraft, setJsonDraft] = useState<string>(JSON.stringify(FALLBACK_CONFIG, null, 2));
   const [apiBaseUrl, setApiBaseUrl] = useState<string>(() => localStorage.getItem("apiBaseUrl") || DEFAULT_API_BASE_URL);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    const savedTheme = localStorage.getItem("themeMode");
-    if (savedTheme === "light" || savedTheme === "dark") {
-      return savedTheme;
-    }
-    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      return "dark";
-    }
-    return "light";
+    const saved = localStorage.getItem("themeMode");
+    if (saved === "light" || saved === "dark") return saved;
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
+
   const [statusMessage, setStatusMessage] = useState<string>("Listo para generar.");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<GeneratedResult | null>(null);
-  const [selectedSheet, setSelectedSheet] = useState<string>("");
   const [downloadLinks, setDownloadLinks] = useState<DownloadLinks | null>(null);
 
   const [authToken, setAuthToken] = useState<string>(() => localStorage.getItem("authToken") ?? "");
@@ -681,102 +687,59 @@ export default function App() {
 
   const isAdmin = authUser?.role === "admin";
 
-  const visibleTabs = useMemo(() => {
-    if (isAdmin) return [...BASE_TABS, ADMIN_TAB];
-    return [];
-  }, [isAdmin]);
-
+  // ── Effects ────────────────────────────────────────────────────────────────
   useEffect(() => {
     let isMounted = true;
     fetch("/default-config.json")
       .then(async (res) => {
-        if (!res.ok) throw new Error("No se pudo cargar configuración inicial.");
+        if (!res.ok) throw new Error();
         const data = (await res.json()) as TabConfig;
         if (!isMounted || !data || Array.isArray(data)) return;
         setConfig(data);
       })
-      .catch(() => {
-        // fallback local
-      });
-    return () => {
-      isMounted = false;
-    };
+      .catch(() => {});
+    return () => { isMounted = false; };
   }, []);
 
+  useEffect(() => { setJsonDraft(JSON.stringify(config, null, 2)); }, [config]);
+  useEffect(() => { localStorage.setItem("apiBaseUrl", apiBaseUrl); }, [apiBaseUrl]);
   useEffect(() => {
-    setJsonDraft(JSON.stringify(config, null, 2));
-  }, [config]);
-
-  useEffect(() => {
-    localStorage.setItem("apiBaseUrl", apiBaseUrl);
-  }, [apiBaseUrl]);
-
-  useEffect(() => {
-    if (authToken) {
-      localStorage.setItem("authToken", authToken);
-    } else {
-      localStorage.removeItem("authToken");
-    }
+    if (authToken) localStorage.setItem("authToken", authToken);
+    else localStorage.removeItem("authToken");
   }, [authToken]);
-
   useEffect(() => {
-    const onPopState = () => setAppView(resolveViewFromPath());
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    const onPop = () => setAppView(resolveViewFromPath());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, []);
-
   useEffect(() => {
     localStorage.setItem("themeMode", themeMode);
     document.documentElement.classList.toggle("dark", themeMode === "dark");
   }, [themeMode]);
-
   useEffect(() => () => revokeDownloadLinks(downloadLinks), [downloadLinks]);
 
   useEffect(() => {
-    if (!authToken) {
-      setAuthLoading(false);
-      setAuthUser(null);
-      return;
-    }
+    if (!authToken) { setAuthLoading(false); setAuthUser(null); return; }
     let isMounted = true;
     setAuthLoading(true);
     setAuthError(null);
-
-    fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/me`, {
-      headers: {
-        Authorization: `Bearer ${authToken}`,
-      },
-    })
+    fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/me`, { headers: { Authorization: `Bearer ${authToken}` } })
       .then(async (res) => {
         const payload = (await res.json()) as { user?: AuthUser; error?: string };
-        if (!res.ok || !payload.user) {
-          throw new Error(payload.error ?? `Error HTTP ${res.status}`);
-        }
+        if (!res.ok || !payload.user) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
         if (!isMounted) return;
         setAuthUser(payload.user);
       })
-      .catch((error) => {
+      .catch((err) => {
         if (!isMounted) return;
-        setAuthToken("");
-        setAuthUser(null);
-        setAuthError(error instanceof Error ? error.message : "No se pudo validar la sesión.");
+        setAuthToken(""); setAuthUser(null);
+        setAuthError(err instanceof Error ? err.message : "No se pudo validar la sesión.");
       })
-      .finally(() => {
-        if (!isMounted) return;
-        setAuthLoading(false);
-      });
-
-    return () => {
-      isMounted = false;
-    };
+      .finally(() => { if (isMounted) setAuthLoading(false); });
+    return () => { isMounted = false; };
   }, [apiBaseUrl, authToken]);
 
-  useEffect(() => {
-    if (activeTab === "admin" && authUser?.role !== "admin") {
-      setActiveTab("config");
-    }
-  }, [activeTab, authUser]);
-
+  // ── Validation ─────────────────────────────────────────────────────────────
   const validationMessages = useMemo(() => {
     const issues: string[] = [];
     const muestra = parseIntSafe(config.muestra);
@@ -784,38 +747,27 @@ export default function App() {
     const itemv2 = parseIntSafe(config.itemv2);
     const escala = parseIntSafe(config.escala);
     const respuesta = parseIntSafe(config.respuesta);
-
-    if (muestra === null || muestra < 2) issues.push("N° de muestra debe ser mayor o igual a 2.");
-    if (item === null || item <= 0) issues.push("N° de items (V1) debe ser mayor a 0.");
-    if (itemv2 === null || itemv2 <= 0) issues.push("N° de items (V2) debe ser mayor a 0.");
-    if (escala === null || escala <= 0) issues.push("Cantidad de escalas debe ser mayor a 0.");
-    if (respuesta === null || respuesta <= 0) issues.push("N° de respuestas debe ser mayor a 0.");
-
-    const dimensions = toStringList(config.nombre_dimension).filter((itemValue) => itemValue.trim() !== "");
+    if (muestra === null || muestra < 2) issues.push("La cantidad de personas debe ser 2 o más.");
+    if (item === null || item <= 0) issues.push("Las preguntas de V1 deben ser mayor a 0.");
+    if (itemv2 === null || itemv2 <= 0) issues.push("Las preguntas de V2 deben ser mayor a 0.");
+    if (escala === null || escala <= 0) issues.push("Los niveles del baremo deben ser mayor a 0.");
+    if (respuesta === null || respuesta <= 0) issues.push("La escala de respuesta debe ser mayor a 0.");
+    const dimensions = toStringList(config.nombre_dimension).filter((v) => v.trim() !== "");
     if (!dimensions.length) issues.push("Debe existir al menos una dimensión.");
-
-    const indicatorNames = toStringList(config.nombre_indicador).filter((itemValue) => itemValue.trim() !== "");
+    const indicatorNames = toStringList(config.nombre_indicador).filter((v) => v.trim() !== "");
     const indicatorCounts = toStringList(config.numero_indicador0)
-      .map((value) => Number.parseInt(value.trim(), 10))
-      .filter((value) => Number.isFinite(value) && value >= 0);
+      .map((v) => Number.parseInt(v.trim(), 10))
+      .filter((v) => Number.isFinite(v) && v >= 0);
     if (indicatorCounts.length > 0 && indicatorNames.length > 0) {
-      const total = indicatorCounts.reduce((sum, value) => sum + value, 0);
-      if (total !== indicatorNames.length) {
-        issues.push("La suma de número indicador no coincide con los nombres de indicador.");
-      }
+      const total = indicatorCounts.reduce((sum, v) => sum + v, 0);
+      if (total !== indicatorNames.length) issues.push("La suma de indicadores por dimensión no coincide con el total de indicadores.");
     }
-
     return issues;
   }, [config]);
 
-  const setScalar = (key: string, value: string) => {
-    setConfig((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const setList = (key: string, values: string[]) => {
-    setConfig((prev) => ({ ...prev, [key]: normalizeList(values) }));
-  };
-
+  // ── Handlers ───────────────────────────────────────────────────────────────
+  const setScalar = (key: string, value: string) => setConfig((prev) => ({ ...prev, [key]: value }));
+  const setList = (key: string, values: string[]) => setConfig((prev) => ({ ...prev, [key]: normalizeList(values) }));
   const getScalar = (key: string) => toStringValue(config[key]);
   const getList = (key: string) => toStringList(config[key]);
 
@@ -823,13 +775,11 @@ export default function App() {
     setErrorMessage(null);
     try {
       const parsed = JSON.parse(jsonDraft) as TabConfig;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("El JSON debe ser un objeto.");
-      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("El JSON debe ser un objeto.");
       setConfig(parsed);
       setStatusMessage("JSON aplicado correctamente.");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "No se pudo aplicar el JSON.");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "No se pudo aplicar el JSON.");
     }
   };
 
@@ -838,19 +788,13 @@ export default function App() {
     setIsUsersLoading(true);
     setUsersErrorMessage(null);
     try {
-      const response = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users`, {
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
-      });
-      const payload = (await response.json()) as AuthUsersResponse;
-      if (!response.ok || !Array.isArray(payload.users)) {
-        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
-      }
+      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users`, { headers: { Authorization: `Bearer ${authToken}` } });
+      const payload = (await res.json()) as AuthUsersResponse;
+      if (!res.ok || !Array.isArray(payload.users)) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
       setManagedUsers(payload.users);
-      setUsersStatusMessage(`Usuarios sincronizados: ${payload.users.length}.`);
-    } catch (error) {
-      setUsersErrorMessage(error instanceof Error ? error.message : "No se pudo obtener usuarios.");
+      setUsersStatusMessage(`${payload.users.length} usuario(s) cargados.`);
+    } catch (err) {
+      setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo obtener usuarios.");
     } finally {
       setIsUsersLoading(false);
     }
@@ -859,50 +803,33 @@ export default function App() {
   const handleLogin = async () => {
     setAuthError(null);
     const email = loginEmail.trim();
-    if (!email || !loginPassword) {
-      setAuthError("Completa email y contraseña.");
-      return;
-    }
+    if (!email || !loginPassword) { setAuthError("Completa email y contraseña."); return; }
     setAuthLoading(true);
     try {
-      const response = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/login`, {
+      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/login`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email,
-          password: loginPassword,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: loginPassword }),
       });
-      const payload = (await response.json()) as AuthLoginResponse;
-      if (!response.ok || !payload.token || !payload.user) {
-        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
-      }
+      const payload = (await res.json()) as AuthLoginResponse;
+      if (!res.ok || !payload.token || !payload.user) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
       setAuthToken(payload.token);
       setAuthUser(payload.user);
       setLoginPassword("");
       localStorage.setItem("loginEmail", email);
       setStatusMessage("Sesión iniciada.");
-      if (payload.user.role === "admin") {
-        setActiveTab("admin");
-      }
-    } catch (error) {
-      setAuthToken("");
-      setAuthUser(null);
-      setAuthError(error instanceof Error ? error.message : "No se pudo iniciar sesión.");
+    } catch (err) {
+      setAuthToken(""); setAuthUser(null);
+      setAuthError(err instanceof Error ? err.message : "No se pudo iniciar sesión.");
     } finally {
       setAuthLoading(false);
     }
   };
 
   const handleLogout = () => {
-    setAuthToken("");
-    setAuthUser(null);
-    setManagedUsers([]);
-    setAuthError(null);
-    setUsersErrorMessage(null);
-    setActiveTab("config");
+    setAuthToken(""); setAuthUser(null); setManagedUsers([]);
+    setAuthError(null); setUsersErrorMessage(null);
+    setActiveSection("tabulacion"); setWizardStep(1);
     setStatusMessage("Sesión cerrada.");
   };
 
@@ -910,44 +837,23 @@ export default function App() {
     setUsersErrorMessage(null);
     if (!authToken) return;
     const email = newUserEmail.trim();
-    if (!email || !newUserPassword) {
-      setUsersErrorMessage("Email y contraseña son obligatorios.");
-      return;
-    }
+    if (!email || !newUserPassword) { setUsersErrorMessage("Email y contraseña son obligatorios."); return; }
     const subscriptionDays = Number.parseInt(newUserDays, 10);
-    if (!Number.isFinite(subscriptionDays) || subscriptionDays <= 0) {
-      setUsersErrorMessage("Los días de suscripción deben ser mayores a 0.");
-      return;
-    }
+    if (!Number.isFinite(subscriptionDays) || subscriptionDays <= 0) { setUsersErrorMessage("Los días de suscripción deben ser mayores a 0."); return; }
     setIsUsersLoading(true);
     try {
-      const response = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users`, {
+      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({
-          email,
-          password: newUserPassword,
-          role: newUserRole,
-          plan: newUserPlan,
-          subscriptionDays,
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify({ email, password: newUserPassword, role: newUserRole, plan: newUserPlan, subscriptionDays }),
       });
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
-      }
-      setNewUserEmail("");
-      setNewUserPassword("");
-      setNewUserRole("user");
-      setNewUserPlan("pro");
-      setNewUserDays("30");
+      const payload = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
+      setNewUserEmail(""); setNewUserPassword(""); setNewUserRole("user"); setNewUserPlan("pro"); setNewUserDays("30");
       setUsersStatusMessage("Usuario creado correctamente.");
       await loadUsers();
-    } catch (error) {
-      setUsersErrorMessage(error instanceof Error ? error.message : "No se pudo crear el usuario.");
+    } catch (err) {
+      setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo crear el usuario.");
     } finally {
       setIsUsersLoading(false);
     }
@@ -955,25 +861,19 @@ export default function App() {
 
   const patchManagedUser = async (userId: string, patch: Record<string, unknown>, successMessage: string) => {
     if (!authToken) return;
-    setIsUsersLoading(true);
-    setUsersErrorMessage(null);
+    setIsUsersLoading(true); setUsersErrorMessage(null);
     try {
-      const response = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users/${userId}`, {
+      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users/${userId}`, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
         body: JSON.stringify(patch),
       });
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
-      }
+      const payload = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
       setUsersStatusMessage(successMessage);
       await loadUsers();
-    } catch (error) {
-      setUsersErrorMessage(error instanceof Error ? error.message : "No se pudo actualizar el usuario.");
+    } catch (err) {
+      setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo actualizar el usuario.");
     } finally {
       setIsUsersLoading(false);
     }
@@ -981,23 +881,18 @@ export default function App() {
 
   const deleteManagedUser = async (userId: string) => {
     if (!authToken) return;
-    setIsUsersLoading(true);
-    setUsersErrorMessage(null);
+    setIsUsersLoading(true); setUsersErrorMessage(null);
     try {
-      const response = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users/${userId}`, {
+      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users/${userId}`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
+        headers: { Authorization: `Bearer ${authToken}` },
       });
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
-      }
+      const payload = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
       setUsersStatusMessage("Usuario eliminado.");
       await loadUsers();
-    } catch (error) {
-      setUsersErrorMessage(error instanceof Error ? error.message : "No se pudo eliminar el usuario.");
+    } catch (err) {
+      setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo eliminar el usuario.");
     } finally {
       setIsUsersLoading(false);
     }
@@ -1005,548 +900,616 @@ export default function App() {
 
   const handleGenerate = async () => {
     setErrorMessage(null);
-    if (!authToken || !authUser) {
-      setErrorMessage("Debes iniciar sesión para generar tabulación.");
-      return;
-    }
-    if (authUser.role !== "admin") {
-      setErrorMessage("Solo el administrador puede configurar, generar y descargar tabulación.");
-      return;
-    }
-    if (validationMessages.length > 0) {
-      setErrorMessage("Corrige las validaciones antes de generar.");
-      return;
-    }
-
+    if (!authToken || !authUser) { setErrorMessage("Debes iniciar sesión para generar tabulación."); return; }
+    if (authUser.role !== "admin") { setErrorMessage("Solo el administrador puede generar tabulación."); return; }
+    if (validationMessages.length > 0) { setErrorMessage("Corrige las validaciones antes de generar."); return; }
     setIsGenerating(true);
     setStatusMessage("Enviando configuración a la API...");
-
     try {
-      const response = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/generate`, {
+      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/generate`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({
-          config,
-          responseMode: "inline",
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify({ config, responseMode: "inline" }),
       });
-
-      const payload = (await response.json()) as InlineGenerateResponse;
-      if (!response.ok) {
-        throw new Error(payload.error ?? `Error HTTP ${response.status}`);
-      }
-
+      const payload = (await res.json()) as InlineGenerateResponse;
+      if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
       if (typeof payload.correlation !== "number" || !payload.baseCsv || !payload.excelBase64) {
         throw new Error("La API respondió sin los artefactos esperados.");
       }
-
-      setStatusMessage("Procesando resultados de tabulación...");
+      setStatusMessage("Procesando resultados...");
       const excelBytes = base64ToUint8Array(payload.excelBase64);
       const csvRows = csvToRows(payload.baseCsv);
       const parsedWorkbook = workbookToSheetRows(excelBytes);
-
       const nextLinks: DownloadLinks = {
-        json: URL.createObjectURL(
-          new Blob([JSON.stringify(config, null, 2)], { type: "application/json;charset=utf-8" }),
-        ),
+        json: URL.createObjectURL(new Blob([JSON.stringify(config, null, 2)], { type: "application/json;charset=utf-8" })),
         csv: URL.createObjectURL(new Blob([payload.baseCsv], { type: "text/csv;charset=utf-8" })),
-        xlsx: URL.createObjectURL(
-          new Blob([excelBytes], {
-            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          }),
-        ),
+        xlsx: URL.createObjectURL(new Blob([excelBytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })),
       };
-
-      setDownloadLinks((current) => {
-        revokeDownloadLinks(current);
-        return nextLinks;
-      });
-
-      setResult({
-        correlation: payload.correlation,
-        csvRows,
-        sheetNames: parsedWorkbook.names,
-        sheetData: parsedWorkbook.data,
-        generatedAt: new Date().toISOString(),
-      });
+      setDownloadLinks((cur) => { revokeDownloadLinks(cur); return nextLinks; });
+      setResult({ correlation: payload.correlation, csvRows, sheetNames: parsedWorkbook.names, sheetData: parsedWorkbook.data, generatedAt: new Date().toISOString() });
       setSelectedSheet(parsedWorkbook.names[0] ?? "");
-      setActiveTab("excel");
       setStatusMessage("Tabulación generada correctamente.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo generar la tabulación.";
-      setErrorMessage(message);
-      if (message.toLowerCase().includes("token")) {
-        setAuthToken("");
-        setAuthUser(null);
-      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "No se pudo generar la tabulación.";
+      setErrorMessage(msg);
+      if (msg.toLowerCase().includes("token")) { setAuthToken(""); setAuthUser(null); }
       setStatusMessage("Ocurrió un error.");
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const toggleTheme = () => {
-    setThemeMode((current) => (current === "dark" ? "light" : "dark"));
-  };
+  const toggleTheme = () => setThemeMode((cur) => (cur === "dark" ? "light" : "dark"));
+  const goToApp = () => { window.history.pushState({}, "", "/app"); setAppView("app"); };
+  const goToLanding = () => { window.history.pushState({}, "", "/"); setAppView("landing"); };
 
-  const goToApp = () => {
-    if (window.location.pathname !== "/app") {
-      window.history.pushState({}, "", "/app");
-    }
-    setAppView("app");
-  };
-
-  const goToLanding = () => {
-    if (window.location.pathname !== "/") {
-      window.history.pushState({}, "", "/");
-    }
-    setAppView("landing");
-  };
-
-  return (
-    <div
-      className={cn(
-        "min-h-screen pb-14 transition-colors",
-        themeMode === "dark"
-          ? "bg-[radial-gradient(circle_at_top,#1b2534_0%,#121825_45%,#0b0f16_100%)]"
-          : "bg-[radial-gradient(circle_at_top,#e4ecf8_0%,#f6f8fc_45%,#f3f5f9_100%)]",
-      )}
-    >
-      {appView === "landing" ? (
+  // ── Render: Landing ────────────────────────────────────────────────────────
+  if (appView === "landing") {
+    return (
+      <div className={cn("min-h-screen pb-14 transition-colors", themeMode === "dark" ? "bg-[radial-gradient(circle_at_top,#1b2534_0%,#121825_45%,#0b0f16_100%)]" : "bg-[radial-gradient(circle_at_top,#e4ecf8_0%,#f6f8fc_45%,#f3f5f9_100%)]")}>
         <LandingPage themeMode={themeMode} onToggleTheme={toggleTheme} onOpenApp={goToApp} />
-      ) : (
-        <div className="container pt-8">
-          {authUser ? (
-            <header className="mb-6 overflow-hidden rounded-[28px] border border-border/70 bg-[linear-gradient(145deg,#f5f7fb_0%,#e8eef7_100%)] p-6 shadow-[0_20px_70px_rgba(15,23,42,0.12)] dark:bg-[linear-gradient(145deg,#1b2534_0%,#111827_100%)]">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-slate-500/20 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-800 dark:border-slate-200/20 dark:bg-slate-100/10 dark:text-slate-100">
-                    <Sparkles className="h-4 w-4" />
-                    Frontend Netlify + API Node
-                  </div>
-                  <h1 className="text-2xl font-bold tracking-tight text-foreground">Sistema de Tabulación</h1>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Configura, genera y descarga tabulación con vista previa de hojas Excel.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="muted" className="h-fit border border-slate-500/20 bg-white/80 text-slate-800 dark:border-slate-200/20 dark:bg-slate-100/10 dark:text-slate-100">
-                    <Server className="mr-1 h-3.5 w-3.5" />
-                    API: {apiBaseUrl}
-                  </Badge>
-                  <Badge variant="muted" className="h-fit border border-slate-500/20 bg-white/80 text-slate-800 dark:border-slate-200/20 dark:bg-slate-100/10 dark:text-slate-100">
-                    <UserRound className="mr-1 h-3.5 w-3.5" />
-                    {authUser.email} ({authUser.role})
-                  </Badge>
-                  <Button variant="outline" size="sm" onClick={goToLanding}>
-                    Inicio
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={toggleTheme}>
-                    {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                    {themeMode === "dark" ? "Modo claro" : "Modo oscuro"}
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleLogout}>
-                    Cerrar sesión
-                  </Button>
-                </div>
-              </div>
-              <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
-                <Input value={apiBaseUrl} onChange={(event) => setApiBaseUrl(event.target.value)} placeholder="https://tu-api.com" />
-                <Button variant="outline" onClick={() => window.location.reload()}>
-                  <RefreshCw className="h-4 w-4" />
-                  Recargar app
-                </Button>
-              </div>
-            </header>
-          ) : null}
+      </div>
+    );
+  }
 
-          {!authUser ? (
-            <div className="flex min-h-[78vh] items-center justify-center">
-              <section className="w-full max-w-5xl overflow-hidden rounded-[28px] border border-border/70 bg-card/95 shadow-[0_20px_70px_rgba(15,23,42,0.15)]">
-                <div className="grid md:grid-cols-[1.1fr_1fr]">
-                <div className="relative border-b border-border/60 bg-[linear-gradient(145deg,#f5f7fb_0%,#e8eef7_100%)] p-8 text-slate-900 md:border-b-0 md:border-r dark:bg-[linear-gradient(145deg,#1b2534_0%,#111827_100%)] dark:text-slate-100">
-                  <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-sky-500/10 blur-2xl dark:bg-sky-300/10" />
-                  <div className="absolute -bottom-16 -left-12 h-44 w-44 rounded-full bg-amber-500/10 blur-2xl dark:bg-amber-300/10" />
-                  <div className="relative">
-                    <Badge className="border border-slate-500/20 bg-white/80 text-slate-800 hover:bg-white dark:border-slate-200/20 dark:bg-slate-100/10 dark:text-slate-100 dark:hover:bg-slate-100/15">
-                      <ShieldCheck className="mr-1 h-3.5 w-3.5" />
-                      Acceso administrativo
-                    </Badge>
-                    <h2 className="mt-4 text-3xl font-bold leading-tight">Panel privado del sistema de tabulación</h2>
-                    <p className="mt-3 max-w-md text-sm text-slate-700 dark:text-slate-300">
-                      Esta sección permite administrar usuarios, suscripciones y el proceso completo de generación.
-                    </p>
-                    <div className="mt-6 space-y-3">
-                      <div className="rounded-xl border border-slate-400/20 bg-white/70 p-3 text-sm dark:border-slate-200/15 dark:bg-slate-100/10">
-                        Solo rol <strong>admin</strong> puede configurar, generar y descargar archivos.
-                      </div>
-                      <div className="rounded-xl border border-slate-400/20 bg-white/70 p-3 text-sm dark:border-slate-200/15 dark:bg-slate-100/10">
-                        Si tu cuenta no tiene permisos, solicita elevación al administrador principal.
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-8">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-2xl font-semibold tracking-tight">Iniciar sesión</h3>
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant="outline" size="sm" onClick={toggleTheme}>
-                        {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                        {themeMode === "dark" ? "Claro" : "Oscuro"}
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="mt-1 text-sm text-muted-foreground">Ingresa con tu cuenta autorizada para continuar.</p>
-
-                  <div className="mt-6 space-y-4">
-                    {authError ? (
-                      <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{authError}</div>
-                    ) : null}
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium">Email</span>
-                      <Input
-                        value={loginEmail}
-                        onChange={(event) => setLoginEmail(event.target.value)}
-                        placeholder="admin@tu-dominio.com"
-                        autoComplete="email"
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium">Contraseña</span>
-                      <Input
-                        type="password"
-                        value={loginPassword}
-                        onChange={(event) => setLoginPassword(event.target.value)}
-                        placeholder="********"
-                        autoComplete="current-password"
-                      />
-                    </label>
-                    <Button className="h-11 w-full" onClick={handleLogin} disabled={authLoading}>
-                      {authLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                      Entrar al panel
-                    </Button>
-                    <div className="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                      Demo local: <strong>admin@tabulacion.local</strong> / <strong>Admin12345!</strong>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              </section>
+  // ── Render: Login ──────────────────────────────────────────────────────────
+  if (!authUser && !authLoading) {
+    return (
+      <div className={cn("flex min-h-screen items-center justify-center p-4 transition-colors", themeMode === "dark" ? "bg-[radial-gradient(circle_at_top,#1b2534_0%,#0b0f16_100%)]" : "bg-[radial-gradient(circle_at_top,#e4ecf8_0%,#f3f5f9_100%)]")}>
+        <div className="w-full max-w-sm">
+          <div className="mb-6 text-center">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <FileSpreadsheet className="h-6 w-6" />
             </div>
-          ) : null}
+            <h1 className="text-2xl font-bold tracking-tight">Sistema de Tabulación</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Ingresa con tu cuenta para continuar</p>
+          </div>
+          <Card className="rounded-2xl border-border/70 shadow-[0_20px_70px_rgba(15,23,42,0.15)]">
+            <CardContent className="space-y-4 pt-6">
+              {authError && (
+                <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{authError}</div>
+              )}
+              <label className="block space-y-1.5">
+                <span className="text-sm font-medium">Correo electrónico</span>
+                <Input
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="admin@tu-dominio.com"
+                  autoComplete="email"
+                  onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                />
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-sm font-medium">Contraseña</span>
+                <Input
+                  type="password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                />
+              </label>
+              <Button className="h-11 w-full" onClick={handleLogin} disabled={authLoading}>
+                {authLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Entrar
+              </Button>
+              <div className="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+                Demo: <strong>admin@tabulacion.local</strong> / <strong>Admin12345!</strong>
+              </div>
+              <div className="flex items-center justify-between">
+                <button onClick={goToLanding} className="text-xs text-muted-foreground hover:text-foreground">← Volver al inicio</button>
+                <button onClick={toggleTheme} className="text-xs text-muted-foreground hover:text-foreground">
+                  {themeMode === "dark" ? "☀️ Modo claro" : "🌙 Modo oscuro"}
+                </button>
+              </div>
+            </CardContent>
+          </Card>
+          <div className="mt-4 space-y-2">
+            <p className="text-center text-xs text-muted-foreground">URL de la API</p>
+            <Input value={apiBaseUrl} onChange={(e) => setApiBaseUrl(e.target.value)} placeholder="https://tu-api.com" className="text-xs" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-          {authUser ? (
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // ── Render: App (authenticated) ────────────────────────────────────────────
+  return (
+    <div className={cn("flex min-h-screen transition-colors", themeMode === "dark" ? "bg-[radial-gradient(circle_at_top,#1b2534_0%,#0b0f16_100%)]" : "bg-[radial-gradient(circle_at_top,#e4ecf8_0%,#f3f5f9_100%)]")}>
+
+      {/* ── Sidebar ── */}
+      <aside className="hidden w-56 shrink-0 flex-col border-r border-border/60 bg-card/80 backdrop-blur-sm md:flex">
+        {/* Logo */}
+        <div className="flex h-16 items-center gap-2 border-b border-border/60 px-4">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <FileSpreadsheet className="h-4 w-4" />
+          </div>
+          <span className="font-bold tracking-tight">Tabulación</span>
+        </div>
+
+        {/* Nav items */}
+        <nav className="flex-1 space-y-1 p-3">
+          <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Herramientas</p>
+          <button
+            onClick={() => { setActiveSection("tabulacion"); }}
+            className={cn(
+              "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
+              activeSection === "tabulacion"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
+          >
+            <FileSpreadsheet className="h-4 w-4 shrink-0" />
+            Tabulación
+            {activeSection === "tabulacion" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
+          </button>
+
+          {/* Coming soon items */}
+          {[
+            { label: "Análisis", icon: ChartNoAxesCombined },
+          ].map((item) => (
+            <div
+              key={item.label}
+              className="flex w-full cursor-not-allowed items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground/50"
+            >
+              <item.icon className="h-4 w-4 shrink-0" />
+              {item.label}
+              <Badge variant="muted" className="ml-auto text-[9px] px-1.5 py-0">Pronto</Badge>
+            </div>
+          ))}
+
+          {isAdmin && (
             <>
-              {!isAdmin ? (
-                <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Acceso restringido</CardTitle>
-                    <CardDescription>
-                      Tu cuenta está activa, pero la configuración, generación y descarga están disponibles solo para administradores.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
-                      Usuario: <strong>{authUser.email}</strong>
-                      <br />
-                      Rol: <strong>{authUser.role}</strong>
-                    </div>
-                    <div className="rounded-md border border-primary/30 bg-primary/10 p-3 text-sm text-primary">
-                      Solicita acceso de administrador para habilitar la operación completa del sistema.
-                    </div>
-                  </CardContent>
-                </Card>
-              ) : (
-                <>
-          <nav className="mb-6 flex rounded-2xl border border-border/70 bg-card/95 p-1.5 shadow-sm">
-            {visibleTabs.map((tab) => (
+              <p className="mb-2 mt-4 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Administración</p>
               <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => { setActiveSection("usuarios"); loadUsers(); }}
                 className={cn(
-                  "flex-1 rounded-xl px-3 py-2 text-sm font-medium transition",
-                  activeTab === tab.id
+                  "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
+                  activeSection === "usuarios"
                     ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                 )}
               >
-                {tab.label}
+                <Users className="h-4 w-4 shrink-0" />
+                Usuarios
+                {activeSection === "usuarios" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
               </button>
-            ))}
-          </nav>
+            </>
+          )}
+        </nav>
 
-          {activeTab === "config" ? (
-            <div className="space-y-6">
-                <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Parámetros generales</CardTitle>
-                  <CardDescription>Configura muestra, items y escala de respuestas.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                  {scalarFieldRows.map((row, rowIndex) => (
-                    <div className="grid gap-4 md:grid-cols-3" key={`row-${rowIndex}`}>
-                      {row.map((field) => (
-                        <label className="space-y-2" key={field.key}>
-                          <span className="text-sm font-medium text-foreground">{field.label}</span>
-                          <Input
-                            value={getScalar(field.key)}
-                            onChange={(event) => setScalar(field.key, event.target.value)}
-                            placeholder={field.label}
+        {/* Bottom: user + theme */}
+        <div className="border-t border-border/60 p-3 space-y-1">
+          <button
+            onClick={toggleTheme}
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-all"
+          >
+            {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            {themeMode === "dark" ? "Modo claro" : "Modo oscuro"}
+          </button>
+          <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2">
+            <p className="truncate text-xs font-medium text-foreground">{authUser?.email}</p>
+            <p className="text-[10px] text-muted-foreground capitalize">{authUser?.role}</p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-danger/10 hover:text-danger transition-all"
+          >
+            <LogOut className="h-4 w-4" />
+            Cerrar sesión
+          </button>
+        </div>
+      </aside>
+
+      {/* ── Main content ── */}
+      <div className="flex flex-1 flex-col overflow-hidden">
+
+        {/* Mobile topbar */}
+        <header className="flex h-14 items-center justify-between border-b border-border/60 bg-card/80 px-4 md:hidden">
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet className="h-5 w-5 text-primary" />
+            <span className="font-bold">Tabulación</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={toggleTheme} className="rounded-lg p-2 text-muted-foreground hover:bg-accent">
+              {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
+            <button onClick={handleLogout} className="rounded-lg p-2 text-muted-foreground hover:bg-danger/10 hover:text-danger">
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+
+        {/* Mobile nav tabs */}
+        <div className="flex border-b border-border/60 bg-card/80 px-4 md:hidden">
+          <button
+            onClick={() => setActiveSection("tabulacion")}
+            className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "tabulacion" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+            Tabulación
+          </button>
+          {isAdmin && (
+            <button
+              onClick={() => { setActiveSection("usuarios"); loadUsers(); }}
+              className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "usuarios" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
+            >
+              <Users className="h-3.5 w-3.5" />
+              Usuarios
+            </button>
+          )}
+        </div>
+
+        {/* Content */}
+        <main className="flex-1 overflow-auto p-6">
+
+          {/* ── Tabulación Wizard ── */}
+          {activeSection === "tabulacion" && isAdmin && (
+            <div className="mx-auto max-w-3xl">
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold tracking-tight">Generar tabulación</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Completa los 3 pasos para generar tu archivo Excel.</p>
+              </div>
+
+              <WizardProgress currentStep={wizardStep} />
+
+              {/* Step 1: Datos básicos */}
+              {wizardStep === 1 && (
+                <div className="space-y-5">
+                  <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>Datos de tu encuesta</CardTitle>
+                      <CardDescription>Ingresa la información básica de tu instrumento de investigación.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-5">
+                      <div className="grid gap-5 sm:grid-cols-2">
+                        {STEP_1_FIELDS.map((field) => (
+                          <div key={field.key}>
+                            <label className="block">
+                              <span className="text-sm font-medium text-foreground">{field.label}</span>
+                              <Input
+                                className="mt-1.5"
+                                value={getScalar(field.key)}
+                                onChange={(e) => setScalar(field.key, e.target.value)}
+                                placeholder={field.placeholder}
+                              />
+                            </label>
+                            <FieldHint text={field.hint} />
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Relación */}
+                      <div className="rounded-xl border border-border/80 bg-background/50 p-4">
+                        <p className="mb-1 text-sm font-medium text-foreground">¿Las variables van en la misma dirección?</p>
+                        <FieldHint text="Relación directa: cuando V1 sube, V2 también sube. Relación inversa: cuando V1 sube, V2 baja." />
+                        <div className="mt-3 flex gap-2">
+                          <button
+                            onClick={() => setScalar("relacionversa", "0")}
+                            className={cn(
+                              "flex-1 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                              getScalar("relacionversa") === "0"
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                            )}
+                          >
+                            ✓ Misma dirección (directa)
+                          </button>
+                          <button
+                            onClick={() => setScalar("relacionversa", "1")}
+                            className={cn(
+                              "flex-1 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                              getScalar("relacionversa") === "1"
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                            )}
+                          >
+                            ↕ Dirección opuesta (inversa)
+                          </button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <div className="flex justify-end">
+                    <Button size="lg" onClick={() => setWizardStep(2)}>
+                      Siguiente: Escalas y estructura
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: Escalas y estructura */}
+              {wizardStep === 2 && (
+                <div className="space-y-5">
+                  {LIST_GROUPS.map((group) => (
+                    <Card key={group.title} className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
+                      <CardHeader>
+                        <CardTitle>{group.title}</CardTitle>
+                        <CardDescription>{group.description}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="grid gap-3 md:grid-cols-2">
+                        {group.fields.map((field) => (
+                          <ListEditorField
+                            key={field.key}
+                            label={field.label}
+                            placeholder={field.placeholder}
+                            values={getList(field.key)}
+                            onChange={(next) => setList(field.key, next)}
                           />
-                          <p className="text-xs text-muted-foreground">{field.hint}</p>
-                        </label>
-                      ))}
-                      {row.length < 3 ? <div /> : null}
-                    </div>
+                        ))}
+                      </CardContent>
+                    </Card>
                   ))}
 
-                  <div className="rounded-md border border-border/80 p-3">
-                    <p className="mb-2 text-sm font-medium text-foreground">Relación esperada</p>
-                    <div className="flex gap-2">
-                      <Button
-                        variant={getScalar("relacionversa") === "0" ? "default" : "outline"}
-                        onClick={() => setScalar("relacionversa", "0")}
-                      >
-                        No inversa
-                      </Button>
-                      <Button
-                        variant={getScalar("relacionversa") === "1" ? "default" : "outline"}
-                        onClick={() => setScalar("relacionversa", "1")}
-                      >
-                        Inversa
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {listGroups.map((group) => (
-                <Card key={group.title}>
-                  <CardHeader>
-                    <CardTitle>{group.title}</CardTitle>
-                    <CardDescription>{group.description}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid gap-3 md:grid-cols-2">
-                    {group.fields.map((field) => (
-                      <ListEditorField
-                        key={field.key}
-                        label={field.label}
-                        placeholder={field.placeholder}
-                        values={getList(field.key)}
-                        onChange={(next) => setList(field.key, next)}
-                      />
-                    ))}
-                  </CardContent>
-                </Card>
-              ))}
-
-              <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Edición avanzada JSON</CardTitle>
-                  <CardDescription>Pega configuración completa para reemplazar el formulario.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <Textarea
-                    value={jsonDraft}
-                    onChange={(event) => setJsonDraft(event.target.value)}
-                    className="min-h-[260px] font-mono text-xs"
-                  />
-                  <div className="flex gap-2">
-                    <Button variant="outline" onClick={handleApplyJson}>
-                      Aplicar JSON
-                    </Button>
-                    <Button variant="outline" onClick={() => setConfig(FALLBACK_CONFIG)}>
-                      Restablecer base
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Validaciones</CardTitle>
-                  <CardDescription>Se bloquea la generación si hay errores de consistencia.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {validationMessages.length > 0 ? (
-                    <div className="space-y-2">
-                      {validationMessages.map((issue) => (
-                        <div key={issue} className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
-                          {issue}
+                  {/* Advanced JSON toggle */}
+                  <div className="rounded-xl border border-border/60 bg-card/60">
+                    <button
+                      onClick={() => setShowAdvancedJson((v) => !v)}
+                      className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground"
+                    >
+                      <span>Modo avanzado (editar JSON directamente)</span>
+                      <span className="text-xs">{showAdvancedJson ? "▲ Ocultar" : "▼ Mostrar"}</span>
+                    </button>
+                    {showAdvancedJson && (
+                      <div className="border-t border-border/60 p-4 space-y-3">
+                        <Textarea
+                          value={jsonDraft}
+                          onChange={(e) => setJsonDraft(e.target.value)}
+                          className="min-h-[200px] font-mono text-xs"
+                        />
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" onClick={handleApplyJson}>Aplicar JSON</Button>
+                          <Button variant="outline" size="sm" onClick={() => setConfig(FALLBACK_CONFIG)}>Restablecer valores por defecto</Button>
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-md border border-primary/40 bg-primary/10 p-3 text-sm text-primary">
-                      Configuración válida para generar.
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Generación</CardTitle>
-                  <CardDescription>Ejecuta la API Node para crear CSV + Excel de tabulación.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">{statusMessage}</div>
-                  {errorMessage ? (
-                    <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{errorMessage}</div>
-                  ) : null}
-                  <div className="flex flex-wrap gap-2">
-                    <Button onClick={handleGenerate} disabled={isGenerating || validationMessages.length > 0} size="lg">
-                      {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
-                      Generar tabulación
-                    </Button>
-                    {downloadLinks ? (
-                      <>
-                        <a href={downloadLinks.json} download="Tabulacion.json">
-                          <Button variant="outline">
-                            <Download className="h-4 w-4" />
-                            Descargar JSON
-                          </Button>
-                        </a>
-                        <a href={downloadLinks.csv} download="Tabulacion_base.csv">
-                          <Button variant="outline">
-                            <Download className="h-4 w-4" />
-                            Descargar CSV
-                          </Button>
-                        </a>
-                        <a href={downloadLinks.xlsx} download="Tabulacion_generada.xlsx">
-                          <Button variant="outline">
-                            <Download className="h-4 w-4" />
-                            Descargar Excel
-                          </Button>
-                        </a>
-                      </>
-                    ) : null}
+                      </div>
+                    )}
                   </div>
-                  {result ? (
-                    <div className="rounded-lg border border-primary/30 bg-primary/10 p-4">
-                      <p className="text-sm text-muted-foreground">Coeficiente de correlación</p>
-                      <p className="text-3xl font-bold tracking-tight text-primary">{result.correlation.toFixed(3)}</p>
-                    </div>
-                  ) : null}
-                </CardContent>
-              </Card>
-            </div>
-          ) : activeTab === "excel" ? (
-            <div className="space-y-6">
-              <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Vista previa del Excel generado</CardTitle>
-                  <CardDescription>Inspecciona hojas y contenido antes de descargar.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {!result ? (
-                    <p className="rounded-md border border-dashed border-border p-5 text-sm text-muted-foreground">
-                      Aún no hay una generación. Ve a la pestaña <strong>Configuración</strong> y pulsa <strong>Generar tabulación</strong>.
-                    </p>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="grid gap-4 md:grid-cols-[1fr_auto_auto]">
-                        <label className="space-y-1">
-                          <span className="text-sm font-medium text-foreground">Hoja</span>
-                          <select
-                            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                            value={selectedSheet}
-                            onChange={(event) => setSelectedSheet(event.target.value)}
-                          >
-                            {result.sheetNames.map((name) => (
-                              <option key={name} value={name}>
-                                {name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <div className="space-y-1">
-                          <span className="text-sm font-medium text-foreground">Correlación</span>
-                          <div className="h-10 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm font-semibold text-primary">
-                            {result.correlation.toFixed(3)}
+
+                  <div className="flex items-center justify-between">
+                    <Button variant="outline" size="lg" onClick={() => setWizardStep(1)}>
+                      <ArrowLeft className="h-4 w-4" />
+                      Atrás
+                    </Button>
+                    <Button size="lg" onClick={() => setWizardStep(3)}>
+                      Siguiente: Generar
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3: Generar */}
+              {wizardStep === 3 && (
+                <div className="space-y-5">
+                  {/* Summary */}
+                  <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>Resumen de tu configuración</CardTitle>
+                      <CardDescription>Revisa que todo esté correcto antes de generar.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+                        {[
+                          { label: "Muestra", value: `${getScalar("nommuestra")} (${getScalar("muestra")} personas)` },
+                          { label: "Variables", value: getScalar("variable") },
+                          { label: "Preguntas V1", value: getScalar("item") },
+                          { label: "Preguntas V2", value: getScalar("itemv2") },
+                          { label: "Niveles baremo", value: getScalar("escala") },
+                          { label: "Escala Likert", value: `1 al ${getScalar("respuesta")}` },
+                          { label: "Relación", value: getScalar("relacionversa") === "1" ? "Inversa" : "Directa" },
+                          { label: "Dimensiones", value: getList("nombre_dimension").filter(Boolean).join(", ") || "—" },
+                        ].map((item) => (
+                          <div key={item.label} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2.5">
+                            <p className="text-xs text-muted-foreground">{item.label}</p>
+                            <p className="mt-0.5 text-sm font-semibold truncate">{item.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Validations */}
+                  {validationMessages.length > 0 && (
+                    <Card className="rounded-2xl border-danger/40 bg-danger/5 shadow-sm">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-base text-danger">Corrige estos errores antes de continuar</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-2">
+                        {validationMessages.map((msg) => (
+                          <div key={msg} className="flex items-start gap-2 text-sm text-danger">
+                            <span className="mt-0.5 shrink-0">•</span>
+                            {msg}
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Generate button */}
+                  <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
+                    <CardContent className="pt-6 space-y-4">
+                      {errorMessage && (
+                        <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{errorMessage}</div>
+                      )}
+                      <Button
+                        size="lg"
+                        className="h-14 w-full text-base"
+                        onClick={handleGenerate}
+                        disabled={isGenerating || validationMessages.length > 0}
+                      >
+                        {isGenerating ? (
+                          <>
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                            Generando tu Excel...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-5 w-5" />
+                            Generar tabulación
+                          </>
+                        )}
+                      </Button>
+                      <p className="text-center text-xs text-muted-foreground">{statusMessage}</p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Result */}
+                  {result && (
+                    <Card className="rounded-2xl border-primary/30 bg-primary/5 shadow-sm">
+                      <CardHeader>
+                        <CardTitle className="text-primary flex items-center gap-2">
+                          <Check className="h-5 w-5" />
+                          ¡Tabulación generada exitosamente!
+                        </CardTitle>
+                        <CardDescription>Generado el {new Date(result.generatedAt).toLocaleString()}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-5">
+                        {/* Correlation */}
+                        <div className="rounded-xl border border-border/60 bg-background/80 p-4">
+                          <p className="text-sm text-muted-foreground">Coeficiente de correlación de Pearson</p>
+                          <div className="mt-1 flex items-baseline gap-3">
+                            <span className="text-4xl font-bold tracking-tight text-primary">{result.correlation.toFixed(3)}</span>
+                            <div>
+                              <span className={cn("text-sm font-semibold", correlationInfo(result.correlation).colorClass)}>
+                                Correlación {correlationInfo(result.correlation).label}
+                              </span>
+                              <p className="text-xs text-muted-foreground">{correlationInfo(result.correlation).explanation}</p>
+                            </div>
                           </div>
                         </div>
-                        <div className="space-y-1">
-                          <span className="text-sm font-medium text-foreground">Generado</span>
-                          <div className="h-10 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                            {new Date(result.generatedAt).toLocaleString()}
+
+                        {/* Downloads */}
+                        {downloadLinks && (
+                          <div>
+                            <p className="mb-3 text-sm font-medium text-foreground">Descarga tus archivos</p>
+                            <div className="grid gap-3 sm:grid-cols-3">
+                              <a href={downloadLinks.xlsx} download="Tabulacion_generada.xlsx" className="block">
+                                <div className="rounded-xl border-2 border-primary/40 bg-primary/10 p-4 text-center transition-all hover:border-primary hover:bg-primary/20">
+                                  <Download className="mx-auto h-6 w-6 text-primary" />
+                                  <p className="mt-2 text-sm font-semibold text-primary">Descargar Excel</p>
+                                  <p className="text-xs text-muted-foreground">Archivo principal</p>
+                                </div>
+                              </a>
+                              <a href={downloadLinks.csv} download="Tabulacion_base.csv" className="block">
+                                <div className="rounded-xl border border-border/60 bg-background/60 p-4 text-center transition-all hover:border-primary/40 hover:bg-accent">
+                                  <Download className="mx-auto h-5 w-5 text-muted-foreground" />
+                                  <p className="mt-2 text-sm font-medium">Descargar CSV</p>
+                                  <p className="text-xs text-muted-foreground">Datos base</p>
+                                </div>
+                              </a>
+                              <a href={downloadLinks.json} download="Tabulacion.json" className="block">
+                                <div className="rounded-xl border border-border/60 bg-background/60 p-4 text-center transition-all hover:border-primary/40 hover:bg-accent">
+                                  <Download className="mx-auto h-5 w-5 text-muted-foreground" />
+                                  <p className="mt-2 text-sm font-medium">Descargar JSON</p>
+                                  <p className="text-xs text-muted-foreground">Configuración</p>
+                                </div>
+                              </a>
+                            </div>
                           </div>
+                        )}
+
+                        {/* Sheet preview */}
+                        <div>
+                          <div className="mb-3 flex items-center justify-between">
+                            <p className="text-sm font-medium">Vista previa del Excel</p>
+                            <select
+                              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                              value={selectedSheet}
+                              onChange={(e) => setSelectedSheet(e.target.value)}
+                            >
+                              {result.sheetNames.map((name) => (
+                                <option key={name} value={name}>{name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <PreviewTable rows={result.sheetData[selectedSheet] ?? []} maxRows={10} />
                         </div>
-                      </div>
 
-                      <div>
-                        <h4 className="mb-2 text-sm font-semibold">Hoja seleccionada</h4>
-                        <PreviewTable rows={result.sheetData[selectedSheet] ?? []} maxRows={25} />
-                      </div>
-
-                      <div>
-                        <h4 className="mb-2 text-sm font-semibold">Base CSV (primeras filas)</h4>
-                        <PreviewTable rows={result.csvRows} maxRows={12} />
-                      </div>
-                    </div>
+                        <Button
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => { setResult(null); setDownloadLinks(null); setWizardStep(1); setErrorMessage(null); }}
+                        >
+                          Generar otra tabulación
+                        </Button>
+                      </CardContent>
+                    </Card>
                   )}
-                </CardContent>
-              </Card>
+
+                  <div className="flex justify-start">
+                    <Button variant="outline" size="lg" onClick={() => setWizardStep(2)}>
+                      <ArrowLeft className="h-4 w-4" />
+                      Atrás
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="space-y-6">
+          )}
+
+          {/* ── Usuarios (admin) ── */}
+          {activeSection === "usuarios" && isAdmin && (
+            <div className="mx-auto max-w-3xl space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight">Gestión de usuarios</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Crea cuentas y controla el acceso por suscripción.</p>
+              </div>
+
               <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
                 <CardHeader>
-                  <CardTitle>Gestión de usuarios</CardTitle>
-                  <CardDescription>Crea cuentas y controla suscripción por tiempo.</CardDescription>
+                  <CardTitle>Crear nuevo usuario</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <label className="space-y-2">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block space-y-1.5">
                       <span className="text-sm font-medium">Email</span>
-                      <Input value={newUserEmail} onChange={(event) => setNewUserEmail(event.target.value)} placeholder="usuario@dominio.com" />
+                      <Input value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} placeholder="usuario@dominio.com" />
                     </label>
-                    <label className="space-y-2">
+                    <label className="block space-y-1.5">
                       <span className="text-sm font-medium">Contraseña inicial</span>
-                      <Input
-                        type="password"
-                        value={newUserPassword}
-                        onChange={(event) => setNewUserPassword(event.target.value)}
-                        placeholder="Mínimo 8 caracteres"
-                      />
+                      <Input type="password" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} placeholder="Mínimo 8 caracteres" />
                     </label>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <label className="space-y-2">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <label className="block space-y-1.5">
                       <span className="text-sm font-medium">Rol</span>
                       <select
-                        className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                         value={newUserRole}
-                        onChange={(event) => setNewUserRole(event.target.value as "admin" | "user")}
+                        onChange={(e) => setNewUserRole(e.target.value as "admin" | "user")}
                       >
                         <option value="user">Usuario</option>
                         <option value="admin">Administrador</option>
                       </select>
                     </label>
-                    <label className="space-y-2">
+                    <label className="block space-y-1.5">
                       <span className="text-sm font-medium">Plan</span>
-                      <Input value={newUserPlan} onChange={(event) => setNewUserPlan(event.target.value)} placeholder="pro" />
+                      <Input value={newUserPlan} onChange={(e) => setNewUserPlan(e.target.value)} placeholder="pro" />
                     </label>
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium">Días de suscripción</span>
-                      <Input value={newUserDays} onChange={(event) => setNewUserDays(event.target.value)} placeholder="30" />
+                    <label className="block space-y-1.5">
+                      <span className="text-sm font-medium">Días de acceso</span>
+                      <Input value={newUserDays} onChange={(e) => setNewUserDays(e.target.value)} placeholder="30" />
                     </label>
                   </div>
-                  {usersErrorMessage ? (
+                  {usersErrorMessage && (
                     <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{usersErrorMessage}</div>
-                  ) : null}
-                  <div className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">{usersStatusMessage}</div>
-                  <div className="flex flex-wrap gap-2">
+                  )}
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">{usersStatusMessage}</p>
                     <Button onClick={handleCreateUser} disabled={isUsersLoading}>
                       {isUsersLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                       Crear usuario
-                    </Button>
-                    <Button variant="outline" onClick={loadUsers} disabled={isUsersLoading}>
-                      Actualizar lista
                     </Button>
                   </div>
                 </CardContent>
@@ -1554,35 +1517,40 @@ export default function App() {
 
               <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
                 <CardHeader>
-                  <CardTitle>Usuarios registrados</CardTitle>
-                  <CardDescription>Acciones rápidas de estado y renovación.</CardDescription>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle>Usuarios registrados</CardTitle>
+                      <CardDescription>Gestiona el acceso y las suscripciones.</CardDescription>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={loadUsers} disabled={isUsersLoading}>
+                      {isUsersLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                      Actualizar
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {managedUsers.length === 0 ? (
                     <p className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-                      No hay usuarios cargados. Pulsa <strong>Actualizar lista</strong>.
+                      No hay usuarios cargados. Pulsa <strong>Actualizar</strong>.
                     </p>
                   ) : (
                     managedUsers.map((user) => (
-                      <div key={user.id} className="rounded-md border border-border bg-background/70 p-3">
-                        <p className="text-sm font-semibold">{user.email}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Rol: {user.role} | Estado: {user.status} | Plan: {user.plan}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {getSubscriptionLabel(user)} | Último login: {formatDateTime(user.lastLoginAt)}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-2">
+                      <div key={user.id} className="rounded-xl border border-border/60 bg-background/60 p-4">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold">{user.email}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {user.role === "admin" ? "Administrador" : "Usuario"} · Plan {user.plan} · {user.status === "active" ? "✅ Activo" : "🔴 Desactivado"}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{getSubscriptionLabel(user)}</p>
+                            <p className="text-xs text-muted-foreground">Último acceso: {formatDateTime(user.lastLoginAt)}</p>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() =>
-                              patchManagedUser(
-                                user.id,
-                                { status: user.status === "active" ? "disabled" : "active" },
-                                `Estado actualizado para ${user.email}.`,
-                              )
-                            }
+                            onClick={() => patchManagedUser(user.id, { status: user.status === "active" ? "disabled" : "active" }, `Estado actualizado para ${user.email}.`)}
                             disabled={isUsersLoading}
                           >
                             {user.status === "active" ? "Desactivar" : "Activar"}
@@ -1590,14 +1558,18 @@ export default function App() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() =>
-                              patchManagedUser(user.id, { subscriptionDaysDelta: 30 }, `Suscripción extendida (+30 días) para ${user.email}.`)
-                            }
+                            onClick={() => patchManagedUser(user.id, { subscriptionDaysDelta: 30 }, `+30 días para ${user.email}.`)}
                             disabled={isUsersLoading || user.role === "admin"}
                           >
                             +30 días
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => deleteManagedUser(user.id)} disabled={isUsersLoading}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-danger hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
+                            onClick={() => deleteManagedUser(user.id)}
+                            disabled={isUsersLoading}
+                          >
                             Eliminar
                           </Button>
                         </div>
@@ -1608,12 +1580,19 @@ export default function App() {
               </Card>
             </div>
           )}
-                </>
-              )}
-            </>
-          ) : null}
-        </div>
-      )}
+
+          {/* Non-admin message */}
+          {activeSection === "tabulacion" && !isAdmin && authUser && (
+            <div className="mx-auto max-w-md mt-20 text-center">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+                <ShieldCheck className="h-6 w-6" />
+              </div>
+              <h2 className="text-lg font-semibold">Acceso restringido</h2>
+              <p className="mt-2 text-sm text-muted-foreground">Tu cuenta está activa pero solo los administradores pueden operar el sistema. Solicita elevación de permisos.</p>
+            </div>
+          )}
+        </main>
+      </div>
     </div>
   );
 }
