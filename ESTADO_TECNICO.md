@@ -1,97 +1,70 @@
-# Estado tecnico del proyecto (para continuidad)
+# Estado tecnico del proyecto
 
-## Contexto
+## Resumen ejecutivo
 
-- Objetivo: app Streamlit para configurar tabulacion y generar `Tabulacion.json` y `Tabulacion.xlsx` (plantilla con graficos).
-- Plataforma: Windows con Excel instalado.
-- Restriccion clave: preservar dibujos/graficos del Excel usando automatizacion COM (`pywin32`).
+- La generacion de base y Excel esta migrada a Node.js (`node_app/generator.js`).
+- `app.py` queda como UI/orquestador en Streamlit.
+- Existe API HTTP Node (`node_app/server.js`) para frontend externo (Netlify).
+- Existe frontend React en `frontend/` con estilo shadcn-like y consumo directo de la API.
+- Se elimina dependencia operativa de `pywin32` y Excel COM.
 
-## Arquitectura de la app
+## Objetivo vigente
 
-- Archivo principal: `app.py`.
-- Entradas:
-  - `Tabulacion.json` (config inicial).
-  - `Tabulacion.xlsx` (plantilla).
-- Salidas:
-  - `Tabulacion.json` generado (desde UI).
-  - `Tabulacion.xlsx` generado (desde plantilla via Excel COM).
+- Configurar tabulacion desde web.
+- Generar `Tabulacion_base.csv` y `Tabulacion_generada.xlsx`.
+- Preservar graficos y formas de `Tabulacion.xlsx`.
 
 ## Flujo actual
 
-1. UI carga config con `json.load`.
-2. Usuario edita configuracion en pestaña **Configuracion**.
+1. Streamlit carga configuracion desde `Tabulacion.json`.
+2. Usuario edita y valida en UI.
 3. Boton **Generar**:
-   - Genera base automatica con items de V1/V2.
-   - Calcula correlacion Pearson (r) con suma V1 vs suma V2.
-   - Construye Excel con plantilla y escribe valores (incluye la base generada).
-4. UI muestra r en cuadro verde y habilita descargas.
+   - Guarda JSON.
+   - Ejecuta Node (`node_app/index.js`).
+   - Node genera base, correlacion y Excel final.
+4. Streamlit consume resultados y habilita descargas.
 
-## Logica de correlacion
+## Flujo alterno (frontend externo)
 
-- `generate_base_data(config_state)`:
-  - Usa `muestra`, `item`, `itemv2`, `respuesta`.
-  - Crea columnas `V1_1..V1_n` y `V2_1..V2_m`.
-  - Ajusta valores para lograr r alto:
-    - Normal: r cercano a +1.
-    - Inversa: r cercano a -1.
-- `compute_correlation(df_base, config_state)`:
-  - Suma columnas V1 y V2 por fila.
-  - Pearson entre ambas sumas.
+1. Frontend (por ejemplo Netlify) envía `POST /generate` a la API Node.
+2. API genera artefactos en memoria temporal y devuelve links con expiración.
+3. Frontend descarga:
+   - `GET /results/:id/xlsx`
+   - `GET /results/:id/csv`
 
-## Excel (preservar graficos)
+## Mejoras implementadas recientemente
 
-- `build_excel_from_template(config_state, base_df)` usa COM:
-  - `pythoncom.CoInitialize()`.
-  - `win32.DispatchEx("Excel.Application")`.
-  - Escribe valores en hojas:
-    - `Gesti\u00f3n de abastecimiento` (V1).
-    - `Satisfacci\u00f3n de los comit\u00e9s d` (V2).
-    - `Por Valoracion (3) Dimension`.
-    - `Por Valoracion (3) Dimension 2`.
-    - `Por conteo Dimension`.
-    - `Por conteo Dimension 2`.
-  - Guarda copia temporal y devuelve bytes.
-
-## UI/UX actual
-
-- Barra de progreso con pasos: base -> correlacion -> Excel.
-- Coeficiente r en caja verde, texto blanco, grande.
-- Vista previa de base (top 10 filas).
-- Pesta\u00f1a **Tabulacion Excel** solo para consulta.
+- Generador Node robusto ante cambios de `cwd` (rutas basadas en `import.meta.url`).
+- Validacion estricta de hojas requeridas y cabeceras `PRG.1`.
+- Control de correlacion no valida (`NaN`) y requerimiento `muestra >= 2`.
+- Estado UI consistente en errores (evita mostrar resultados viejos).
+- Pestaña de tabulacion enfocada en el Excel generado.
+- Correccion de descarga: `Tabulacion_generada.xlsx` como nombre de salida.
+- Reemplazo automático del nombre de muestra en todas las hojas (incluye variantes tipo `Beneficiaross`).
+- Dockerfile y `docker-compose.yml` para despliegue containerizado de la API.
 
 ## Dependencias
 
-- `streamlit`, `pandas`, `openpyxl`, `pywin32`.
-- Excel instalado en Windows.
+- Python: `streamlit`, `pandas`.
+- Node.js 18+.
+- Node package: `xlsx-populate`.
 
-## Errores corregidos (resumen tecnico)
+## Riesgos/pendientes
 
-- COM: `CoInitialize` requerido para evitar `com_error`.
-- Constantes: `xlWhole`/`xlValues` con fallback numerico.
-- JSON: lectura con `json.load` para evitar warning.
-- Excel graficos: openpyxl eliminaba dibujos; COM preserva.
+- No hay suite de tests automatizados (solo verificacion de sintaxis y pruebas manuales).
+- El generador depende de nombres exactos de hojas y etiquetas de la plantilla.
+- Si cambia estructura de `Tabulacion.xlsx`, se deben ajustar constantes/etiquetas en `node_app/generator.js`.
 
-## Ubicaciones clave en codigo
+## Archivos clave
 
-- Generacion base: `generate_base_data`.
-- Correlacion: `compute_correlation`.
-- Excel COM: `build_excel_from_template`.
-- UI principal: bloque `with tab_config:`.
-
-## Mapa de funciones (resumen)
-
-- `load_config()` -> carga JSON base. (`app.py`:13)
-- `_to_int_list()` -> normaliza listas numericas. (`app.py`:22)
-- `parse_dimension_counts()` -> calcula conteo de items por dimension. (`app.py`:39)
-- `build_dimension_slices()` -> divide columnas por dimension. (`app.py`:58)
-- `load_excel_sheets()` -> carga hojas del Excel para vista. (`app.py`:72)
-- `build_config_tables()` -> tablas resumen en UI. (`app.py`:78)
-- `get_config_state()` -> cache en `st.session_state`. (`app.py`:101)
-- `update_list_field()` -> actualiza listas en config. (`app.py`:107)
-- `update_scalar_field()` -> actualiza escalares en config. (`app.py`:111)
-- `list_editor()` -> editor de listas en UI. (`app.py`:118)
-- `apply_config_from_json()` -> reemplazo completo desde JSON. (`app.py`:127)
-- `get_item_counts()` -> items V1/V2. (`app.py`:135)
-- `generate_base_data()` -> crea base automatica con alta correlacion. (`app.py`:143)
-- `compute_correlation()` -> Pearson sobre sumas V1/V2. (`app.py`:215)
-- `build_excel_from_template()` -> escribe plantilla con Excel COM. (`app.py`:236)
+- `app.py`
+- `node_app/index.js`
+- `node_app/server.js`
+- `node_app/generator.js`
+- `frontend/`
+- `Dockerfile`
+- `docker-compose.yml`
+- `Tabulacion.json`
+- `Tabulacion.xlsx`
+- `Tabulacion_generada.xlsx` (salida)
+- `Tabulacion_base.csv` (salida)

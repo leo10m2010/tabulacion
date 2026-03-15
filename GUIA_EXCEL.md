@@ -4,42 +4,34 @@ Esta guia describe como se genera el Excel final a partir de la plantilla `Tabul
 
 ## Enfoque
 
-- Se usa automatizacion de Excel con `pywin32`.
-- Se abre la plantilla original.
-- Se reemplazan valores de configuracion en hojas especificas.
-- Se guarda una copia nueva conservando graficos y formas.
+- El motor de generacion es Node.js (`node_app/index.js`).
+- Se usa `xlsx-populate` para abrir la plantilla y escribir solo celdas de datos.
+- El resultado se guarda en `Tabulacion_generada.xlsx`.
+- No se usa automatizacion COM ni `pywin32`.
 
-## Hojas utilizadas
+## Preservacion de graficos
 
-- `Por Valoracion (3) Dimension`
-- `Por Valoracion (3) Dimension 2`
-- `Por conteo Dimension`
-- `Por conteo Dimension 2`
+- La plantilla original se mantiene como base.
+- El proceso actualiza valores en hojas objetivo y no recrea graficos.
+- Los graficos, formas y formulas existentes se conservan al guardar el nuevo archivo.
 
-## Actualizaciones principales
+## Hojas objetivo
 
-- **Variables y dimensiones**: se escriben los nombres configurados.
-- **Escalas y respuestas**: se actualizan cantidades de escalas y limites.
-- **Numero de preguntas**: se coloca por indicador segun configuracion.
-- **Indicadores**: se reflejan en las tablas de conteo.
-
-## Resultado
-
-El archivo generado mantiene:
-
-- Graficos y formas originales.
-- Formulas existentes en las hojas.
-- Estructura y estilos del Excel original.
+- `Gestión de abastecimiento` (items V1).
+- `Satisfacción de los comités d` (items V2).
+- `Por Valoracion (3) Dimension`.
+- `Por Valoracion (3) Dimension 2`.
+- `Por conteo Dimension`.
+- `Por conteo Dimension 2`.
 
 ## Integracion con la base generada
 
-- La base de datos se genera automaticamente en la web.
-- Esos valores se escriben en las hojas de variables principales.
-- La misma base se usa para calcular el coeficiente de correlacion.
+- En la misma ejecucion se genera `Tabulacion_base.csv`.
+- Se calcula la correlacion de Pearson sobre sumas V1 y V2.
+- El valor `r` se devuelve a la UI para mostrarlo en pantalla.
 
-## Nota importante
+## Requisitos tecnicos
 
-Para que la generacion funcione:
-
-- `Tabulacion.xlsx` debe estar en el mismo directorio que `app.py`.
-- Debes tener Excel instalado localmente.
+- `Tabulacion.xlsx` debe existir en la raiz del proyecto.
+- `Tabulacion.json` debe tener una configuracion valida.
+- Node.js 18+ con dependencias instaladas (`cd node_app && npm install`).

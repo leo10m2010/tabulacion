@@ -1,0 +1,21 @@
+services:
+  tabulacion-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      CORS_ORIGIN: "http://localhost:5173,https://tu-frontend.netlify.app"
+      TEMPLATE_PATH: "/app/Tabulacion.xlsx"
+      RESULT_TTL_SECONDS: "900"
+      MAX_BODY_BYTES: "4194304"
+      AUTH_REQUIRED: "true"
+      AUTH_TOKEN_SECRET: "change-this-token-secret"
+      AUTH_TOKEN_TTL_SECONDS: "86400"
+      USER_STORE_PATH: "/app/node_app/data/users.json"
+      ADMIN_EMAIL: "admin@tabulacion.local"
+      ADMIN_PASSWORD: "Admin12345!"
+    volumes:
+      - ./node_app/data:/app/node_app/data
