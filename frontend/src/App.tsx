@@ -341,11 +341,13 @@ function ListEditorField({
   placeholder,
   values,
   onChange,
+  isPercentage = false,
 }: {
   label: string;
   placeholder: string;
   values: string[];
   onChange: (next: string[]) => void;
+  isPercentage?: boolean;
 }) {
   const safeValues = values.length > 0 ? values : [""];
 
@@ -359,6 +361,13 @@ function ListEditorField({
     const next = safeValues.filter((_, i) => i !== index);
     onChange(normalizeList(next));
   };
+
+  const percentageSum = isPercentage
+    ? safeValues.reduce((sum, v) => {
+        const n = parseInt(v.trim(), 10);
+        return sum + (Number.isFinite(n) ? n : 0);
+      }, 0)
+    : 0;
 
   return (
     <div className="rounded-md border border-border/80 bg-background/70 p-3">
@@ -382,6 +391,11 @@ function ListEditorField({
           </div>
         ))}
       </div>
+      {isPercentage && (
+        <div className="mt-2 rounded px-2 py-1 text-xs font-medium text-right text-muted-foreground">
+          Total acumulado: {percentageSum}%
+        </div>
+      )}
     </div>
   );
 }
@@ -785,6 +799,17 @@ export default function App() {
       const total = indicatorCounts.reduce((sum, v) => sum + v, 0);
       if (total !== indicatorNames.length) issues.push("La suma de indicadores por dimensión no coincide con el total de indicadores.");
     }
+
+    const validatePorcentaje = (key: string, label: string) => {
+      const vals = toStringList(config[key]).filter((v) => v.trim() !== "");
+      const nums = vals.map((v) => Number.parseInt(v.trim(), 10));
+      if (nums.some((n) => !Number.isFinite(n) || n < 0 || n > 100)) {
+        issues.push(`${label}: cada porcentaje debe ser un número entre 0 y 100.`);
+      }
+    };
+    validatePorcentaje("porcentaje", "Baremo V1");
+    validatePorcentaje("porcentaje_v2", "Baremo V2");
+
     return issues;
   }, [config]);
 
@@ -1281,6 +1306,7 @@ export default function App() {
                             placeholder={field.placeholder}
                             values={getList(field.key)}
                             onChange={(next) => setList(field.key, next)}
+                            isPercentage={field.key === "porcentaje" || field.key === "porcentaje_v2"}
                           />
                         ))}
                       </CardContent>
