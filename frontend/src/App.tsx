@@ -362,13 +362,6 @@ function ListEditorField({
     onChange(normalizeList(next));
   };
 
-  const percentageSum = isPercentage
-    ? safeValues.reduce((sum, v) => {
-        const n = parseInt(v.trim(), 10);
-        return sum + (Number.isFinite(n) ? n : 0);
-      }, 0)
-    : 0;
-
   return (
     <div className="rounded-md border border-border/80 bg-background/70 p-3">
       <div className="mb-3 flex items-center justify-between">
@@ -391,11 +384,6 @@ function ListEditorField({
           </div>
         ))}
       </div>
-      {isPercentage && (
-        <div className="mt-2 rounded px-2 py-1 text-xs font-medium text-right text-muted-foreground">
-          Total acumulado: {percentageSum}%
-        </div>
-      )}
     </div>
   );
 }
