@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "id": "573174c9-3706-47b7-9c8d-76948125ab08",
+    "email": "admin@tabulacion.local",
+    "emailLower": "admin@tabulacion.local",
+    "role": "admin",
+    "status": "active",
+    "plan": "enterprise",
+    "subscriptionEndsAt": null,
+    "createdAt": "2026-03-15T21:17:55.094Z",
+    "updatedAt": "2026-03-15T23:03:38.262Z",
+    "lastLoginAt": "2026-03-15T23:03:38.262Z",
+    "passwordSalt": "ceaee832e65ad0f9a9a31f121acd6d5c",
+    "passwordHash": "a758cf3d02e216ff485214c62a06e332e765b524fc22e170e736fdcd4f41da245438b89a765ddab7b41e7fc851f9bf2cc2c1a7fbed2f23c4ec0feb5904794289"
+  }
+]

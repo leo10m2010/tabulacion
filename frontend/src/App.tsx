@@ -349,41 +349,105 @@ function ListEditorField({
   onChange: (next: string[]) => void;
   isPercentage?: boolean;
 }) {
-  const safeValues = values.length > 0 ? values : [""];
+  const [rows, setRows] = useState<string[]>(() => values.length > 0 ? [...values] : [""]);
+  const prevValuesRef = useRef<string[]>(values);
 
-  const updateAt = (index: number, nextValue: string) => {
-    const next = [...safeValues];
-    next[index] = nextValue;
-    onChange(normalizeList(next));
+  // Sync from parent when config changes externally (e.g. reset)
+  useEffect(() => {
+    const prev = prevValuesRef.current;
+    const changed = prev.length !== values.length || values.some((v, i) => v !== prev[i]);
+    if (changed) {
+      prevValuesRef.current = [...values];
+      setRows(values.length > 0 ? [...values] : [""]);
+    }
+  }, [values]);
+
+  const editableSum = isPercentage && rows.length > 1
+    ? rows.slice(0, -1).reduce((acc, v) => { const n = parseInt(v.trim(), 10); return Number.isFinite(n) ? acc + n : acc; }, 0)
+    : 0;
+  const overLimit = isPercentage && rows.length > 1 && editableSum > 100;
+
+  const applyAutoLast = (vals: string[]): string[] => {
+    if (vals.length < 2) return vals;
+    const sum = vals.slice(0, -1).reduce((acc, v) => {
+      const n = parseInt(v.trim(), 10);
+      return Number.isFinite(n) ? acc + n : acc;
+    }, 0);
+    const result = [...vals];
+    result[result.length - 1] = String(Math.max(0, 100 - sum));
+    return result;
+  };
+
+  const push = (vals: string[]) => onChange(normalizeList(vals));
+
+  const updateAt = (index: number, val: string) => {
+    const next = [...rows];
+    next[index] = val;
+    const final = isPercentage ? applyAutoLast(next) : next;
+    setRows(final);
+    push(final);
   };
 
   const removeAt = (index: number) => {
-    const next = safeValues.filter((_, i) => i !== index);
-    onChange(normalizeList(next));
+    const next = rows.filter((_, i) => i !== index);
+    const safe = next.length > 0 ? next : [""];
+    const final = isPercentage ? applyAutoLast(safe) : safe;
+    setRows(final);
+    push(final);
   };
+
+  const agregar = () => {
+    let next: string[];
+    if (isPercentage) {
+      // Insert new editable field before the auto-calc last, recalculate last
+      next = applyAutoLast([...rows.slice(0, -1), "0", rows[rows.length - 1]]);
+    } else {
+      next = [...rows, ""];
+    }
+    setRows(next);
+    push(next);
+  };
+
+  const filledSum = rows.reduce((acc, v) => {
+    const n = parseInt(v.trim(), 10);
+    return Number.isFinite(n) ? acc + n : acc;
+  }, 0);
 
   return (
     <div className="rounded-md border border-border/80 bg-background/70 p-3">
       <div className="mb-3 flex items-center justify-between">
         <h4 className="text-sm font-semibold text-foreground">{label}</h4>
-        <Button variant="ghost" size="sm" onClick={() => onChange([...safeValues, ""])}>
+        <Button variant="ghost" size="sm" onClick={agregar}>
           + Agregar
         </Button>
       </div>
       <div className="space-y-2">
-        {safeValues.map((value, index) => (
-          <div className="flex items-center gap-2" key={`${label}-${index}`}>
-            <Input
-              value={value}
-              placeholder={placeholder}
-              onChange={(event) => updateAt(index, event.target.value)}
-            />
-            <Button variant="outline" size="sm" onClick={() => removeAt(index)}>
-              Quitar
-            </Button>
-          </div>
-        ))}
+        {rows.map((value, index) => {
+          const isAutoCalc = isPercentage && rows.length > 1 && index === rows.length - 1;
+          return (
+            <div className="flex items-center gap-2" key={`${label}-${index}`}>
+              <Input
+                value={value}
+                placeholder={isAutoCalc ? "Auto" : placeholder}
+                readOnly={isAutoCalc}
+                onChange={(e) => updateAt(index, e.target.value)}
+                className={cn(isAutoCalc && "cursor-not-allowed bg-muted/50 text-muted-foreground")}
+              />
+              <Button variant="outline" size="sm" onClick={() => removeAt(index)}>
+                Quitar
+              </Button>
+            </div>
+          );
+        })}
       </div>
+      {isPercentage && (
+        <div className="mt-2 flex items-center justify-between text-xs font-medium">
+          <span className={cn(overLimit ? "text-danger" : filledSum === 100 ? "text-success" : "text-muted-foreground")}>
+            Total: {filledSum}%
+          </span>
+          {overLimit && <span className="text-danger">Los valores superan 100%</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -675,6 +739,7 @@ export default function App() {
   const [appView, setAppView] = useState<AppView>(() => resolveViewFromPath());
   const [activeSection, setActiveSection] = useState<AppSection>("tabulacion");
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
+  const [step2Error, setStep2Error] = useState<string | null>(null);
   const [showAdvancedJson, setShowAdvancedJson] = useState(false);
   const [selectedSheet, setSelectedSheet] = useState<string>("");
 
@@ -783,16 +848,16 @@ export default function App() {
     const indicatorCounts = toStringList(config.numero_indicador0)
       .map((v) => Number.parseInt(v.trim(), 10))
       .filter((v) => Number.isFinite(v) && v >= 0);
-    if (indicatorCounts.length > 0 && indicatorNames.length > 0) {
+    if (indicatorCounts.length > 0 || indicatorNames.length > 0) {
       const total = indicatorCounts.reduce((sum, v) => sum + v, 0);
       if (total !== indicatorNames.length) issues.push("La suma de indicadores por dimensión no coincide con el total de indicadores.");
     }
 
     const validatePorcentaje = (key: string, label: string) => {
       const vals = toStringList(config[key]).filter((v) => v.trim() !== "");
-      const nums = vals.map((v) => Number.parseInt(v.trim(), 10));
-      if (nums.some((n) => !Number.isFinite(n) || n < 0 || n > 100)) {
-        issues.push(`${label}: cada porcentaje debe ser un número entre 0 y 100.`);
+      const sum = vals.reduce((acc, v) => { const n = Number.parseInt(v.trim(), 10); return Number.isFinite(n) ? acc + n : acc; }, 0);
+      if (vals.length > 0 && sum !== 100) {
+        issues.push(`${label}: los porcentajes deben sumar exactamente 100% (actual: ${sum}%).`);
       }
     };
     validatePorcentaje("porcentaje", "Baremo V1");
@@ -1257,7 +1322,7 @@ export default function App() {
                   </Card>
 
                   <div className="flex justify-end">
-                    <Button size="lg" onClick={() => setWizardStep(2)}>
+                    <Button size="lg" onClick={() => { setWizardStep(2); setErrorMessage(null); }}>
                       Siguiente: Escalas y estructura
                       <ArrowRight className="h-4 w-4" />
                     </Button>
@@ -1325,15 +1390,30 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between">
-                    <Button variant="outline" size="lg" onClick={() => setWizardStep(1)}>
-                      <ArrowLeft className="h-4 w-4" />
-                      Atrás
-                    </Button>
-                    <Button size="lg" onClick={() => setWizardStep(3)}>
-                      Siguiente: Generar
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
+                  <div className="space-y-3">
+                    {step2Error && (
+                      <p className="text-sm text-danger text-right">{step2Error}</p>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <Button variant="outline" size="lg" onClick={() => { setWizardStep(1); setStep2Error(null); }}>
+                        <ArrowLeft className="h-4 w-4" />
+                        Atrás
+                      </Button>
+                      <Button size="lg" onClick={() => {
+                        const sumOf = (list: string[]) => list.reduce((acc, v) => { const n = parseInt(v.trim(), 10); return Number.isFinite(n) ? acc + n : acc; }, 0);
+                        const v1Sum = sumOf(getList("porcentaje"));
+                        const v2Sum = sumOf(getList("porcentaje_v2"));
+                        if (v1Sum !== 100 || v2Sum !== 100) {
+                          setStep2Error("Los porcentajes de cada variable deben sumar exactamente 100%");
+                        } else {
+                          setStep2Error(null);
+                          setWizardStep(3);
+                        }
+                      }}>
+                        Siguiente: Generar
+                        <ArrowRight className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1472,17 +1552,19 @@ export default function App() {
                         <div>
                           <div className="mb-3 flex items-center justify-between">
                             <p className="text-sm font-medium">Vista previa del Excel</p>
-                            <select
-                              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                              value={selectedSheet}
-                              onChange={(e) => setSelectedSheet(e.target.value)}
-                            >
-                              {result.sheetNames.map((name) => (
-                                <option key={name} value={name}>{name}</option>
-                              ))}
-                            </select>
+                            {result.sheetNames.length > 0 && (
+                              <select
+                                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                                value={selectedSheet || result.sheetNames[0]}
+                                onChange={(e) => setSelectedSheet(e.target.value)}
+                              >
+                                {result.sheetNames.map((name) => (
+                                  <option key={name} value={name}>{name}</option>
+                                ))}
+                              </select>
+                            )}
                           </div>
-                          <PreviewTable rows={result.sheetData[selectedSheet] ?? []} maxRows={10} />
+                          <PreviewTable rows={result.sheetData[selectedSheet || (result.sheetNames[0] ?? "")] ?? []} maxRows={10} />
                         </div>
 
                         <Button
@@ -1497,7 +1579,7 @@ export default function App() {
                   )}
 
                   <div className="flex justify-start">
-                    <Button variant="outline" size="lg" onClick={() => setWizardStep(2)}>
+                    <Button variant="outline" size="lg" onClick={() => { setWizardStep(2); setErrorMessage(null); setStatusMessage("Listo para generar."); }}>
                       <ArrowLeft className="h-4 w-4" />
                       Atrás
                     </Button>
