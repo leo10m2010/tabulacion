@@ -1101,6 +1101,8 @@ export default function App() {
               )}
               <label className="block space-y-1.5">
                 <span className="text-sm font-medium">Correo electrónico</span>
+                {/* AUTOCOMPLETE: permite que el navegador recuerde el correo.
+                    TODO producción: cambiar a autoComplete="off" si se prefiere no guardar */}
                 <Input
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
@@ -1111,6 +1113,8 @@ export default function App() {
               </label>
               <label className="block space-y-1.5">
                 <span className="text-sm font-medium">Contraseña</span>
+                {/* AUTOCOMPLETE: permite que el navegador guarde la contraseña.
+                    TODO producción: cambiar a autoComplete="new-password" para desactivarlo */}
                 <Input
                   type="password"
                   value={loginPassword}
@@ -1124,6 +1128,8 @@ export default function App() {
                 {authLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 Entrar
               </Button>
+              {/* DEMO CREDENTIALS: bloque de ayuda con credenciales de prueba.
+                  TODO: eliminar este bloque antes de pasar a producción real */}
               <div className="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
                 Demo: <strong>admin@tabulacion.local</strong> / <strong>Admin12345!</strong>
               </div>
@@ -1135,8 +1141,11 @@ export default function App() {
               </div>
             </CardContent>
           </Card>
-          <div className="mt-4 space-y-2">
-            <p className="text-center text-xs text-muted-foreground">URL de la API</p>
+          {/* URL DE LA API: se configura automáticamente desde la variable VITE_API_BASE_URL.
+              Solo visible aquí para ajuste manual en desarrollo local.
+              TODO: eliminar este input antes de pasar a producción */}
+          <div className="mt-4 space-y-1">
+            <p className="text-center text-xs text-muted-foreground">API: {apiBaseUrl}</p>
             <Input value={apiBaseUrl} onChange={(e) => setApiBaseUrl(e.target.value)} placeholder="https://tu-api.com" className="text-xs" />
           </div>
         </div>
@@ -1217,7 +1226,7 @@ export default function App() {
           )}
         </nav>
 
-        {/* Bottom: user + theme */}
+        {/* Bottom: user + theme + API config */}
         <div className="border-t border-border/60 p-3 space-y-1">
           <button
             onClick={toggleTheme}
@@ -1226,6 +1235,18 @@ export default function App() {
             {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             {themeMode === "dark" ? "Modo claro" : "Modo oscuro"}
           </button>
+          {/* URL de la API: se detecta automáticamente desde VITE_API_BASE_URL.
+              Editable aquí solo para ajustes manuales en desarrollo.
+              TODO producción: considerar ocultar este campo o protegerlo */}
+          <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2 space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">API</p>
+            <input
+              value={apiBaseUrl}
+              onChange={(e) => setApiBaseUrl(e.target.value)}
+              className="w-full bg-transparent text-[11px] text-muted-foreground outline-none truncate"
+              placeholder="http://localhost:8080"
+            />
+          </div>
           <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2">
             <p className="truncate text-xs font-medium text-foreground">{authUser?.email}</p>
             <p className="text-[10px] text-muted-foreground capitalize">{authUser?.role}</p>
