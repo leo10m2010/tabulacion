@@ -453,7 +453,7 @@ function ListEditorField({
       </div>
       {isPercentage && (
         <div className="mt-2 flex items-center justify-between text-xs font-medium">
-          <span className={cn(overLimit ? "text-danger" : filledSum === 100 ? "text-success" : "text-muted-foreground")}>
+          <span className={cn(overLimit ? "text-danger" : filledSum === 100 ? "text-green-600 dark:text-green-400" : "text-muted-foreground")}>
             Total: {filledSum}%
           </span>
           {overLimit && <span className="text-danger">Los valores superan 100%</span>}
@@ -773,9 +773,8 @@ export default function App() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(() => Boolean(localStorage.getItem("authToken")));
   const [authError, setAuthError] = useState<string | null>(null);
-  // TODO producción: quitar los valores por defecto "admin@tabulacion.local" y "Admin12345!"
-  const [loginEmail, setLoginEmail] = useState<string>(() => localStorage.getItem("loginEmail") ?? "admin@tabulacion.local");
-  const [loginPassword, setLoginPassword] = useState<string>("Admin12345!");
+  const [loginEmail, setLoginEmail] = useState<string>(() => localStorage.getItem("loginEmail") ?? "");
+  const [loginPassword, setLoginPassword] = useState<string>("");
 
   const [managedUsers, setManagedUsers] = useState<AuthUser[]>([]);
   const [usersStatusMessage, setUsersStatusMessage] = useState<string>("Sincroniza usuarios para ver el estado.");
@@ -1129,11 +1128,13 @@ export default function App() {
                 {authLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 Entrar
               </Button>
-              {/* DEMO CREDENTIALS: bloque de ayuda con credenciales de prueba.
-                  TODO: eliminar este bloque antes de pasar a producción real */}
-              <div className="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                Demo: <strong>admin@tabulacion.local</strong> / <strong>Admin12345!</strong>
-              </div>
+              {/* TODO producción: eliminar este botón antes de lanzar a producción real */}
+              <button
+                onClick={() => { setLoginEmail("admin@tabulacion.local"); setLoginPassword("Admin12345!"); }}
+                className="w-full rounded-lg border border-dashed border-border py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-all"
+              >
+                Rellenar con datos de prueba
+              </button>
               <div className="flex items-center justify-between">
                 <button onClick={goToLanding} className="text-xs text-muted-foreground hover:text-foreground">← Volver al inicio</button>
                 <button onClick={toggleTheme} className="text-xs text-muted-foreground hover:text-foreground">
