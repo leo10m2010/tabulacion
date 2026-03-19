@@ -773,8 +773,9 @@ export default function App() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(() => Boolean(localStorage.getItem("authToken")));
   const [authError, setAuthError] = useState<string | null>(null);
-  const [loginEmail, setLoginEmail] = useState<string>(() => localStorage.getItem("loginEmail") ?? "");
-  const [loginPassword, setLoginPassword] = useState<string>("");
+  // TODO producción: quitar los valores por defecto "admin@tabulacion.local" y "Admin12345!"
+  const [loginEmail, setLoginEmail] = useState<string>(() => localStorage.getItem("loginEmail") ?? "admin@tabulacion.local");
+  const [loginPassword, setLoginPassword] = useState<string>("Admin12345!");
 
   const [managedUsers, setManagedUsers] = useState<AuthUser[]>([]);
   const [usersStatusMessage, setUsersStatusMessage] = useState<string>("Sincroniza usuarios para ver el estado.");
