@@ -428,24 +428,34 @@ function ListEditorField({
       <div className="space-y-2">
         {rows.map((value, index) => {
           const isAutoCalc = isPercentage && rows.length > 1 && index === rows.length - 1;
+          const n = parseInt(value.trim(), 10);
+          const fieldInvalid = isPercentage && !isAutoCalc && Number.isFinite(n) && n > 100;
           return (
-            <div className="flex items-center gap-2" key={`${label}-${index}`}>
-              {rowLabels[index] && (
-                <span className="w-16 shrink-0 rounded bg-muted px-2 py-1.5 text-center text-xs font-semibold text-muted-foreground">
-                  {rowLabels[index]}
-                </span>
-              )}
-              <Input
-                value={value}
-                placeholder={isAutoCalc ? "Auto" : placeholder}
-                readOnly={isAutoCalc}
-                onChange={(e) => updateAt(index, e.target.value)}
-                className={cn(isAutoCalc && "cursor-not-allowed bg-muted/50 text-muted-foreground")}
-              />
-              {rowLabels.length === 0 && (
-                <Button variant="outline" size="sm" onClick={() => removeAt(index)}>
-                  Quitar
-                </Button>
+            <div key={`${label}-${index}`}>
+              <div className="flex items-center gap-2">
+                {rowLabels[index] && (
+                  <span className="w-16 shrink-0 rounded bg-muted px-2 py-1.5 text-center text-xs font-semibold text-muted-foreground">
+                    {rowLabels[index]}
+                  </span>
+                )}
+                <Input
+                  value={value}
+                  placeholder={isAutoCalc ? "Auto" : placeholder}
+                  readOnly={isAutoCalc}
+                  onChange={(e) => updateAt(index, e.target.value)}
+                  className={cn(
+                    isAutoCalc && "cursor-not-allowed bg-muted/50 text-muted-foreground",
+                    fieldInvalid && "border-danger focus-visible:ring-danger",
+                  )}
+                />
+                {rowLabels.length === 0 && (
+                  <Button variant="outline" size="sm" onClick={() => removeAt(index)}>
+                    Quitar
+                  </Button>
+                )}
+              </div>
+              {fieldInvalid && (
+                <p className="mt-1 text-xs text-danger">Máximo 100%</p>
               )}
             </div>
           );
