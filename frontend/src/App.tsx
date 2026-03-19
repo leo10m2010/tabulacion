@@ -859,7 +859,7 @@ export default function App() {
     const indicatorCounts = toStringList(config.numero_indicador0)
       .map((v) => Number.parseInt(v.trim(), 10))
       .filter((v) => Number.isFinite(v) && v >= 0);
-    if (indicatorCounts.length > 0 || indicatorNames.length > 0) {
+    if (indicatorCounts.length > 0 && indicatorNames.length > 0) {
       const total = indicatorCounts.reduce((sum, v) => sum + v, 0);
       if (total !== indicatorNames.length) issues.push("La suma de indicadores por dimensión no coincide con el total de indicadores.");
     }
