@@ -162,7 +162,8 @@ const writeSheetData = (sheet, headerRow, rows, rowLabels) => {
 };
 
 const writeBaremoToSheet = (sheet, config, prefix = "") => {
-  const nombres = Array.isArray(config.nombre_escala) ? config.nombre_escala : [];
+  const escalaKey = prefix === "" ? "nombre_escala" : "nombre_escala_v2";
+  const nombres = Array.isArray(config[escalaKey]) ? config[escalaKey] : (Array.isArray(config.nombre_escala) ? config.nombre_escala : []);
   const desde = Array.isArray(config[`desde${prefix}`]) ? config[`desde${prefix}`] : [];
   const hasta = Array.isArray(config[`hasta${prefix}`]) ? config[`hasta${prefix}`] : [];
   const porcentaje = Array.isArray(config[`porcentaje${prefix}`]) ? config[`porcentaje${prefix}`] : [];

@@ -99,6 +99,7 @@ const FALLBACK_CONFIG: TabConfig = {
   respuesta: "5",
   relacionversa: "0",
   nombre_escala: ["Bajo", "Medio", "Alto"],
+  nombre_escala_v2: ["Bajo", "Medio", "Alto"],
   nombre_respuesta: [
     "Totalmente en desacuerdo",
     "En desacuerdo",
@@ -169,18 +170,18 @@ const STEP_1_FIELDS = [
 
 const LIST_GROUPS = [
   {
-    title: "Nombres de los niveles",
-    description: "Los nombres que aparecen en el baremo. La cantidad debe coincidir con los niveles definidos en el paso 1.",
+    title: "Opciones de respuesta",
+    description: "Los textos que aparecen como opciones en la encuesta. Compartido entre ambas variables.",
     fields: [
-      { key: "nombre_escala", label: "Niveles del baremo", placeholder: "Ej: Bajo" },
       { key: "nombre_respuesta", label: "Opciones de respuesta", placeholder: "Ej: De acuerdo" },
     ],
   },
   {
     title: "Baremo de Variable 1",
-    description: "Rangos de puntajes para la primera variable. Filas = cantidad de niveles del baremo.",
+    description: "Niveles y rangos de puntajes para la primera variable.",
     variable: "v1" as const,
     fields: [
+      { key: "nombre_escala", label: "Niveles del baremo", placeholder: "Ej: Bajo" },
       { key: "desde", label: "Puntaje desde", placeholder: "Ej: 18" },
       { key: "hasta", label: "Puntaje hasta", placeholder: "Ej: 41" },
       { key: "porcentaje", label: "Porcentaje (%)", placeholder: "Ej: 46" },
@@ -189,9 +190,10 @@ const LIST_GROUPS = [
   },
   {
     title: "Baremo de Variable 2",
-    description: "Rangos de puntajes para la segunda variable. Filas = cantidad de niveles del baremo.",
+    description: "Niveles y rangos de puntajes para la segunda variable.",
     variable: "v2" as const,
     fields: [
+      { key: "nombre_escala_v2", label: "Niveles del baremo", placeholder: "Ej: Bajo" },
       { key: "desde_v2", label: "Puntaje desde", placeholder: "Ej: 9" },
       { key: "hasta_v2", label: "Puntaje hasta", placeholder: "Ej: 20" },
       { key: "porcentaje_v2", label: "Porcentaje (%)", placeholder: "Ej: 46" },
