@@ -344,12 +344,14 @@ function ListEditorField({
   values,
   onChange,
   isPercentage = false,
+  rowLabels = [],
 }: {
   label: string;
   placeholder: string;
   values: string[];
   onChange: (next: string[]) => void;
   isPercentage?: boolean;
+  rowLabels?: string[];
 }) {
   const [rows, setRows] = useState<string[]>(() => values.length > 0 ? [...values] : [""]);
   const prevValuesRef = useRef<string[]>(values);
@@ -428,6 +430,11 @@ function ListEditorField({
           const isAutoCalc = isPercentage && rows.length > 1 && index === rows.length - 1;
           return (
             <div className="flex items-center gap-2" key={`${label}-${index}`}>
+              {rowLabels[index] && (
+                <span className="w-16 shrink-0 rounded bg-muted px-2 py-1.5 text-center text-xs font-semibold text-muted-foreground">
+                  {rowLabels[index]}
+                </span>
+              )}
               <Input
                 value={value}
                 placeholder={isAutoCalc ? "Auto" : placeholder}
@@ -435,9 +442,11 @@ function ListEditorField({
                 onChange={(e) => updateAt(index, e.target.value)}
                 className={cn(isAutoCalc && "cursor-not-allowed bg-muted/50 text-muted-foreground")}
               />
-              <Button variant="outline" size="sm" onClick={() => removeAt(index)}>
-                Quitar
-              </Button>
+              {rowLabels.length === 0 && (
+                <Button variant="outline" size="sm" onClick={() => removeAt(index)}>
+                  Quitar
+                </Button>
+              )}
             </div>
           );
         })}
@@ -870,7 +879,25 @@ export default function App() {
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   const setScalar = (key: string, value: string) => setConfig((prev) => ({ ...prev, [key]: value }));
-  const setList = (key: string, values: string[]) => setConfig((prev) => ({ ...prev, [key]: normalizeList(values) }));
+  const setList = (key: string, values: string[]) => setConfig((prev) => {
+    const normalized = normalizeList(values);
+    const updates: TabConfig = { ...prev, [key]: normalized };
+    // Cuando cambian los niveles del baremo, sincronizar el nº de filas de los demás campos
+    const syncBaremo = (dependentKeys: string[]) => {
+      const n = normalized.length;
+      dependentKeys.forEach((k) => {
+        const arr = toStringList(prev[k]);
+        if (arr.length < n) {
+          updates[k] = [...arr, ...Array(n - arr.length).fill("")];
+        } else if (arr.length > n) {
+          updates[k] = arr.slice(0, n);
+        }
+      });
+    };
+    if (key === "nombre_escala") syncBaremo(["desde", "hasta", "porcentaje", "cantidad"]);
+    if (key === "nombre_escala_v2") syncBaremo(["desde_v2", "hasta_v2", "porcentaje_v2", "cantidad_v2"]);
+    return updates;
+  });
   const getScalar = (key: string) => toStringValue(config[key]);
   const getList = (key: string) => toStringList(config[key]);
 
@@ -1354,16 +1381,24 @@ export default function App() {
                         )}
                       </CardHeader>
                       <CardContent className="grid gap-3 md:grid-cols-2">
-                        {group.fields.map((field) => (
-                          <ListEditorField
-                            key={field.key}
-                            label={field.label}
-                            placeholder={field.placeholder}
-                            values={getList(field.key)}
-                            onChange={(next) => setList(field.key, next)}
-                            isPercentage={field.key === "porcentaje" || field.key === "porcentaje_v2"}
-                          />
-                        ))}
+                        {group.fields.map((field) => {
+                          const isEscalaField = field.key === "nombre_escala" || field.key === "nombre_escala_v2";
+                          const labelsKey = "variable" in group
+                            ? (group.variable === "v1" ? "nombre_escala" : "nombre_escala_v2")
+                            : "";
+                          const rowLabels = !isEscalaField && labelsKey ? getList(labelsKey) : [];
+                          return (
+                            <ListEditorField
+                              key={field.key}
+                              label={field.label}
+                              placeholder={field.placeholder}
+                              values={getList(field.key)}
+                              onChange={(next) => setList(field.key, next)}
+                              isPercentage={field.key === "porcentaje" || field.key === "porcentaje_v2"}
+                              rowLabels={rowLabels}
+                            />
+                          );
+                        })}
                       </CardContent>
                     </Card>
                   ))}
