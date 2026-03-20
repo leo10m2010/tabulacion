@@ -13,8 +13,10 @@ import {
   Download,
   FileSpreadsheet,
   HelpCircle,
+  KeyRound,
   Loader2,
   LogOut,
+  Mail,
   Moon,
   Server,
   ShieldCheck,
@@ -1816,17 +1818,17 @@ export default function App() {
                 <CardContent className="space-y-4">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block space-y-1.5">
-                      <span className="text-sm font-medium">Email</span>
+                      <span className="flex items-center gap-1.5 text-sm font-medium"><Mail className="h-3.5 w-3.5 text-muted-foreground" />Email</span>
                       <Input value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} placeholder="usuario@dominio.com" />
                     </label>
                     <label className="block space-y-1.5">
-                      <span className="text-sm font-medium">Contraseña inicial</span>
+                      <span className="flex items-center gap-1.5 text-sm font-medium"><KeyRound className="h-3.5 w-3.5 text-muted-foreground" />Contraseña inicial</span>
                       <Input type="password" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} placeholder="Mínimo 8 caracteres" />
                     </label>
                   </div>
                   <div className="grid gap-3 sm:grid-cols-3">
                     <label className="block space-y-1.5">
-                      <span className="text-sm font-medium">Rol</span>
+                      <span className="flex items-center gap-1.5 text-sm font-medium"><UserRound className="h-3.5 w-3.5 text-muted-foreground" />Rol</span>
                       <select
                         className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                         value={newUserRole}
@@ -1837,7 +1839,7 @@ export default function App() {
                       </select>
                     </label>
                     <label className="block space-y-1.5">
-                      <span className="text-sm font-medium">Plan</span>
+                      <span className="flex items-center gap-1.5 text-sm font-medium"><Sparkles className="h-3.5 w-3.5 text-muted-foreground" />Plan</span>
                       <select
                         className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                         value={newUserPlan}
@@ -1848,7 +1850,7 @@ export default function App() {
                       </select>
                     </label>
                     <label className="block space-y-1.5">
-                      <span className="text-sm font-medium">Días de acceso</span>
+                      <span className="flex items-center gap-1.5 text-sm font-medium"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" />Días de acceso</span>
                       <Input value={newUserDays} onChange={(e) => setNewUserDays(e.target.value)} placeholder="30" />
                     </label>
                   </div>
