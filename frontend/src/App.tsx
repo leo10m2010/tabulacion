@@ -821,17 +821,22 @@ export default function App() {
   // ── Validation ─────────────────────────────────────────────────────────────
   const validationMessages = useMemo(() => {
     const issues: string[] = [];
+    const hasV2 = (parseIntSafe(config.variable) ?? 2) >= 2;
     const muestra = parseIntSafe(config.muestra);
     const item = parseIntSafe(config.item);
-    const itemv2 = parseIntSafe(config.itemv2);
     const escala = parseIntSafe(config.escala);
     const respuesta = parseIntSafe(config.respuesta);
     if (muestra === null || muestra < 2) issues.push("La cantidad de personas debe ser 2 o más.");
     if (item === null || item <= 0) issues.push("Las preguntas de V1 deben ser mayor a 0.");
-    if (itemv2 === null || itemv2 <= 0) issues.push("Las preguntas de V2 deben ser mayor a 0.");
+    if (hasV2) {
+      const itemv2 = parseIntSafe(config.itemv2);
+      if (itemv2 === null || itemv2 <= 0) issues.push("Las preguntas de V2 deben ser mayor a 0.");
+    }
     if (escala === null || escala <= 0) issues.push("Los niveles del baremo (V1) deben ser mayor a 0.");
-    const escala_v2 = parseIntSafe(config.escala_v2);
-    if (escala_v2 === null || escala_v2 <= 0) issues.push("Los niveles del baremo (V2) deben ser mayor a 0.");
+    if (hasV2) {
+      const escala_v2 = parseIntSafe(config.escala_v2);
+      if (escala_v2 === null || escala_v2 <= 0) issues.push("Los niveles del baremo (V2) deben ser mayor a 0.");
+    }
     if (respuesta === null || respuesta <= 0) issues.push("La escala de respuesta debe ser mayor a 0.");
     const dimensions = toStringList(config.nombre_dimension).filter((v) => v.trim() !== "");
     if (!dimensions.length) issues.push("Debe existir al menos una dimensión.");
@@ -852,7 +857,7 @@ export default function App() {
       }
     };
     validatePorcentaje("porcentaje", "Baremo V1");
-    validatePorcentaje("porcentaje_v2", "Baremo V2");
+    if (hasV2) validatePorcentaje("porcentaje_v2", "Baremo V2");
 
     return issues;
   }, [config]);
@@ -1335,57 +1340,96 @@ export default function App() {
                       <CardDescription>Ingresa la información básica de tu instrumento de investigación.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
-
-                      {/* General */}
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        {[
-                          { key: "nommuestra", label: "Nombre de la muestra", hint: "¿Cómo se llaman las personas encuestadas? Ej: Beneficiarios, Estudiantes, Trabajadores.", placeholder: "Ej: Beneficiarios" },
-                          { key: "muestra", label: "Cantidad de personas encuestadas", hint: "Total de personas que respondieron la encuesta. Mínimo 2.", placeholder: "Ej: 289" },
-                          { key: "variable", label: "Número de variables", hint: "Cuántas variables tiene tu instrumento. Generalmente 2.", placeholder: "Ej: 2" },
-                          { key: "respuesta", label: "Escala de respuesta (Likert)", hint: "Cuántos valores tiene la escala de respuesta. Ej: 5 significa respuestas del 1 al 5.", placeholder: "Ej: 5" },
-                        ].map((field) => (
-                          <div key={field.key}>
-                            <label className="block">
-                              <span className="text-sm font-medium text-foreground">{field.label}</span>
-                              <Input className="mt-1.5" value={getScalar(field.key)} onChange={(e) => setScalar(field.key, e.target.value)} placeholder={field.placeholder} />
-                            </label>
-                            <FieldHint text={field.hint} />
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Por variable — 2 columnas alineadas */}
-                      <div className="rounded-xl border border-border/60 bg-background/50 p-4">
-                        <p className="mb-3 text-sm font-semibold text-foreground">Configuración por variable</p>
-                        <div className="grid grid-cols-2 gap-4">
-                          <p className="col-span-2 grid grid-cols-2 gap-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            <span className="rounded bg-primary/10 px-2 py-1 text-center text-primary">Variable 1</span>
-                            <span className="rounded bg-primary/10 px-2 py-1 text-center text-primary">Variable 2</span>
-                          </p>
-                          {[
-                            { v1: { key: "item", label: "Preguntas", placeholder: "Ej: 18" }, v2: { key: "itemv2", label: "Preguntas", placeholder: "Ej: 9" }, hint: "Cuántas preguntas (ítems) tiene cada variable." },
-                            { v1: { key: "escala", label: "Niveles del baremo", placeholder: "Ej: 3" }, v2: { key: "escala_v2", label: "Niveles del baremo", placeholder: "Ej: 3" }, hint: "Cuántos niveles tiene el baremo de cada variable. Ej: 3 = Bajo / Medio / Alto." },
-                          ].map((row) => (
-                            <div key={row.v1.key} className="col-span-2 space-y-2">
-                              <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                  <label className="block">
-                                    <span className="text-sm font-medium text-foreground">{row.v1.label}</span>
-                                    <Input className="mt-1.5" value={getScalar(row.v1.key)} onChange={(e) => setScalar(row.v1.key, e.target.value)} placeholder={row.v1.placeholder} />
-                                  </label>
-                                </div>
-                                <div>
-                                  <label className="block">
-                                    <span className="text-sm font-medium text-foreground">{row.v2.label}</span>
-                                    <Input className="mt-1.5" value={getScalar(row.v2.key)} onChange={(e) => setScalar(row.v2.key, e.target.value)} placeholder={row.v2.placeholder} />
-                                  </label>
-                                </div>
+                      {(() => {
+                        const numVars = parseInt(getScalar("variable"), 10) || 2;
+                        const hasV2 = numVars >= 2;
+                        return (
+                          <>
+                            {/* Número de variables — selector */}
+                            <div>
+                              <p className="mb-1 text-sm font-medium text-foreground">¿Cuántas variables tiene tu encuesta?</p>
+                              <FieldHint text="La mayoría de tesis usan 2 variables. Si solo tienes 1, la correlación no aplica." />
+                              <div className="mt-3 flex gap-2">
+                                {[1, 2].map((n) => (
+                                  <button
+                                    key={n}
+                                    onClick={() => setScalar("variable", String(n))}
+                                    className={cn(
+                                      "flex-1 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                      numVars === n
+                                        ? "border-primary bg-primary/10 text-primary"
+                                        : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                                    )}
+                                  >
+                                    {n} variable{n > 1 ? "s" : ""}
+                                  </button>
+                                ))}
                               </div>
-                              <FieldHint text={row.hint} />
                             </div>
-                          ))}
-                        </div>
-                      </div>
+
+                            {/* General */}
+                            <div className="grid gap-4 sm:grid-cols-2">
+                              {[
+                                { key: "nommuestra", label: "Nombre de la muestra", hint: "¿Cómo se llaman las personas encuestadas? Ej: Beneficiarios, Estudiantes, Trabajadores.", placeholder: "Ej: Beneficiarios" },
+                                { key: "muestra", label: "Cantidad de personas encuestadas", hint: "Total de personas que respondieron la encuesta. Mínimo 2.", placeholder: "Ej: 289" },
+                                { key: "respuesta", label: "¿Cuántas opciones tiene cada pregunta?", hint: "Si usas escala del 1 al 5, escribe 5. Si es del 1 al 4, escribe 4.", placeholder: "Ej: 5" },
+                              ].map((field) => (
+                                <div key={field.key}>
+                                  <label className="block">
+                                    <span className="text-sm font-medium text-foreground">{field.label}</span>
+                                    <Input className="mt-1.5" value={getScalar(field.key)} onChange={(e) => setScalar(field.key, e.target.value)} placeholder={field.placeholder} />
+                                  </label>
+                                  <FieldHint text={field.hint} />
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Por variable */}
+                            <div className="rounded-xl border border-border/60 bg-background/50 p-4">
+                              <p className="mb-3 text-sm font-semibold text-foreground">Configuración por variable</p>
+                              <div className={cn("grid gap-4", hasV2 ? "grid-cols-2" : "grid-cols-1")}>
+                                {/* Headers */}
+                                <div className="rounded bg-primary/10 px-2 py-1 text-center text-xs font-semibold uppercase tracking-wide text-primary">Variable 1</div>
+                                {hasV2 && <div className="rounded bg-primary/10 px-2 py-1 text-center text-xs font-semibold uppercase tracking-wide text-primary">Variable 2</div>}
+                                {/* Preguntas */}
+                                <div>
+                                  <label className="block">
+                                    <span className="text-sm font-medium text-foreground">Preguntas</span>
+                                    <Input className="mt-1.5" value={getScalar("item")} onChange={(e) => setScalar("item", e.target.value)} placeholder="Ej: 18" />
+                                  </label>
+                                </div>
+                                {hasV2 && (
+                                  <div>
+                                    <label className="block">
+                                      <span className="text-sm font-medium text-foreground">Preguntas</span>
+                                      <Input className="mt-1.5" value={getScalar("itemv2")} onChange={(e) => setScalar("itemv2", e.target.value)} placeholder="Ej: 9" />
+                                    </label>
+                                  </div>
+                                )}
+                                <FieldHint text="Cuántas preguntas (ítems) tiene cada variable." />
+                                {hasV2 && <FieldHint text="Cuántas preguntas (ítems) tiene cada variable." />}
+                                {/* Niveles baremo */}
+                                <div>
+                                  <label className="block">
+                                    <span className="text-sm font-medium text-foreground">Niveles del baremo</span>
+                                    <Input className="mt-1.5" value={getScalar("escala")} onChange={(e) => setScalar("escala", e.target.value)} placeholder="Ej: 3" />
+                                  </label>
+                                </div>
+                                {hasV2 && (
+                                  <div>
+                                    <label className="block">
+                                      <span className="text-sm font-medium text-foreground">Niveles del baremo</span>
+                                      <Input className="mt-1.5" value={getScalar("escala_v2")} onChange={(e) => setScalar("escala_v2", e.target.value)} placeholder="Ej: 3" />
+                                    </label>
+                                  </div>
+                                )}
+                                <FieldHint text="Cuántos niveles tiene el baremo. Ej: 3 = Bajo / Medio / Alto." />
+                                {hasV2 && <FieldHint text="Puede ser diferente al de la Variable 1." />}
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
 
                       {/* Relación */}
                       <div className="rounded-xl border border-border/80 bg-background/50 p-4">
@@ -1431,7 +1475,7 @@ export default function App() {
               {/* Step 2: Escalas y estructura */}
               {wizardStep === 2 && (
                 <div className="space-y-5">
-                  {LIST_GROUPS.map((group) => (
+                  {LIST_GROUPS.filter((group) => !("variable" in group && group.variable === "v2") || parseInt(getScalar("variable"), 10) >= 2).map((group) => (
                     <Card key={group.title} className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
                       <CardHeader>
                         <CardTitle>{group.title}</CardTitle>
@@ -1539,9 +1583,10 @@ export default function App() {
                           { label: "Muestra", value: `${getScalar("nommuestra")} (${getScalar("muestra")} personas)` },
                           { label: "Variables", value: getScalar("variable") },
                           { label: "Preguntas V1", value: getScalar("item") },
-                          { label: "Preguntas V2", value: getScalar("itemv2") },
-                          { label: "Niveles baremo", value: getScalar("escala") },
-                          { label: "Escala Likert", value: `1 al ${getScalar("respuesta")}` },
+                          ...((parseIntSafe(config.variable) ?? 2) >= 2 ? [{ label: "Preguntas V2", value: getScalar("itemv2") }] : []),
+                          { label: "Niveles baremo V1", value: getScalar("escala") },
+                          ...((parseIntSafe(config.variable) ?? 2) >= 2 ? [{ label: "Niveles baremo V2", value: getScalar("escala_v2") }] : []),
+                          { label: "Opciones por pregunta", value: `1 al ${getScalar("respuesta")}` },
                           { label: "Relación", value: getScalar("relacionversa") === "1" ? "Inversa" : "Directa" },
                           { label: "Dimensiones", value: getList("nombre_dimension").filter(Boolean).join(", ") || "—" },
                         ].map((item) => (
