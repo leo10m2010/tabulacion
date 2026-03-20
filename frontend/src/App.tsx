@@ -134,38 +134,29 @@ const LIST_GROUPS = [
   },
   {
     title: "Baremo de Variable 1",
-    description: "Niveles y rangos de puntajes para la primera variable.",
+    description: "Define los niveles y el porcentaje de personas en cada nivel. Los rangos y cantidades se calculan automáticamente.",
     variable: "v1" as const,
     fields: [
       { key: "nombre_escala", label: "Niveles del baremo", placeholder: "Ej: Bajo" },
       { key: "porcentaje", label: "Porcentaje (%)", placeholder: "Ej: 46" },
-      { key: "cantidad", label: "Cantidad de personas", placeholder: "Ej: 133" },
     ],
   },
   {
     title: "Baremo de Variable 2",
-    description: "Niveles y rangos de puntajes para la segunda variable.",
+    description: "Define los niveles y el porcentaje de personas en cada nivel. Los rangos y cantidades se calculan automáticamente.",
     variable: "v2" as const,
     fields: [
       { key: "nombre_escala_v2", label: "Niveles del baremo", placeholder: "Ej: Bajo" },
       { key: "porcentaje_v2", label: "Porcentaje (%)", placeholder: "Ej: 46" },
-      { key: "cantidad_v2", label: "Cantidad de personas", placeholder: "Ej: 133" },
     ],
   },
   {
     title: "Dimensiones e indicadores",
-    description: "La estructura conceptual de tu instrumento de investigación.",
+    description: "La estructura conceptual de tu instrumento: dimensiones, indicadores y preguntas por bloque.",
     fields: [
       { key: "nombre_dimension", label: "Nombre de cada dimensión", placeholder: "Ej: Gestión de abastecimiento" },
-      { key: "numero_dimension", label: "Número de dimensión", placeholder: "Ej: 1" },
       { key: "nombre_indicador", label: "Nombre de cada indicador", placeholder: "Ej: Transparencia" },
       { key: "numero_indicador0", label: "Indicadores por dimensión", placeholder: "Ej: 3" },
-    ],
-  },
-  {
-    title: "Preguntas por dimensión",
-    description: "Cuántas preguntas hay en cada bloque de cada variable.",
-    fields: [
       { key: "numero_pregunta0", label: "Preguntas de V1 por dimensión", placeholder: "Ej: 6" },
       { key: "numero_pregunta1", label: "Preguntas de V2 por dimensión", placeholder: "Ej: 9" },
     ],
@@ -942,6 +933,10 @@ export default function App() {
     };
     calcCantidad("porcentaje", "cantidad");
     calcCantidad("porcentaje_v2", "cantidad_v2");
+    // Auto-generar numero_dimension cuando cambian las dimensiones
+    if (key === "nombre_dimension") {
+      updates.numero_dimension = normalized.map((_, i) => String(i + 1));
+    }
     return updates;
   });
   const getScalar = (key: string) => toStringValue(config[key]);
