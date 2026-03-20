@@ -138,8 +138,6 @@ const LIST_GROUPS = [
     variable: "v1" as const,
     fields: [
       { key: "nombre_escala", label: "Niveles del baremo", placeholder: "Ej: Bajo" },
-      { key: "desde", label: "Puntaje desde", placeholder: "Ej: 18" },
-      { key: "hasta", label: "Puntaje hasta", placeholder: "Ej: 41" },
       { key: "porcentaje", label: "Porcentaje (%)", placeholder: "Ej: 46" },
       { key: "cantidad", label: "Cantidad de personas", placeholder: "Ej: 133" },
     ],
@@ -150,8 +148,6 @@ const LIST_GROUPS = [
     variable: "v2" as const,
     fields: [
       { key: "nombre_escala_v2", label: "Niveles del baremo", placeholder: "Ej: Bajo" },
-      { key: "desde_v2", label: "Puntaje desde", placeholder: "Ej: 9" },
-      { key: "hasta_v2", label: "Puntaje hasta", placeholder: "Ej: 20" },
       { key: "porcentaje_v2", label: "Porcentaje (%)", placeholder: "Ej: 46" },
       { key: "cantidad_v2", label: "Cantidad de personas", placeholder: "Ej: 133" },
     ],
