@@ -1238,7 +1238,7 @@ export default function App() {
     <div className={cn("flex min-h-screen transition-colors", themeMode === "dark" ? "bg-[radial-gradient(circle_at_top,#1b2534_0%,#0b0f16_100%)]" : "bg-[radial-gradient(circle_at_top,#e4ecf8_0%,#f3f5f9_100%)]")}>
 
       {/* ── Sidebar ── */}
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-border/60 bg-card/80 backdrop-blur-sm md:flex">
+      <aside className="hidden w-56 shrink-0 flex-col border-r border-border/60 bg-card/80 backdrop-blur-sm md:flex sticky top-0 h-screen">
         {/* Logo */}
         <div className="flex h-16 items-center gap-2 border-b border-border/60 px-4">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -1248,7 +1248,7 @@ export default function App() {
         </div>
 
         {/* Nav items */}
-        <nav className="flex-1 space-y-1 p-3">
+        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
           <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Herramientas</p>
           <button
             onClick={() => { setActiveSection("tabulacion"); }}
