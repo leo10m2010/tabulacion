@@ -295,6 +295,27 @@ function resolveViewFromPath(): AppView {
   return window.location.pathname.startsWith("/app") ? "app" : "landing";
 }
 
+function calcBaremoIntervalos(preguntas: number, respuesta: number, niveles: number): { desde: string[]; hasta: string[] } {
+  const pMin = preguntas;
+  const pMax = preguntas * respuesta;
+  const amplitud = Math.round((pMax - pMin) / niveles);
+  const desde: string[] = [];
+  const hasta: string[] = [];
+  for (let i = 0; i < niveles; i++) {
+    if (i === 0) {
+      desde[i] = String(pMin);
+      hasta[i] = String(pMin + amplitud);
+    } else if (i === niveles - 1) {
+      desde[i] = String(parseInt(hasta[i - 1]) + 1);
+      hasta[i] = String(pMax);
+    } else {
+      desde[i] = String(parseInt(hasta[i - 1]) + 1);
+      hasta[i] = String(pMin + (i + 1) * amplitud);
+    }
+  }
+  return { desde, hasta };
+}
+
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 function FieldHint({ text }: { text: string }) {
@@ -917,6 +938,20 @@ export default function App() {
   const getScalar = (key: string) => toStringValue(config[key]);
   const getList = (key: string) => toStringList(config[key]);
 
+  const autoCalcBaremo = (varKey: "v1" | "v2") => {
+    const isV2 = varKey === "v2";
+    const preguntas = parseIntSafe(isV2 ? config.itemv2 : config.item);
+    const respuesta = parseIntSafe(config.respuesta);
+    const niveles = parseIntSafe(isV2 ? config.escala_v2 : config.escala);
+    if (!preguntas || !respuesta || !niveles || preguntas <= 0 || respuesta <= 0 || niveles <= 0) return;
+    const { desde, hasta } = calcBaremoIntervalos(preguntas, respuesta, niveles);
+    setConfig((prev) => ({
+      ...prev,
+      [isV2 ? "desde_v2" : "desde"]: desde,
+      [isV2 ? "hasta_v2" : "hasta"]: hasta,
+    }));
+  };
+
   const handleApplyJson = () => {
     setErrorMessage(null);
     try {
@@ -1464,7 +1499,12 @@ export default function App() {
                   </Card>
 
                   <div className="flex justify-end">
-                    <Button size="lg" onClick={() => { setWizardStep(2); setErrorMessage(null); }}>
+                    <Button size="lg" onClick={() => {
+                      autoCalcBaremo("v1");
+                      if ((parseIntSafe(config.variable) ?? 2) >= 2) autoCalcBaremo("v2");
+                      setWizardStep(2);
+                      setErrorMessage(null);
+                    }}>
                       Siguiente: Escalas y estructura
                       <ArrowRight className="h-4 w-4" />
                     </Button>
@@ -1481,15 +1521,25 @@ export default function App() {
                         <CardTitle>{group.title}</CardTitle>
                         <CardDescription>{group.description}</CardDescription>
                         {"variable" in group && group.variable === "v1" && (
-                          <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                            <HelpCircle className="h-3 w-3" />
-                            {calcBaremoRange(getScalar("item"), getScalar("respuesta")) || "Completa los ítems y escala en el paso 1"}
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <div className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                              <HelpCircle className="h-3 w-3" />
+                              {calcBaremoRange(getScalar("item"), getScalar("respuesta")) || "Completa los ítems y escala en el paso 1"}
+                            </div>
+                            <Button size="sm" variant="outline" onClick={() => autoCalcBaremo("v1")}>
+                              Calcular rangos automáticamente
+                            </Button>
                           </div>
                         )}
                         {"variable" in group && group.variable === "v2" && (
-                          <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                            <HelpCircle className="h-3 w-3" />
-                            {calcBaremoRange(getScalar("itemv2"), getScalar("respuesta")) || "Completa los ítems y escala en el paso 1"}
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <div className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                              <HelpCircle className="h-3 w-3" />
+                              {calcBaremoRange(getScalar("itemv2"), getScalar("respuesta")) || "Completa los ítems y escala en el paso 1"}
+                            </div>
+                            <Button size="sm" variant="outline" onClick={() => autoCalcBaremo("v2")}>
+                              Calcular rangos automáticamente
+                            </Button>
                           </div>
                         )}
                       </CardHeader>
