@@ -1530,25 +1530,15 @@ export default function App() {
                         <CardTitle>{group.title}</CardTitle>
                         <CardDescription>{group.description}</CardDescription>
                         {"variable" in group && group.variable === "v1" && (
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <div className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                              <HelpCircle className="h-3 w-3" />
-                              {calcBaremoRange(getScalar("item"), getScalar("respuesta")) || "Completa los ítems y escala en el paso 1"}
-                            </div>
-                            <Button size="sm" variant="outline" onClick={() => autoCalcBaremo("v1")}>
-                              Calcular rangos automáticamente
-                            </Button>
+                          <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                            <HelpCircle className="h-3 w-3" />
+                            {calcBaremoRange(getScalar("item"), getScalar("respuesta")) || "Completa los ítems y escala en el paso 1"}
                           </div>
                         )}
                         {"variable" in group && group.variable === "v2" && (
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <div className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                              <HelpCircle className="h-3 w-3" />
-                              {calcBaremoRange(getScalar("itemv2"), getScalar("respuesta")) || "Completa los ítems y escala en el paso 1"}
-                            </div>
-                            <Button size="sm" variant="outline" onClick={() => autoCalcBaremo("v2")}>
-                              Calcular rangos automáticamente
-                            </Button>
+                          <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                            <HelpCircle className="h-3 w-3" />
+                            {calcBaremoRange(getScalar("itemv2"), getScalar("respuesta")) || "Completa los ítems y escala en el paso 1"}
                           </div>
                         )}
                       </CardHeader>
