@@ -334,6 +334,7 @@ function ListEditorField({
   onChange,
   isPercentage = false,
   rowLabels = [],
+  readOnly = false,
 }: {
   label: string;
   placeholder: string;
@@ -341,6 +342,7 @@ function ListEditorField({
   onChange: (next: string[]) => void;
   isPercentage?: boolean;
   rowLabels?: string[];
+  readOnly?: boolean;
 }) {
   const [rows, setRows] = useState<string[]>(() => values.length > 0 ? [...values] : [""]);
   const prevValuesRef = useRef<string[]>(values);
@@ -409,14 +411,13 @@ function ListEditorField({
   return (
     <div className="rounded-md border border-border/80 bg-background/70 p-3">
       <div className="mb-3 flex items-center justify-between">
-        <h4 className="text-sm font-semibold text-foreground">{label}</h4>
-        <Button variant="ghost" size="sm" onClick={agregar}>
-          + Agregar
-        </Button>
+        <h4 className="text-sm font-semibold text-foreground">{label}{readOnly && <span className="ml-2 text-xs font-normal text-muted-foreground">(calculado automáticamente)</span>}</h4>
+        {!readOnly && <Button variant="ghost" size="sm" onClick={agregar}>+ Agregar</Button>}
       </div>
       <div className="space-y-2">
         {rows.map((value, index) => {
           const isAutoCalc = isPercentage && rows.length > 1 && index === rows.length - 1;
+          const effectiveReadOnly = readOnly || isAutoCalc;
           const n = parseInt(value.trim(), 10);
           const fieldInvalid = isPercentage && !isAutoCalc && Number.isFinite(n) && n > 100;
           return (
@@ -429,15 +430,15 @@ function ListEditorField({
                 )}
                 <Input
                   value={value}
-                  placeholder={isAutoCalc ? "Auto" : placeholder}
-                  readOnly={isAutoCalc}
+                  placeholder={effectiveReadOnly ? "Auto" : placeholder}
+                  readOnly={effectiveReadOnly}
                   onChange={(e) => updateAt(index, e.target.value)}
                   className={cn(
-                    isAutoCalc && "cursor-not-allowed bg-muted/50 text-muted-foreground",
+                    effectiveReadOnly && "cursor-not-allowed bg-muted/50 text-muted-foreground",
                     fieldInvalid && "border-danger focus-visible:ring-danger",
                   )}
                 />
-                {rowLabels.length === 0 && (
+                {rowLabels.length === 0 && !readOnly && (
                   <Button variant="outline" size="sm" onClick={() => removeAt(index)}>
                     Quitar
                   </Button>
@@ -933,6 +934,18 @@ export default function App() {
     };
     ["desde", "hasta", "porcentaje", "cantidad"].forEach((k) => padToLength(k, "nombre_escala"));
     ["desde_v2", "hasta_v2", "porcentaje_v2", "cantidad_v2"].forEach((k) => padToLength(k, "nombre_escala_v2"));
+    // Cuando cambia el porcentaje, calcular cantidad automáticamente
+    const calcCantidad = (pctKey: string, cantKey: string) => {
+      if (key !== pctKey) return;
+      const muestra = parseIntSafe(prev.muestra);
+      if (!muestra || muestra <= 0) return;
+      updates[cantKey] = toStringList(updates[pctKey]).map((v) => {
+        const pct = parseFloat(v.trim());
+        return Number.isFinite(pct) ? String(Math.round(pct / 100 * muestra)) : "";
+      });
+    };
+    calcCantidad("porcentaje", "cantidad");
+    calcCantidad("porcentaje_v2", "cantidad_v2");
     return updates;
   });
   const getScalar = (key: string) => toStringValue(config[key]);
@@ -1558,6 +1571,7 @@ export default function App() {
                               values={getList(field.key)}
                               onChange={(next) => setList(field.key, next)}
                               isPercentage={field.key === "porcentaje" || field.key === "porcentaje_v2"}
+                              readOnly={field.key === "cantidad" || field.key === "cantidad_v2"}
                               rowLabels={rowLabels}
                             />
                           );
