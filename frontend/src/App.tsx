@@ -406,6 +406,7 @@ function ListEditorField({
           const isAutoCalc = isPercentage && rows.length > 1 && index === rows.length - 1;
           const effectiveReadOnly = readOnly || isAutoCalc;
           const n = parseInt(value.trim(), 10);
+          const fieldNotNumeric = isPercentage && !isAutoCalc && value.trim() !== "" && !Number.isFinite(n);
           const fieldInvalid = isPercentage && !isAutoCalc && Number.isFinite(n) && n > 100;
           return (
             <div key={`${label}-${index}`}>
@@ -422,7 +423,7 @@ function ListEditorField({
                   onChange={(e) => updateAt(index, e.target.value)}
                   className={cn(
                     effectiveReadOnly && "cursor-not-allowed bg-muted/50 text-muted-foreground",
-                    fieldInvalid && "border-danger focus-visible:ring-danger",
+                    (fieldInvalid || fieldNotNumeric) && "border-danger focus-visible:ring-danger",
                   )}
                 />
                 {rowLabels.length === 0 && !readOnly && (
@@ -431,9 +432,8 @@ function ListEditorField({
                   </Button>
                 )}
               </div>
-              {fieldInvalid && (
-                <p className="mt-1 text-xs text-danger">Máximo 100%</p>
-              )}
+              {fieldNotNumeric && <p className="mt-1 text-xs text-danger">Debe ser un número</p>}
+              {fieldInvalid && <p className="mt-1 text-xs text-danger">Máximo 100%</p>}
             </div>
           );
         })}
@@ -1538,7 +1538,10 @@ export default function App() {
                         )}
                       </CardHeader>
                       <CardContent className="grid gap-3 md:grid-cols-2">
-                        {group.fields.map((field) => {
+                        {group.fields.filter((field) => {
+                          if (field.key === "numero_pregunta1" && (parseIntSafe(config.variable) ?? 2) < 2) return false;
+                          return true;
+                        }).map((field) => {
                           const isEscalaField = field.key === "nombre_escala" || field.key === "nombre_escala_v2";
                           const labelsKey = "variable" in group
                             ? (group.variable === "v1" ? "nombre_escala" : "nombre_escala_v2")
@@ -1596,8 +1599,9 @@ export default function App() {
                       </Button>
                       <Button size="lg" onClick={() => {
                         const sumOf = (list: string[]) => list.reduce((acc, v) => { const n = parseInt(v.trim(), 10); return Number.isFinite(n) ? acc + n : acc; }, 0);
+                        const hasV2 = (parseIntSafe(config.variable) ?? 2) >= 2;
                         const v1Sum = sumOf(getList("porcentaje"));
-                        const v2Sum = sumOf(getList("porcentaje_v2"));
+                        const v2Sum = hasV2 ? sumOf(getList("porcentaje_v2")) : 100;
                         if (v1Sum !== 100 || v2Sum !== 100) {
                           setStep2Error("Los porcentajes de cada variable deben sumar exactamente 100%");
                         } else {
