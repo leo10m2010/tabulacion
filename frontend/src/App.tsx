@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  ArrowUpDown,
   Building2,
   CalendarPlus,
   ChartNoAxesCombined,
@@ -134,38 +135,38 @@ const FALLBACK_CONFIG: TabConfig = {
 const LIST_GROUPS = [
   {
     title: "Opciones de respuesta",
-    description: "Los textos que aparecen como opciones en la encuesta. Compartido entre ambas variables.",
+    description: "Escribe las opciones que tienen tus preguntas, en orden de menor a mayor. Ej: Totalmente en desacuerdo → Totalmente de acuerdo.",
     fields: [
       { key: "nombre_respuesta", label: "Opciones de respuesta", placeholder: "Ej: De acuerdo" },
     ],
   },
   {
     title: "Baremo de Variable 1",
-    description: "Define los niveles y el porcentaje de personas en cada nivel. Los rangos y cantidades se calculan automáticamente.",
+    description: "¿En qué nivel queda cada encuestado? Define los nombres de los niveles (Bajo, Medio, Alto) y qué porcentaje del total cae en cada uno. Los rangos exactos se calculan solos.",
     variable: "v1" as const,
     fields: [
-      { key: "nombre_escala", label: "Niveles del baremo", placeholder: "Ej: Bajo" },
-      { key: "porcentaje", label: "Porcentaje (%)", placeholder: "Ej: 46" },
+      { key: "nombre_escala", label: "Nombre de cada nivel", placeholder: "Ej: Bajo" },
+      { key: "porcentaje", label: "Porcentaje de personas en cada nivel (%)", placeholder: "Ej: 46" },
     ],
   },
   {
     title: "Baremo de Variable 2",
-    description: "Define los niveles y el porcentaje de personas en cada nivel. Los rangos y cantidades se calculan automáticamente.",
+    description: "Igual que el baremo anterior, pero para tu segunda variable. Puede tener niveles distintos.",
     variable: "v2" as const,
     fields: [
-      { key: "nombre_escala_v2", label: "Niveles del baremo", placeholder: "Ej: Bajo" },
-      { key: "porcentaje_v2", label: "Porcentaje (%)", placeholder: "Ej: 46" },
+      { key: "nombre_escala_v2", label: "Nombre de cada nivel", placeholder: "Ej: Bajo" },
+      { key: "porcentaje_v2", label: "Porcentaje de personas en cada nivel (%)", placeholder: "Ej: 46" },
     ],
   },
   {
     title: "Dimensiones e indicadores",
-    description: "La estructura conceptual de tu instrumento: dimensiones, indicadores y preguntas por bloque.",
+    description: "Organiza las preguntas de tu encuesta en grupos temáticos. Las dimensiones son los temas grandes; los indicadores son subtemas dentro de cada dimensión.",
     fields: [
-      { key: "nombre_dimension", label: "Nombre de cada dimensión", placeholder: "Ej: Gestión de abastecimiento" },
-      { key: "nombre_indicador", label: "Nombre de cada indicador", placeholder: "Ej: Transparencia" },
-      { key: "numero_indicador0", label: "Indicadores por dimensión", placeholder: "Ej: 3" },
-      { key: "numero_pregunta0", label: "Preguntas de V1 por dimensión", placeholder: "Ej: 6" },
-      { key: "numero_pregunta1", label: "Preguntas de V2 por dimensión", placeholder: "Ej: 9" },
+      { key: "nombre_dimension", label: "Nombre de cada dimensión (tema grande)", placeholder: "Ej: Gestión de abastecimiento" },
+      { key: "nombre_indicador", label: "Nombre de cada indicador (subtema)", placeholder: "Ej: Transparencia" },
+      { key: "numero_indicador0", label: "¿Cuántos indicadores tiene cada dimensión?", placeholder: "Ej: 3" },
+      { key: "numero_pregunta0", label: "¿Cuántas preguntas de V1 tiene cada dimensión?", placeholder: "Ej: 6" },
+      { key: "numero_pregunta1", label: "¿Cuántas preguntas de V2 tiene cada dimensión?", placeholder: "Ej: 9" },
     ],
   },
 ];
@@ -1206,8 +1207,8 @@ export default function App() {
               </button>
               <div className="flex items-center justify-between">
                 <button onClick={goToLanding} className="text-xs text-muted-foreground hover:text-foreground">← Volver al inicio</button>
-                <button onClick={toggleTheme} className="text-xs text-muted-foreground hover:text-foreground">
-                  {themeMode === "dark" ? "☀️ Modo claro" : "🌙 Modo oscuro"}
+                <button onClick={toggleTheme} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                  {themeMode === "dark" ? <><Sun className="h-3.5 w-3.5" />Modo claro</> : <><Moon className="h-3.5 w-3.5" />Modo oscuro</>}
                 </button>
               </div>
             </CardContent>
@@ -1484,35 +1485,39 @@ export default function App() {
                         );
                       })()}
 
-                      {/* Relación */}
-                      <div className="rounded-xl border border-border/80 bg-background/50 p-4">
-                        <p className="mb-1 text-sm font-medium text-foreground">¿Las variables van en la misma dirección?</p>
-                        <FieldHint text="Relación directa: cuando V1 sube, V2 también sube. Relación inversa: cuando V1 sube, V2 baja." />
-                        <div className="mt-3 flex gap-2">
-                          <button
-                            onClick={() => setScalar("relacionversa", "0")}
-                            className={cn(
-                              "flex-1 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
-                              getScalar("relacionversa") === "0"
-                                ? "border-primary bg-primary/10 text-primary"
-                                : "border-border bg-background text-muted-foreground hover:border-primary/50",
-                            )}
-                          >
-                            ✓ Misma dirección (directa)
-                          </button>
-                          <button
-                            onClick={() => setScalar("relacionversa", "1")}
-                            className={cn(
-                              "flex-1 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
-                              getScalar("relacionversa") === "1"
-                                ? "border-primary bg-primary/10 text-primary"
-                                : "border-border bg-background text-muted-foreground hover:border-primary/50",
-                            )}
-                          >
-                            ↕ Dirección opuesta (inversa)
-                          </button>
+                      {/* Relación — solo con 2 variables */}
+                      {(parseInt(getScalar("variable"), 10) || 2) >= 2 && (
+                        <div className="rounded-xl border border-border/80 bg-background/50 p-4">
+                          <p className="mb-1 text-sm font-medium text-foreground">¿Las variables van en la misma dirección?</p>
+                          <FieldHint text="Directa: si V1 sube, V2 también sube. Inversa: si V1 sube, V2 baja." />
+                          <div className="mt-3 flex gap-2">
+                            <button
+                              onClick={() => setScalar("relacionversa", "0")}
+                              className={cn(
+                                "flex flex-1 items-center justify-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                getScalar("relacionversa") === "0"
+                                  ? "border-primary bg-primary/10 text-primary"
+                                  : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                              )}
+                            >
+                              <ArrowRight className="h-4 w-4" />
+                              Misma dirección (directa)
+                            </button>
+                            <button
+                              onClick={() => setScalar("relacionversa", "1")}
+                              className={cn(
+                                "flex flex-1 items-center justify-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                getScalar("relacionversa") === "1"
+                                  ? "border-primary bg-primary/10 text-primary"
+                                  : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                              )}
+                            >
+                              <ArrowUpDown className="h-4 w-4" />
+                              Dirección opuesta (inversa)
+                            </button>
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </CardContent>
                   </Card>
 
