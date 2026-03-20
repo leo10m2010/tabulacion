@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Building2,
+  CalendarPlus,
   ChartNoAxesCombined,
   Check,
+  CheckCircle2,
   ChevronRight,
   Clock3,
   Download,
@@ -17,8 +20,10 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
+  Trash2,
   UserRound,
   Users,
+  XCircle,
   Zap,
 } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -772,6 +777,8 @@ export default function App() {
   const [newUserRole, setNewUserRole] = useState<"admin" | "user">("user");
   const [newUserPlan, setNewUserPlan] = useState<string>("pro");
   const [newUserDays, setNewUserDays] = useState<string>("30");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [customDaysMap, setCustomDaysMap] = useState<Record<string, string>>({});
 
   const isAdmin = authUser?.role === "admin";
 
@@ -971,13 +978,13 @@ export default function App() {
   const loadUsers = async () => {
     if (!authToken || authUser?.role !== "admin") return;
     setIsUsersLoading(true);
-    setUsersErrorMessage(null);
+    setUsersErrorMessage(null); setUsersStatusMessage("");
     try {
       const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users`, { headers: { Authorization: `Bearer ${authToken}` } });
       const payload = (await res.json()) as AuthUsersResponse;
       if (!res.ok || !Array.isArray(payload.users)) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
       setManagedUsers(payload.users);
-      setUsersStatusMessage(`${payload.users.length} usuario(s) cargados.`);
+      setUsersErrorMessage(null); setUsersStatusMessage(`${payload.users.length} usuario(s) cargados.`);
     } catch (err) {
       setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo obtener usuarios.");
     } finally {
@@ -1019,10 +1026,12 @@ export default function App() {
   };
 
   const handleCreateUser = async () => {
-    setUsersErrorMessage(null);
+    setUsersErrorMessage(null); setUsersStatusMessage("");
     if (!authToken) return;
     const email = newUserEmail.trim();
     if (!email || !newUserPassword) { setUsersErrorMessage("Email y contraseña son obligatorios."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setUsersErrorMessage("El email no tiene un formato válido."); return; }
+    if (newUserPassword.length < 8) { setUsersErrorMessage("La contraseña debe tener al menos 8 caracteres."); return; }
     const subscriptionDays = Number.parseInt(newUserDays, 10);
     if (!Number.isFinite(subscriptionDays) || subscriptionDays <= 0) { setUsersErrorMessage("Los días de suscripción deben ser mayores a 0."); return; }
     setIsUsersLoading(true);
@@ -1035,7 +1044,7 @@ export default function App() {
       const payload = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
       setNewUserEmail(""); setNewUserPassword(""); setNewUserRole("user"); setNewUserPlan("pro"); setNewUserDays("30");
-      setUsersStatusMessage("Usuario creado correctamente.");
+      setUsersErrorMessage(null); setUsersStatusMessage("Usuario creado correctamente.");
       await loadUsers();
     } catch (err) {
       setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo crear el usuario.");
@@ -1046,7 +1055,8 @@ export default function App() {
 
   const patchManagedUser = async (userId: string, patch: Record<string, unknown>, successMessage: string) => {
     if (!authToken) return;
-    setIsUsersLoading(true); setUsersErrorMessage(null);
+    if (userId === authUser?.id && "status" in patch) { setUsersErrorMessage("No puedes modificar tu propio estado."); return; }
+    setIsUsersLoading(true); setUsersErrorMessage(null); setUsersStatusMessage("");
     try {
       const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users/${userId}`, {
         method: "PATCH",
@@ -1055,7 +1065,7 @@ export default function App() {
       });
       const payload = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
-      setUsersStatusMessage(successMessage);
+      setUsersErrorMessage(null); setUsersStatusMessage(successMessage);
       await loadUsers();
     } catch (err) {
       setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo actualizar el usuario.");
@@ -1066,7 +1076,9 @@ export default function App() {
 
   const deleteManagedUser = async (userId: string) => {
     if (!authToken) return;
-    setIsUsersLoading(true); setUsersErrorMessage(null);
+    if (userId === authUser?.id) { setUsersErrorMessage("No puedes eliminar tu propia cuenta."); setConfirmDeleteId(null); return; }
+    setIsUsersLoading(true); setUsersErrorMessage(null); setUsersStatusMessage("");
+    setConfirmDeleteId(null);
     try {
       const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users/${userId}`, {
         method: "DELETE",
@@ -1074,7 +1086,7 @@ export default function App() {
       });
       const payload = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
-      setUsersStatusMessage("Usuario eliminado.");
+      setUsersErrorMessage(null); setUsersStatusMessage("Usuario eliminado.");
       await loadUsers();
     } catch (err) {
       setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo eliminar el usuario.");
@@ -1826,7 +1838,14 @@ export default function App() {
                     </label>
                     <label className="block space-y-1.5">
                       <span className="text-sm font-medium">Plan</span>
-                      <Input value={newUserPlan} onChange={(e) => setNewUserPlan(e.target.value)} placeholder="pro" />
+                      <select
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                        value={newUserPlan}
+                        onChange={(e) => setNewUserPlan(e.target.value)}
+                      >
+                        <option value="pro">Pro</option>
+                        <option value="business">Business</option>
+                      </select>
                     </label>
                     <label className="block space-y-1.5">
                       <span className="text-sm font-medium">Días de acceso</span>
@@ -1865,47 +1884,81 @@ export default function App() {
                       No hay usuarios cargados. Pulsa <strong>Actualizar</strong>.
                     </p>
                   ) : (
-                    managedUsers.map((user) => (
-                      <div key={user.id} className="rounded-xl border border-border/60 bg-background/60 p-4">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="text-sm font-semibold">{user.email}</p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              {user.role === "admin" ? "Administrador" : "Usuario"} · Plan {user.plan} · {user.status === "active" ? "✅ Activo" : "🔴 Desactivado"}
-                            </p>
-                            <p className="text-xs text-muted-foreground">{getSubscriptionLabel(user)}</p>
-                            <p className="text-xs text-muted-foreground">Último acceso: {formatDateTime(user.lastLoginAt)}</p>
+                    managedUsers.map((user) => {
+                      const isSelf = user.id === authUser?.id;
+                      const customDays = customDaysMap[user.id] ?? "30";
+                      return (
+                        <div key={user.id} className="rounded-xl border border-border/60 bg-background/60 p-4">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold">{user.email}{isSelf && <span className="ml-2 text-xs text-muted-foreground">(tú)</span>}</p>
+                              <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                                {user.role === "admin" ? "Administrador" : "Usuario"} · Plan {user.plan} ·
+                                {user.status === "active"
+                                  ? <><CheckCircle2 className="h-3.5 w-3.5 text-green-500" /> Activo</>
+                                  : <><XCircle className="h-3.5 w-3.5 text-danger" /> Desactivado</>
+                                }
+                              </p>
+                              <p className="text-xs text-muted-foreground">{getSubscriptionLabel(user)}</p>
+                              <p className="text-xs text-muted-foreground">Último acceso: {formatDateTime(user.lastLoginAt)}</p>
+                            </div>
+                          </div>
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => patchManagedUser(user.id, { status: user.status === "active" ? "disabled" : "active" }, `Estado actualizado para ${user.email}.`)}
+                              disabled={isUsersLoading || isSelf}
+                              title={isSelf ? "No puedes modificar tu propio estado" : undefined}
+                            >
+                              {user.status === "active" ? "Desactivar" : "Activar"}
+                            </Button>
+                            <div className="flex items-center gap-1">
+                              <Input
+                                className="h-8 w-16 text-sm"
+                                value={customDays}
+                                onChange={(e) => setCustomDaysMap((prev) => ({ ...prev, [user.id]: e.target.value }))}
+                                placeholder="30"
+                              />
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  const days = Number.parseInt(customDays, 10);
+                                  if (!Number.isFinite(days) || days <= 0) { setUsersErrorMessage("Los días deben ser un número mayor a 0."); return; }
+                                  void patchManagedUser(user.id, { subscriptionDaysDelta: days }, `+${days} días para ${user.email}.`);
+                                }}
+                                disabled={isUsersLoading}
+                                title="Añadir días de suscripción"
+                              >
+                                <CalendarPlus className="h-3.5 w-3.5" />
+                                días
+                              </Button>
+                            </div>
+                            {confirmDeleteId === user.id ? (
+                              <div className="flex items-center gap-1.5 rounded-md border border-danger/40 bg-danger/10 px-2 py-1">
+                                <AlertTriangle className="h-3.5 w-3.5 text-danger" />
+                                <span className="text-xs text-danger">¿Eliminar?</span>
+                                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-danger hover:bg-danger/20" onClick={() => void deleteManagedUser(user.id)} disabled={isUsersLoading}>Sí</Button>
+                                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConfirmDeleteId(null)}>No</Button>
+                              </div>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-danger hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
+                                onClick={() => setConfirmDeleteId(user.id)}
+                                disabled={isUsersLoading || isSelf}
+                                title={isSelf ? "No puedes eliminar tu propia cuenta" : undefined}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Eliminar
+                              </Button>
+                            )}
                           </div>
                         </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => patchManagedUser(user.id, { status: user.status === "active" ? "disabled" : "active" }, `Estado actualizado para ${user.email}.`)}
-                            disabled={isUsersLoading}
-                          >
-                            {user.status === "active" ? "Desactivar" : "Activar"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => patchManagedUser(user.id, { subscriptionDaysDelta: 30 }, `+30 días para ${user.email}.`)}
-                            disabled={isUsersLoading || user.role === "admin"}
-                          >
-                            +30 días
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-danger hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
-                            onClick={() => deleteManagedUser(user.id)}
-                            disabled={isUsersLoading}
-                          >
-                            Eliminar
-                          </Button>
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </CardContent>
               </Card>
