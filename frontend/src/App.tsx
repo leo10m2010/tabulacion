@@ -9,6 +9,7 @@ import {
   ChartNoAxesCombined,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Clock3,
   Download,
@@ -42,6 +43,10 @@ type ConfigValue = string | string[] | number | boolean | null | undefined;
 type TabConfig = Record<string, ConfigValue>;
 type TableCell = string | number | boolean | null;
 type TableRows = TableCell[][];
+
+interface ItemDef { id: string; nombre: string }
+interface IndicadorDef { id: string; nombre: string; items: ItemDef[] }
+interface DimensionDef { id: string; nombre: string; indicadores: IndicadorDef[] }
 
 interface InlineGenerateResponse {
   correlation: number;
@@ -158,17 +163,6 @@ const LIST_GROUPS = [
       { key: "porcentaje_v2", label: "Porcentaje de personas en cada nivel (%)", placeholder: "Ej: 46" },
     ],
   },
-  {
-    title: "Dimensiones e indicadores",
-    description: "Organiza las preguntas de tu encuesta en grupos temáticos. Las dimensiones son los temas grandes; los indicadores son subtemas dentro de cada dimensión.",
-    fields: [
-      { key: "nombre_dimension", label: "Nombre de cada dimensión (tema grande)", placeholder: "Ej: Gestión de abastecimiento" },
-      { key: "nombre_indicador", label: "Nombre de cada indicador (subtema)", placeholder: "Ej: Transparencia" },
-      { key: "numero_indicador0", label: "¿Cuántos indicadores tiene cada dimensión?", placeholder: "Ej: 3" },
-      { key: "numero_pregunta0", label: "¿Cuántas preguntas de V1 tiene cada dimensión?", placeholder: "Ej: 6" },
-      { key: "numero_pregunta1", label: "¿Cuántas preguntas de V2 tiene cada dimensión?", placeholder: "Ej: 9" },
-    ],
-  },
 ];
 
 const WIZARD_STEPS = [
@@ -178,6 +172,9 @@ const WIZARD_STEPS = [
 ];
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
+let _eid = 0;
+const eid = () => String(++_eid);
+
 function toStringValue(value: ConfigValue): string {
   if (value === null || value === undefined) return "";
   if (Array.isArray(value)) return String(value[0] ?? "");
@@ -454,6 +451,136 @@ function ListEditorField({
           {overLimit && <span className="text-danger">Los valores superan 100%</span>}
         </div>
       )}
+    </div>
+  );
+}
+
+function HierarchyEditor({
+  label,
+  totalItems,
+  estructura,
+  onChange,
+}: {
+  label: string;
+  totalItems: number;
+  estructura: DimensionDef[];
+  onChange: (next: DimensionDef[]) => void;
+}) {
+  const [collapsedDims, setCollapsedDims] = useState<Set<string>>(new Set());
+  const [collapsedInds, setCollapsedInds] = useState<Set<string>>(new Set());
+
+  const usedItems = estructura.flatMap((d) => d.indicadores.flatMap((i) => i.items)).length;
+  const isComplete = totalItems > 0 && usedItems === totalItems;
+
+  const toggleDim = (id: string) => setCollapsedDims((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const toggleInd = (id: string) => setCollapsedInds((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+
+  const addDimension = () => onChange([...estructura, { id: eid(), nombre: "", indicadores: [] }]);
+  const removeDimension = (id: string) => onChange(estructura.filter((d) => d.id !== id));
+  const updateDimensionName = (id: string, nombre: string) => onChange(estructura.map((d) => d.id === id ? { ...d, nombre } : d));
+
+  const addIndicador = (dimId: string) => onChange(estructura.map((d) =>
+    d.id === dimId ? { ...d, indicadores: [...d.indicadores, { id: eid(), nombre: "", items: [] }] } : d));
+  const removeIndicador = (dimId: string, indId: string) => onChange(estructura.map((d) =>
+    d.id === dimId ? { ...d, indicadores: d.indicadores.filter((i) => i.id !== indId) } : d));
+  const updateIndicadorName = (dimId: string, indId: string, nombre: string) => onChange(estructura.map((d) =>
+    d.id === dimId ? { ...d, indicadores: d.indicadores.map((i) => i.id === indId ? { ...i, nombre } : i) } : d));
+
+  const addItem = (dimId: string, indId: string) => onChange(estructura.map((d) =>
+    d.id === dimId ? { ...d, indicadores: d.indicadores.map((i) =>
+      i.id === indId ? { ...i, items: [...i.items, { id: eid(), nombre: "" }] } : i) } : d));
+  const removeItem = (dimId: string, indId: string, itemId: string) => onChange(estructura.map((d) =>
+    d.id === dimId ? { ...d, indicadores: d.indicadores.map((i) =>
+      i.id === indId ? { ...i, items: i.items.filter((it) => it.id !== itemId) } : i) } : d));
+  const updateItemName = (dimId: string, indId: string, itemId: string, nombre: string) => onChange(estructura.map((d) =>
+    d.id === dimId ? { ...d, indicadores: d.indicadores.map((i) =>
+      i.id === indId ? { ...i, items: i.items.map((it) => it.id === itemId ? { ...it, nombre } : it) } : i) } : d));
+
+  return (
+    <div className="space-y-2">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-foreground">{label}</span>
+          <span className={cn(
+            "rounded-full px-2 py-0.5 text-xs font-semibold",
+            isComplete ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400" : "bg-muted text-muted-foreground",
+          )}>
+            {usedItems}/{totalItems} ítems
+          </span>
+        </div>
+        <Button variant="outline" size="sm" onClick={addDimension}>+ Dimensión</Button>
+      </div>
+
+      {estructura.length === 0 && (
+        <p className="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+          Sin dimensiones. Añade la primera con el botón de arriba.
+        </p>
+      )}
+
+      {estructura.map((dim, dimIdx) => {
+        const dimCollapsed = collapsedDims.has(dim.id);
+        return (
+          <div key={dim.id} className="rounded-lg border border-border/80 bg-background/70">
+            <div className="flex items-center gap-2 px-3 py-2">
+              <button type="button" onClick={() => toggleDim(dim.id)} className="shrink-0 text-muted-foreground hover:text-foreground">
+                <ChevronDown className={cn("h-4 w-4 transition-transform", dimCollapsed && "-rotate-90")} />
+              </button>
+              <span className="w-6 shrink-0 text-center text-xs font-semibold text-muted-foreground">D{dimIdx + 1}</span>
+              <Input value={dim.nombre} placeholder="Nombre de la dimensión" onChange={(e) => updateDimensionName(dim.id, e.target.value)} className="h-8 flex-1 text-sm" />
+              <Button variant="ghost" size="sm" onClick={() => removeDimension(dim.id)} className="h-8 w-8 p-0 text-muted-foreground hover:text-danger">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {!dimCollapsed && (
+              <div className="ml-6 space-y-2 border-t border-border/60 px-3 pb-3 pt-2">
+                <div className="flex justify-end">
+                  <Button variant="outline" size="sm" onClick={() => addIndicador(dim.id)}>+ Indicador</Button>
+                </div>
+                {dim.indicadores.length === 0 && (
+                  <p className="py-1 text-center text-xs text-muted-foreground">Sin indicadores en esta dimensión.</p>
+                )}
+                {dim.indicadores.map((ind, indIdx) => {
+                  const indCollapsed = collapsedInds.has(ind.id);
+                  return (
+                    <div key={ind.id} className="rounded-md border border-border/60 bg-muted/20">
+                      <div className="flex items-center gap-2 px-3 py-2">
+                        <button type="button" onClick={() => toggleInd(ind.id)} className="shrink-0 text-muted-foreground hover:text-foreground">
+                          <ChevronDown className={cn("h-4 w-4 transition-transform", indCollapsed && "-rotate-90")} />
+                        </button>
+                        <span className="w-6 shrink-0 text-center text-xs font-semibold text-muted-foreground">I{indIdx + 1}</span>
+                        <Input value={ind.nombre} placeholder="Nombre del indicador" onChange={(e) => updateIndicadorName(dim.id, ind.id, e.target.value)} className="h-8 flex-1 text-sm" />
+                        <Button variant="ghost" size="sm" onClick={() => removeIndicador(dim.id, ind.id)} className="h-8 w-8 p-0 text-muted-foreground hover:text-danger">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      {!indCollapsed && (
+                        <div className="ml-6 space-y-1.5 border-t border-border/60 px-3 pb-3 pt-2">
+                          <div className="flex justify-end">
+                            <Button variant="outline" size="sm" onClick={() => addItem(dim.id, ind.id)}>+ Ítem</Button>
+                          </div>
+                          {ind.items.length === 0 && (
+                            <p className="py-1 text-center text-xs text-muted-foreground">Sin ítems en este indicador.</p>
+                          )}
+                          {ind.items.map((item, itemIdx) => (
+                            <div key={item.id} className="flex items-center gap-2">
+                              <span className="w-6 shrink-0 text-center text-xs font-semibold text-muted-foreground">{itemIdx + 1}</span>
+                              <Input value={item.nombre} placeholder={`Ítem ${itemIdx + 1}`} onChange={(e) => updateItemName(dim.id, ind.id, item.id, e.target.value)} className="h-8 flex-1 text-sm" />
+                              <Button variant="ghost" size="sm" onClick={() => removeItem(dim.id, ind.id, item.id)} className="h-8 w-8 p-0 text-muted-foreground hover:text-danger">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -746,6 +873,8 @@ export default function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("tabulacion");
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
   const [step2Error, setStep2Error] = useState<string | null>(null);
+  const [estructuraV1, setEstructuraV1] = useState<DimensionDef[]>([]);
+  const [estructuraV2, setEstructuraV2] = useState<DimensionDef[]>([]);
   const [showAdvancedJson, setShowAdvancedJson] = useState(false);
   const [selectedSheet, setSelectedSheet] = useState<string>("");
 
@@ -815,6 +944,17 @@ export default function App() {
     document.documentElement.classList.toggle("dark", themeMode === "dark");
   }, [themeMode]);
   useEffect(() => () => revokeDownloadLinks(downloadLinks), [downloadLinks]);
+
+  useEffect(() => {
+    if (estructuraV1.length === 0) return;
+    setConfig((prev) => ({
+      ...prev,
+      nombre_dimension: estructuraV1.map((d) => d.nombre),
+      numero_dimension: estructuraV1.map((_, i) => String(i + 1)),
+      nombre_indicador: estructuraV1.flatMap((d) => d.indicadores.map((i) => i.nombre)),
+      numero_indicador0: estructuraV1.map((d) => String(d.indicadores.length)),
+    }));
+  }, [estructuraV1]);
 
   useEffect(() => {
     if (!authToken) { setAuthLoading(false); setAuthUser(null); return; }
@@ -1583,6 +1723,44 @@ export default function App() {
                     </Card>
                   ))}
 
+                  {/* Estructura jerárquica — Variable 1 */}
+                  <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>Estructura de Variable 1</CardTitle>
+                      <CardDescription>
+                        Define las dimensiones, indicadores e ítems. El total de ítems debe ser igual a las preguntas de V1 del paso 1.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <HierarchyEditor
+                        label="Variable 1"
+                        totalItems={parseIntSafe(config.item) ?? 0}
+                        estructura={estructuraV1}
+                        onChange={setEstructuraV1}
+                      />
+                    </CardContent>
+                  </Card>
+
+                  {/* Estructura jerárquica — Variable 2 */}
+                  {(parseIntSafe(config.variable) ?? 2) >= 2 && (
+                    <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
+                      <CardHeader>
+                        <CardTitle>Estructura de Variable 2</CardTitle>
+                        <CardDescription>
+                          Define las dimensiones, indicadores e ítems de tu segunda variable. El total de ítems debe coincidir con las preguntas de V2.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <HierarchyEditor
+                          label="Variable 2"
+                          totalItems={parseIntSafe(config.itemv2) ?? 0}
+                          estructura={estructuraV2}
+                          onChange={setEstructuraV2}
+                        />
+                      </CardContent>
+                    </Card>
+                  )}
+
                   {/* Advanced JSON toggle */}
                   <div className="rounded-xl border border-border/60 bg-card/60">
                     <button
@@ -1622,11 +1800,22 @@ export default function App() {
                         const v1Sum = sumOf(getList("porcentaje"));
                         const v2Sum = hasV2 ? sumOf(getList("porcentaje_v2")) : 100;
                         if (v1Sum !== 100 || v2Sum !== 100) {
-                          setStep2Error("Los porcentajes de cada variable deben sumar exactamente 100%");
-                        } else {
-                          setStep2Error(null);
-                          setWizardStep(3);
+                          setStep2Error("Los porcentajes de cada variable deben sumar exactamente 100%"); return;
                         }
+                        const totalV1 = parseIntSafe(config.item) ?? 0;
+                        const usedV1 = estructuraV1.flatMap((d) => d.indicadores.flatMap((i) => i.items)).length;
+                        if (totalV1 > 0 && usedV1 !== totalV1) {
+                          setStep2Error(`La estructura de V1 tiene ${usedV1} ítems pero se esperan ${totalV1}`); return;
+                        }
+                        if (hasV2) {
+                          const totalV2 = parseIntSafe(config.itemv2) ?? 0;
+                          const usedV2 = estructuraV2.flatMap((d) => d.indicadores.flatMap((i) => i.items)).length;
+                          if (totalV2 > 0 && usedV2 !== totalV2) {
+                            setStep2Error(`La estructura de V2 tiene ${usedV2} ítems pero se esperan ${totalV2}`); return;
+                          }
+                        }
+                        setStep2Error(null);
+                        setWizardStep(3);
                       }}>
                         Siguiente: Generar
                         <ArrowRight className="h-4 w-4" />
