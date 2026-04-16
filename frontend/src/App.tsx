@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -108,6 +108,8 @@ const FALLBACK_CONFIG: TabConfig = {
   itemv2: "9",
   variable: "2",
   nommuestra: "Beneficiarios",
+  dimensiones: "3",
+  dimensiones_v2: "3",
   escala: "3",
   escala_v2: "3",
   respuesta: "5",
@@ -195,7 +197,9 @@ function normalizeList(values: string[]): string[] {
 }
 
 function parseIntSafe(value: ConfigValue): number | null {
-  const n = Number.parseInt(String(value ?? "").trim(), 10);
+  const s = String(value ?? "").trim();
+  if (!/^-?\d+$/.test(s)) return null;
+  const n = Number.parseInt(s, 10);
   return Number.isFinite(n) ? n : null;
 }
 
@@ -319,6 +323,23 @@ function FieldHint({ text }: { text: string }) {
   );
 }
 
+function StepTip({ icon, label, detail, color = "primary" }: { icon: React.ReactNode; label: string; detail?: string; color?: "primary" | "green" | "amber" }) {
+  const styles = {
+    primary: "border-primary/25 bg-primary/8 text-primary",
+    green: "border-emerald-500/25 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+    amber: "border-amber-500/25 bg-amber-500/8 text-amber-600 dark:text-amber-400",
+  } as const;
+  return (
+    <div className={cn("mt-2 flex items-start gap-2.5 rounded-xl border px-3.5 py-2.5", styles[color])}>
+      <span className="mt-0.5 shrink-0">{icon}</span>
+      <div>
+        <span className="text-sm font-semibold">{label}</span>
+        {detail && <span className="ml-1.5 text-sm opacity-75">{detail}</span>}
+      </div>
+    </div>
+  );
+}
+
 function ListEditorField({
   label,
   placeholder,
@@ -439,16 +460,23 @@ function ListEditorField({
               </div>
               {fieldNotNumeric && <p className="mt-1 text-xs text-danger">Debe ser un número</p>}
               {fieldInvalid && <p className="mt-1 text-xs text-danger">Máximo 100%</p>}
+              {isAutoCalc && <p className="mt-1 text-xs text-muted-foreground">Se calcula solo para que todo sume 100%</p>}
             </div>
           );
         })}
       </div>
       {isPercentage && (
-        <div className="mt-2 flex items-center justify-between text-xs font-medium">
-          <span className={cn(overLimit ? "text-danger" : filledSum === 100 ? "text-green-600 dark:text-green-400" : "text-muted-foreground")}>
-            Total: {filledSum}%
-          </span>
-          {overLimit && <span className="text-danger">Los valores superan 100%</span>}
+        <div className="mt-2 space-y-1">
+          <div className="flex items-center justify-between text-xs font-medium">
+            <span className={cn(overLimit ? "text-danger" : filledSum === 100 ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400")}>
+              Total: {filledSum}%
+            </span>
+            {overLimit && <span className="text-danger">Los valores superan 100%</span>}
+            {!overLimit && filledSum < 100 && filledSum > 0 && (
+              <span className="text-amber-600 dark:text-amber-400">Faltan {100 - filledSum}% — el último se ajusta solo</span>
+            )}
+            {filledSum === 100 && <span className="text-green-600 dark:text-green-400">✓ Completo</span>}
+          </div>
         </div>
       )}
     </div>
@@ -503,9 +531,11 @@ function HierarchyEditor({
           <span className="text-sm font-semibold text-foreground">{label}</span>
           <span className={cn(
             "rounded-full px-2 py-0.5 text-xs font-semibold",
-            isComplete ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400" : "bg-muted text-muted-foreground",
+            isComplete ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400"
+              : usedItems > totalItems ? "bg-danger/15 text-danger"
+              : "bg-muted text-muted-foreground",
           )}>
-            {usedItems}/{totalItems} ítems
+            {usedItems}/{totalItems} ítems{usedItems > totalItems ? " — demasiados" : ""}
           </span>
         </div>
         <Button variant="outline" size="sm" onClick={addDimension}>+ Dimensión</Button>
@@ -519,6 +549,8 @@ function HierarchyEditor({
 
       {estructura.map((dim, dimIdx) => {
         const dimCollapsed = collapsedDims.has(dim.id);
+        const itemsBeforeDim = estructura.slice(0, dimIdx).reduce((sum, d) =>
+          sum + d.indicadores.reduce((s, i) => s + i.items.length, 0), 0);
         return (
           <div key={dim.id} className="rounded-lg border border-border/80 bg-background/70">
             <div className="flex items-center gap-2 px-3 py-2">
@@ -526,7 +558,7 @@ function HierarchyEditor({
                 <ChevronDown className={cn("h-4 w-4 transition-transform", dimCollapsed && "-rotate-90")} />
               </button>
               <span className="w-6 shrink-0 text-center text-xs font-semibold text-muted-foreground">D{dimIdx + 1}</span>
-              <Input value={dim.nombre} placeholder="Nombre de la dimensión" onChange={(e) => updateDimensionName(dim.id, e.target.value)} className="h-8 flex-1 text-sm" />
+              <Input value={dim.nombre} placeholder={`Ej: Gestión administrativa, Satisfacción del usuario…`} onChange={(e) => updateDimensionName(dim.id, e.target.value)} className="h-8 flex-1 text-sm" />
               <Button variant="ghost" size="sm" onClick={() => removeDimension(dim.id)} className="h-8 w-8 p-0 text-muted-foreground hover:text-danger">
                 <Trash2 className="h-4 w-4" />
               </Button>
@@ -542,6 +574,7 @@ function HierarchyEditor({
                 )}
                 {dim.indicadores.map((ind, indIdx) => {
                   const indCollapsed = collapsedInds.has(ind.id);
+                  const itemsBeforeInd = dim.indicadores.slice(0, indIdx).reduce((sum, i) => sum + i.items.length, 0);
                   return (
                     <div key={ind.id} className="rounded-md border border-border/60 bg-muted/20">
                       <div className="flex items-center gap-2 px-3 py-2">
@@ -549,7 +582,7 @@ function HierarchyEditor({
                           <ChevronDown className={cn("h-4 w-4 transition-transform", indCollapsed && "-rotate-90")} />
                         </button>
                         <span className="w-6 shrink-0 text-center text-xs font-semibold text-muted-foreground">I{indIdx + 1}</span>
-                        <Input value={ind.nombre} placeholder="Nombre del indicador" onChange={(e) => updateIndicadorName(dim.id, ind.id, e.target.value)} className="h-8 flex-1 text-sm" />
+                        <Input value={ind.nombre} placeholder={`Ej: Planificación, Transparencia, Cumplimiento…`} onChange={(e) => updateIndicadorName(dim.id, ind.id, e.target.value)} className="h-8 flex-1 text-sm" />
                         <Button variant="ghost" size="sm" onClick={() => removeIndicador(dim.id, ind.id)} className="h-8 w-8 p-0 text-muted-foreground hover:text-danger">
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -562,15 +595,18 @@ function HierarchyEditor({
                           {ind.items.length === 0 && (
                             <p className="py-1 text-center text-xs text-muted-foreground">Sin ítems en este indicador.</p>
                           )}
-                          {ind.items.map((item, itemIdx) => (
-                            <div key={item.id} className="flex items-center gap-2">
-                              <span className="w-6 shrink-0 text-center text-xs font-semibold text-muted-foreground">{itemIdx + 1}</span>
-                              <Input value={item.nombre} placeholder={`Ítem ${itemIdx + 1}`} onChange={(e) => updateItemName(dim.id, ind.id, item.id, e.target.value)} className="h-8 flex-1 text-sm" />
-                              <Button variant="ghost" size="sm" onClick={() => removeItem(dim.id, ind.id, item.id)} className="h-8 w-8 p-0 text-muted-foreground hover:text-danger">
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ))}
+                          {ind.items.map((item, itemIdx) => {
+                            const globalNum = itemsBeforeDim + itemsBeforeInd + itemIdx + 1;
+                            return (
+                              <div key={item.id} className="flex items-center gap-2">
+                                <span className="w-7 shrink-0 text-center text-xs font-semibold text-muted-foreground">P{globalNum}</span>
+                                <Input value={item.nombre} placeholder={`Pregunta ${globalNum}`} onChange={(e) => updateItemName(dim.id, ind.id, item.id, e.target.value)} className="h-8 flex-1 text-sm" />
+                                <Button variant="ghost" size="sm" onClick={() => removeItem(dim.id, ind.id, item.id)} className="h-8 w-8 p-0 text-muted-foreground hover:text-danger">
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -679,37 +715,37 @@ function LandingPage({
       {
         id: "pro",
         name: "Plan Profesional",
-        audience: "Usuarios individuales",
+        audience: "Tesistas y asesores",
         icon: UserRound,
         priceMonthlyUsd: "USD 29",
         priceYearlyUsd: "USD 290",
         priceMonthlyPen: "S/ 109",
         priceYearlyPen: "S/ 1,090",
-        description: "Ideal para tesistas y asesores que trabajan de forma independiente.",
-        highlights: ["1 usuario", "Hasta 15 proyectos activos", "Generación de Excel y CSV", "Soporte por correo"],
+        description: "Ideal para quien trabaja su tesis de forma individual con asesor propio.",
+        highlights: ["1 acceso activo", "Generación de Excel y CSV", "Baremos y dimensiones configurables", "Soporte por correo"],
         cta: "Comenzar ahora",
       },
       {
         id: "business",
-        name: "Plan Empresa",
+        name: "Plan Institucional",
         audience: "Universidades y consultoras",
         icon: Building2,
         priceMonthlyUsd: "USD 129",
         priceYearlyUsd: "USD 1,290",
         priceMonthlyPen: "S/ 485",
         priceYearlyPen: "S/ 4,850",
-        description: "Pensado para equipos con múltiples tesis, control administrativo y trazabilidad.",
-        highlights: ["Hasta 20 usuarios", "Proyectos ilimitados", "Panel administrador + roles", "Soporte prioritario y onboarding"],
-        cta: "Hablar con ventas",
+        description: "Para equipos que gestionan múltiples tesis con control administrativo.",
+        highlights: ["Hasta 20 accesos", "Panel de administrador", "Proyectos ilimitados", "Soporte prioritario"],
+        cta: "Contáctanos",
       },
     ],
     [],
   );
 
   const productFeatures = [
-    { title: "Generación automatizada", desc: "Convierte configuración en Excel de tabulación listo para informe en segundos.", icon: Zap },
-    { title: "Consistencia metodológica", desc: "Mantén reglas, dimensiones e indicadores estandarizados entre tesis.", icon: ShieldCheck },
-    { title: "Operación escalable", desc: "Maneja desde un tesista hasta equipos institucionales con múltiples proyectos.", icon: ChartNoAxesCombined },
+    { title: "Excel en segundos", desc: "Completa tu configuración y genera el archivo de tabulación listo para entregar al asesor.", icon: Zap },
+    { title: "Metodología correcta", desc: "Baremos, dimensiones e indicadores calculados automáticamente según tu instrumento.", icon: ShieldCheck },
+    { title: "Sin conocimientos técnicos", desc: "Solo rellenas los datos de tu encuesta. El sistema hace el resto.", icon: Sparkles },
   ];
 
   return (
@@ -718,7 +754,7 @@ function LandingPage({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex items-center gap-2 rounded-full border border-slate-500/20 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-800 dark:border-slate-200/20 dark:bg-slate-100/10 dark:text-slate-100">
             <Sparkles className="h-4 w-4" />
-            Sistema de Tabulación como Servicio
+            TesisTab
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={onToggleTheme}>
@@ -726,7 +762,7 @@ function LandingPage({
               {themeMode === "dark" ? "Modo claro" : "Modo oscuro"}
             </Button>
             <Button variant="outline" size="sm" onClick={onOpenApp}>
-              Entrar al sistema
+              Iniciar sesión
             </Button>
           </div>
         </div>
@@ -735,39 +771,41 @@ function LandingPage({
       <section className="mb-8 grid gap-5 rounded-[28px] border border-border/70 bg-card/95 p-8 shadow-[0_18px_54px_rgba(15,23,42,0.1)] md:grid-cols-[1.4fr_1fr]">
         <div>
           <h1 className="text-3xl font-bold leading-tight tracking-tight md:text-4xl">
-            Plataforma de tabulación para tesis, con control por suscripción.
+            Tabulación para tu tesis, rápida y sin errores.
           </h1>
           <p className="mt-4 max-w-2xl text-sm text-muted-foreground md:text-base">
-            Centraliza la configuración metodológica, genera archivos Excel automáticamente y reduce el tiempo operativo para cada nueva tesis.
+            Genera tu archivo Excel de tabulación automáticamente. Solo configuras tu encuesta y el sistema calcula baremos, dimensiones e indicadores por ti.
           </p>
           <div className="mt-6 flex flex-wrap gap-2">
             <Button size="lg" onClick={onOpenApp}>
-              Probar generación
+              Generar mi tabulación
               <ArrowRight className="h-4 w-4" />
-            </Button>
-            <Button size="lg" variant="outline" onClick={onOpenApp}>
-              Ver demo
             </Button>
           </div>
           <div className="mt-5 flex flex-wrap gap-2 text-xs">
             <Badge variant="muted">
               <Clock3 className="mr-1 h-3.5 w-3.5" />
-              Implementación rápida
+              Resultado en segundos
             </Badge>
             <Badge variant="muted">
               <ShieldCheck className="mr-1 h-3.5 w-3.5" />
-              Control de acceso por tiempo
+              Acceso con suscripción
             </Badge>
             <Badge variant="muted">
-              <Server className="mr-1 h-3.5 w-3.5" />
-              API + Docker + Netlify
+              <FileSpreadsheet className="mr-1 h-3.5 w-3.5" />
+              Excel y CSV listos para entregar
             </Badge>
           </div>
         </div>
         <div className="rounded-2xl border border-slate-400/20 bg-[linear-gradient(145deg,#f7fafc_0%,#edf2f7_100%)] p-5 dark:border-slate-200/20 dark:bg-[linear-gradient(145deg,#1e293b_0%,#0f172a_100%)]">
-          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Qué puedes vender</h3>
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">¿Qué incluye?</h3>
           <ul className="space-y-2 text-sm">
-            {["Servicio mensual para tesistas.", "Plan anual para consultoras y universidades.", "Gestión de cuentas con fecha de vencimiento.", "Generación rápida para múltiples tesis."].map((item) => (
+            {[
+              "Configuración de variables, dimensiones e indicadores.",
+              "Cálculo automático de baremos e intervalos.",
+              "Generación de Excel con estructura lista para tu informe.",
+              "Coeficiente de correlación calculado automáticamente.",
+            ].map((item) => (
               <li key={item} className="flex items-start gap-2">
                 <Check className="mt-0.5 h-4 w-4 text-primary" />
                 {item}
@@ -797,7 +835,7 @@ function LandingPage({
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <CardTitle>Planes y precios</CardTitle>
-                <CardDescription>Dos modelos comerciales para distintos tipos de cliente.</CardDescription>
+                <CardDescription>Elige el plan que se ajusta a tu situación.</CardDescription>
               </div>
               <div className="inline-flex rounded-lg border border-border bg-background/90 p-1">
                 {(["monthly", "yearly"] as const).map((mode) => (
@@ -826,11 +864,11 @@ function LandingPage({
                 <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
                 <div className="mt-4">
                   <p className="text-3xl font-bold">
-                    {billingMode === "monthly" ? plan.priceMonthlyUsd : plan.priceYearlyUsd}
+                    {billingMode === "monthly" ? plan.priceMonthlyPen : plan.priceYearlyPen}
                     <span className="ml-1 text-base font-medium text-muted-foreground">/ {billingMode === "monthly" ? "mes" : "año"}</span>
                   </p>
-                  <p className="mt-1 text-sm font-medium text-muted-foreground">
-                    {billingMode === "monthly" ? plan.priceMonthlyPen : plan.priceYearlyPen}
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {billingMode === "monthly" ? plan.priceMonthlyUsd : plan.priceYearlyUsd}
                     <span className="ml-1">por {billingMode === "monthly" ? "mes" : "año"}</span>
                   </p>
                 </div>
@@ -854,11 +892,11 @@ function LandingPage({
       <footer className="rounded-[28px] border border-border/70 bg-card/95 p-6 shadow-[0_16px_48px_rgba(15,23,42,0.08)]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-semibold">¿Listo para venderlo como servicio?</h3>
-            <p className="text-sm text-muted-foreground">Arranca con esta versión y activa login, roles y suscripciones por fecha.</p>
+            <h3 className="text-lg font-semibold">¿Listo para generar tu tabulación?</h3>
+            <p className="text-sm text-muted-foreground">Inicia sesión y ten tu Excel listo en minutos.</p>
           </div>
           <Button size="lg" onClick={onOpenApp}>
-            Entrar al sistema
+            Comenzar ahora
             <ArrowRight className="h-4 w-4" />
           </Button>
         </div>
@@ -1263,7 +1301,7 @@ export default function App() {
       const nextLinks: DownloadLinks = {
         json: URL.createObjectURL(new Blob([JSON.stringify(config, null, 2)], { type: "application/json;charset=utf-8" })),
         csv: URL.createObjectURL(new Blob([payload.baseCsv], { type: "text/csv;charset=utf-8" })),
-        xlsx: URL.createObjectURL(new Blob([excelBytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })),
+        xlsx: URL.createObjectURL(new Blob([excelBytes.buffer as ArrayBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })),
       };
       setDownloadLinks((cur) => { revokeDownloadLinks(cur); return nextLinks; });
       setResult({ correlation: payload.correlation, csvRows, sheetNames: parsedWorkbook.names, sheetData: parsedWorkbook.data, generatedAt: new Date().toISOString() });
@@ -1353,13 +1391,13 @@ export default function App() {
               </div>
             </CardContent>
           </Card>
-          {/* URL DE LA API: se configura automáticamente desde la variable VITE_API_BASE_URL.
-              Solo visible aquí para ajuste manual en desarrollo local.
-              TODO: eliminar este input antes de pasar a producción */}
-          <div className="mt-4 space-y-1">
-            <p className="text-center text-xs text-muted-foreground">API: {apiBaseUrl}</p>
-            <Input value={apiBaseUrl} onChange={(e) => setApiBaseUrl(e.target.value)} placeholder="https://tu-api.com" className="text-xs" />
-          </div>
+          {/* Input de API solo visible en dev local (VITE_API_BASE_URL no definida) */}
+          {import.meta.env.DEV && (
+            <div className="mt-4 space-y-1">
+              <p className="text-center text-xs text-muted-foreground">API: {apiBaseUrl}</p>
+              <Input value={apiBaseUrl} onChange={(e) => setApiBaseUrl(e.target.value)} placeholder="https://tu-api.com" className="text-xs" />
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1384,12 +1422,13 @@ export default function App() {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <FileSpreadsheet className="h-4 w-4" />
           </div>
-          <span className="font-bold tracking-tight">Tabulación</span>
+          <span className="font-bold tracking-tight">TesisTab</span>
         </div>
 
         {/* Nav items */}
         <nav className="flex-1 space-y-1 overflow-y-auto p-3">
           <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Herramientas</p>
+          {isAdmin ? (
           <button
             onClick={() => { setActiveSection("tabulacion"); }}
             className={cn(
@@ -1403,6 +1442,13 @@ export default function App() {
             Tabulación
             {activeSection === "tabulacion" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
           </button>
+          ) : (
+          <div className="flex w-full cursor-not-allowed items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground/50">
+            <FileSpreadsheet className="h-4 w-4 shrink-0" />
+            Tabulación
+            <Badge variant="muted" className="ml-auto text-[9px] px-1.5 py-0">Solo admin</Badge>
+          </div>
+          )}
 
           {/* Coming soon items */}
           {[
@@ -1447,18 +1493,18 @@ export default function App() {
             {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             {themeMode === "dark" ? "Modo claro" : "Modo oscuro"}
           </button>
-          {/* URL de la API: se detecta automáticamente desde VITE_API_BASE_URL.
-              Editable aquí solo para ajustes manuales en desarrollo.
-              TODO producción: considerar ocultar este campo o protegerlo */}
-          <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2 space-y-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">API</p>
-            <input
-              value={apiBaseUrl}
-              onChange={(e) => setApiBaseUrl(e.target.value)}
-              className="w-full bg-transparent text-[11px] text-muted-foreground outline-none truncate"
-              placeholder="http://localhost:8080"
-            />
-          </div>
+          {/* URL de la API: editable solo en dev local */}
+          {import.meta.env.DEV && (
+            <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2 space-y-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">API</p>
+              <input
+                value={apiBaseUrl}
+                onChange={(e) => setApiBaseUrl(e.target.value)}
+                className="w-full bg-transparent text-[11px] text-muted-foreground outline-none truncate"
+                placeholder="http://localhost:8080"
+              />
+            </div>
+          )}
           <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2">
             <p className="truncate text-xs font-medium text-foreground">{authUser?.email}</p>
             <p className="text-[10px] text-muted-foreground capitalize">{authUser?.role}</p>
@@ -1480,7 +1526,7 @@ export default function App() {
         <header className="flex h-14 items-center justify-between border-b border-border/60 bg-card/80 px-4 md:hidden">
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="h-5 w-5 text-primary" />
-            <span className="font-bold">Tabulación</span>
+            <span className="font-bold">TesisTab</span>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={toggleTheme} className="rounded-lg p-2 text-muted-foreground hover:bg-accent">
@@ -1541,7 +1587,10 @@ export default function App() {
                           <>
                             {/* Número de variables — selector */}
                             <div>
-                              <p className="mb-1 text-sm font-medium text-foreground">¿Cuántas variables tiene tu encuesta?</p>
+                              <div className="mb-2 flex items-center gap-2.5">
+                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">1</span>
+                                <p className="text-base font-semibold text-foreground">¿Cuántas variables tiene tu encuesta?</p>
+                              </div>
                               <FieldHint text="La mayoría de tesis usan 2 variables. Si solo tienes 1, la correlación no aplica." />
                               <div className="mt-3 flex gap-2">
                                 {[1, 2].map((n) => (
@@ -1561,12 +1610,18 @@ export default function App() {
                               </div>
                             </div>
 
+                            {/* Divider: Datos generales */}
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Datos generales</span>
+                              <div className="h-px flex-1 bg-border" />
+                            </div>
+
                             {/* General */}
                             <div className="grid gap-4 sm:grid-cols-2">
                               {[
                                 { key: "nommuestra", label: "Nombre de la muestra", hint: "¿Cómo se llaman las personas encuestadas? Ej: Beneficiarios, Estudiantes, Trabajadores.", placeholder: "Ej: Beneficiarios" },
                                 { key: "muestra", label: "Cantidad de personas encuestadas", hint: "Total de personas que respondieron la encuesta. Mínimo 2.", placeholder: "Ej: 289" },
-                                { key: "respuesta", label: "¿Cuántas opciones tiene cada pregunta?", hint: "Si usas escala del 1 al 5, escribe 5. Si es del 1 al 4, escribe 4.", placeholder: "Ej: 5" },
+                                { key: "respuesta", label: "¿Cuántas opciones tiene cada pregunta?", hint: "Cuenta las alternativas de tu escala. Ej: Muy en desacuerdo / En desacuerdo / Neutral / De acuerdo / Muy de acuerdo = 5 opciones.", placeholder: "Ej: 5" },
                               ].map((field) => (
                                 <div key={field.key}>
                                   <label className="block">
@@ -1578,9 +1633,14 @@ export default function App() {
                               ))}
                             </div>
 
+                            {/* Divider: Configuración por variable */}
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Configuración por variable</span>
+                              <div className="h-px flex-1 bg-border" />
+                            </div>
+
                             {/* Por variable */}
                             <div className="rounded-xl border border-border/60 bg-background/50 p-4">
-                              <p className="mb-3 text-sm font-semibold text-foreground">Configuración por variable</p>
                               <div className={cn("grid gap-4", hasV2 ? "grid-cols-2" : "grid-cols-1")}>
                                 {/* Headers */}
                                 <div className="rounded bg-primary/10 px-2 py-1 text-center text-xs font-semibold uppercase tracking-wide text-primary">Variable 1</div>
@@ -1602,6 +1662,23 @@ export default function App() {
                                 )}
                                 <FieldHint text="Cuántas preguntas (ítems) tiene cada variable." />
                                 {hasV2 && <FieldHint text="Cuántas preguntas (ítems) tiene cada variable." />}
+                                {/* Dimensiones */}
+                                <div>
+                                  <label className="block">
+                                    <span className="text-sm font-medium text-foreground">Dimensiones</span>
+                                    <Input className="mt-1.5" value={getScalar("dimensiones")} onChange={(e) => setScalar("dimensiones", e.target.value)} placeholder="Ej: 3" />
+                                  </label>
+                                </div>
+                                {hasV2 && (
+                                  <div>
+                                    <label className="block">
+                                      <span className="text-sm font-medium text-foreground">Dimensiones</span>
+                                      <Input className="mt-1.5" value={getScalar("dimensiones_v2")} onChange={(e) => setScalar("dimensiones_v2", e.target.value)} placeholder="Ej: 3" />
+                                    </label>
+                                  </div>
+                                )}
+                                <FieldHint text="En cuántos grupos temáticos se divide la variable." />
+                                {hasV2 && <FieldHint text="Puede tener un número distinto al de la Variable 1." />}
                                 {/* Niveles baremo */}
                                 <div>
                                   <label className="block">
@@ -1628,8 +1705,11 @@ export default function App() {
                       {/* Relación — solo con 2 variables */}
                       {(parseInt(getScalar("variable"), 10) || 2) >= 2 && (
                         <div className="rounded-xl border border-border/80 bg-background/50 p-4">
-                          <p className="mb-1 text-sm font-medium text-foreground">¿Las variables van en la misma dirección?</p>
-                          <FieldHint text="Directa: si V1 sube, V2 también sube. Inversa: si V1 sube, V2 baja." />
+                          <div className="mb-2 flex items-center gap-2.5">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">2</span>
+                            <p className="text-base font-semibold text-foreground">¿Las variables van en la misma dirección?</p>
+                          </div>
+                          <FieldHint text="Misma dirección: si una variable sube, la otra también (ej: más horas de estudio → mejores notas). Dirección opuesta: si una sube, la otra baja (ej: más estrés → menor rendimiento)." />
                           <div className="mt-3 flex gap-2">
                             <button
                               onClick={() => setScalar("relacionversa", "0")}
@@ -1664,7 +1744,54 @@ export default function App() {
                   <div className="flex justify-end">
                     <Button size="lg" onClick={() => {
                       autoCalcBaremo("v1");
-                      if ((parseIntSafe(config.variable) ?? 2) >= 2) autoCalcBaremo("v2");
+                      const hasV2next = (parseIntSafe(config.variable) ?? 2) >= 2;
+                      if (hasV2next) autoCalcBaremo("v2");
+                      // Auto-generar estructura con dimensiones e ítems repartidos.
+                      // Preserva nombres existentes cuando sea posible (si el usuario ya escribió algo).
+                      const initEstructura = (numItems: number, numDims: number, prev: DimensionDef[]): DimensionDef[] => {
+                        const usedItems = prev.flatMap((d) => d.indicadores.flatMap((i) => i.items)).length;
+                        if (usedItems === numItems && prev.length === numDims && numDims > 0) return prev;
+                        const dims = Math.max(numDims, 1);
+                        const base = Math.floor(numItems / dims);
+                        const extra = numItems % dims;
+                        // Aplanar todos los ítems previos para reutilizar nombres
+                        const allPrevItems = prev.flatMap((d) => d.indicadores.flatMap((i) => i.items));
+                        let globalIdx = 0;
+                        return Array.from({ length: dims }, (_, di) => {
+                          const count = base + (di < extra ? 1 : 0);
+                          const existingDim = prev[di];
+                          const items: ItemDef[] = Array.from({ length: count }, (_, k) => {
+                            const existing = allPrevItems[globalIdx + k];
+                            return existing ?? { id: eid(), nombre: `Ítem ${globalIdx + k + 1}` };
+                          });
+                          globalIdx += count;
+                          return {
+                            id: existingDim?.id ?? eid(),
+                            nombre: existingDim?.nombre ?? "",
+                            indicadores: [{
+                              id: existingDim?.indicadores[0]?.id ?? eid(),
+                              nombre: existingDim?.indicadores[0]?.nombre ?? "",
+                              items,
+                            }],
+                          };
+                        });
+                      };
+                      const numV1 = parseIntSafe(config.item) ?? 0;
+                      const numV2 = parseIntSafe(config.itemv2) ?? 0;
+                      const dimsV1 = Math.max(parseIntSafe(config.dimensiones) ?? 1, 1);
+                      const dimsV2 = Math.max(parseIntSafe(config.dimensiones_v2) ?? 1, 1);
+                      const muestra = parseIntSafe(config.muestra) ?? 0;
+                      if (muestra <= 0) { setErrorMessage("La cantidad de personas encuestadas debe ser mayor a 0."); return; }
+                      if (numV1 <= 0) { setErrorMessage("El número de preguntas de Variable 1 debe ser mayor a 0."); return; }
+                      if (hasV2next && numV2 <= 0) { setErrorMessage("El número de preguntas de Variable 2 debe ser mayor a 0."); return; }
+                      if (dimsV1 > numV1) {
+                        setErrorMessage(`Variable 1: no puedes tener más dimensiones (${dimsV1}) que preguntas (${numV1}).`); return;
+                      }
+                      if (hasV2next && dimsV2 > numV2) {
+                        setErrorMessage(`Variable 2: no puedes tener más dimensiones (${dimsV2}) que preguntas (${numV2}).`); return;
+                      }
+                      if (numV1 > 0) setEstructuraV1((prev) => initEstructura(numV1, dimsV1, prev));
+                      if (hasV2next && numV2 > 0) setEstructuraV2((prev) => initEstructura(numV2, dimsV2, prev));
                       setWizardStep(2);
                       setErrorMessage(null);
                     }}>
@@ -1696,11 +1823,8 @@ export default function App() {
                           </div>
                         )}
                       </CardHeader>
-                      <CardContent className="grid gap-3 md:grid-cols-2">
-                        {group.fields.filter((field) => {
-                          if (field.key === "numero_pregunta1" && (parseIntSafe(config.variable) ?? 2) < 2) return false;
-                          return true;
-                        }).map((field) => {
+                      <CardContent className={cn("grid gap-3", group.fields.length > 1 && "md:grid-cols-2")}>
+                        {group.fields.map((field) => {
                           const isEscalaField = field.key === "nombre_escala" || field.key === "nombre_escala_v2";
                           const labelsKey = "variable" in group
                             ? (group.variable === "v1" ? "nombre_escala" : "nombre_escala_v2")
@@ -1726,10 +1850,13 @@ export default function App() {
                   {/* Estructura jerárquica — Variable 1 */}
                   <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
                     <CardHeader>
-                      <CardTitle>Estructura de Variable 1</CardTitle>
-                      <CardDescription>
-                        Define las dimensiones, indicadores e ítems. El total de ítems debe ser igual a las preguntas de V1 del paso 1.
-                      </CardDescription>
+                      <CardTitle>Ponle nombre a tu Variable 1</CardTitle>
+                      <StepTip
+                        icon={<Zap className="h-4 w-4" />}
+                        label="Ya armamos el esqueleto"
+                        detail="— ahora escríbele un nombre a cada parte ↓"
+                        color="primary"
+                      />
                     </CardHeader>
                     <CardContent>
                       <HierarchyEditor
@@ -1745,10 +1872,13 @@ export default function App() {
                   {(parseIntSafe(config.variable) ?? 2) >= 2 && (
                     <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
                       <CardHeader>
-                        <CardTitle>Estructura de Variable 2</CardTitle>
-                        <CardDescription>
-                          Define las dimensiones, indicadores e ítems de tu segunda variable. El total de ítems debe coincidir con las preguntas de V2.
-                        </CardDescription>
+                        <CardTitle>Ponle nombre a tu Variable 2</CardTitle>
+                        <StepTip
+                          icon={<Zap className="h-4 w-4" />}
+                          label="Ya armamos el esqueleto"
+                          detail="— ahora escríbele un nombre a cada parte de Variable 2 ↓"
+                          color="primary"
+                        />
                       </CardHeader>
                       <CardContent>
                         <HierarchyEditor
@@ -1787,7 +1917,10 @@ export default function App() {
 
                   <div className="space-y-3">
                     {step2Error && (
-                      <p className="text-sm text-danger text-right">{step2Error}</p>
+                      <div className="flex items-center gap-2 rounded-xl border border-danger/30 bg-danger/8 px-4 py-3 text-sm text-danger">
+                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                        {step2Error}
+                      </div>
                     )}
                     <div className="flex items-center justify-between">
                       <Button variant="outline" size="lg" onClick={() => { setWizardStep(1); setStep2Error(null); }}>
@@ -1916,12 +2049,12 @@ export default function App() {
                         <div className="rounded-xl border border-border/60 bg-background/80 p-4">
                           <p className="text-sm text-muted-foreground">Coeficiente de correlación de Pearson</p>
                           <div className="mt-1 flex items-baseline gap-3">
-                            <span className="text-4xl font-bold tracking-tight text-primary">{result.correlation.toFixed(3)}</span>
+                            <span className="text-4xl font-bold tracking-tight text-primary">{(result.correlation ?? 0).toFixed(3)}</span>
                             <div>
-                              <span className={cn("text-sm font-semibold", correlationInfo(result.correlation).colorClass)}>
-                                Correlación {correlationInfo(result.correlation).label}
+                              <span className={cn("text-sm font-semibold", correlationInfo(result.correlation ?? 0).colorClass)}>
+                                Correlación {correlationInfo(result.correlation ?? 0).label}
                               </span>
-                              <p className="text-xs text-muted-foreground">{correlationInfo(result.correlation).explanation}</p>
+                              <p className="text-xs text-muted-foreground">{correlationInfo(result.correlation ?? 0).explanation}</p>
                             </div>
                           </div>
                         </div>
