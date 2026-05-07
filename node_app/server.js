@@ -432,10 +432,8 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         service: "tabulacion-api",
         now: new Date().toISOString(),
-        templatePath: TEMPLATE_PATH,
         inMemoryResults: results.size,
         authRequired: AUTH_REQUIRED,
-        userStorePath: USER_STORE_PATH,
       });
       return;
     }
@@ -506,8 +504,13 @@ const server = http.createServer(async (req, res) => {
       if (!target) throw new HttpError(404, "Usuario no encontrado.");
 
       const payload = await parseJsonBody(req);
-      if (target.id === admin.id && payload?.status === "disabled") {
-        throw new HttpError(400, "No puedes desactivar tu propio usuario admin.");
+      if (target.id === admin.id) {
+        if (payload?.status === "disabled") {
+          throw new HttpError(400, "No puedes desactivar tu propio usuario.");
+        }
+        if (payload?.role !== undefined && payload.role !== "admin") {
+          throw new HttpError(400, "No puedes cambiar tu propio rol de administrador.");
+        }
       }
 
       const updated = patchUser(target, payload ?? {});
