@@ -1412,13 +1412,14 @@ export default function App() {
                 {authLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 Entrar
               </Button>
-              {/* TODO producción: eliminar este botón antes de lanzar a producción real */}
-              <button
-                onClick={() => { setLoginEmail("admin@tabulacion.local"); setLoginPassword("Admin12345!"); }}
-                className="w-full rounded-lg border border-dashed border-border py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-all"
-              >
-                Rellenar con datos de prueba
-              </button>
+              {import.meta.env.DEV && (
+                <button
+                  onClick={() => { setLoginEmail("admin@tabulacion.local"); setLoginPassword("Admin12345!"); }}
+                  className="w-full rounded-lg border border-dashed border-border py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-all"
+                >
+                  Rellenar con datos de prueba
+                </button>
+              )}
               <div className="flex items-center justify-between">
                 <button onClick={goToLanding} className="text-xs text-muted-foreground hover:text-foreground">← Volver al inicio</button>
                 <button onClick={toggleTheme} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">

@@ -16,8 +16,9 @@ const toInt = (value, fallback = 0) => {
 };
 
 const getItemCounts = (config) => {
+  const numVars = toInt(Array.isArray(config.variable) ? config.variable[0] : config.variable, 2);
   const v1 = toInt(Array.isArray(config.item) ? config.item[0] : config.item, 0);
-  const v2 = toInt(Array.isArray(config.itemv2) ? config.itemv2[0] : config.itemv2, 0);
+  const v2 = numVars >= 2 ? toInt(Array.isArray(config.itemv2) ? config.itemv2[0] : config.itemv2, 0) : 0;
   return [v1, v2];
 };
 
@@ -53,6 +54,7 @@ const computeCorrelation = (data, config) => {
   const rows = Object.values(data)[0]?.length ?? 0;
   if (rows === 0) throw new Error("Base vacia.");
   if (rows < 2) throw new Error("Se requieren al menos 2 filas para correlacion.");
+  if (v2Count === 0) return 1;
 
   const v1 = Array.from({ length: rows }, (_, i) => {
     let sum = 0;
@@ -74,8 +76,8 @@ const computeCorrelation = (data, config) => {
 
 const generateBaseData = (config) => {
   const [v1Count, v2Count] = getItemCounts(config);
-  if (v1Count <= 0 || v2Count <= 0) {
-    throw new Error("Define el numero de items V1 y V2 antes de generar.");
+  if (v1Count <= 0) {
+    throw new Error("Define el numero de items V1 antes de generar.");
   }
 
   const rows = toInt(config.muestra, 0);
@@ -574,12 +576,8 @@ export const generateArtifacts = async (config, opts = {}) => {
 
   const [v1Count, v2Count] = getItemCounts(config);
   const sheetV1 = getRequiredSheet(workbook, "Gesti\u00f3n de abastecimiento");
-  const sheetV2 = getRequiredSheet(workbook, "Satisfacci\u00f3n de los comit\u00e9s d");
-
   const headerRowV1 = findRowWithValue(sheetV1, "PRG.1");
-  const headerRowV2 = findRowWithValue(sheetV2, "PRG.1");
   if (!headerRowV1) throw new Error('No se encontro "PRG.1" en la hoja de V1.');
-  if (!headerRowV2) throw new Error('No se encontro "PRG.1" en la hoja de V2.');
 
   const rowLabels = Array.from({ length: base.V1_1.length }, (_, i) => `${sampleLabel} ${i + 1}`);
 
@@ -590,15 +588,21 @@ export const generateArtifacts = async (config, opts = {}) => {
   });
   writeSheetData(sheetV1, headerRowV1, rowsV1, rowLabels);
 
-  const rowsV2 = rowLabels.map((_, i) => {
-    const vals = [];
-    for (let c = 1; c <= v2Count; c += 1) vals.push(base[`V2_${c}`][i]);
-    return vals;
-  });
-  writeSheetData(sheetV2, headerRowV2, rowsV2, rowLabels);
+  if (v2Count > 0) {
+    const sheetV2 = getRequiredSheet(workbook, "Satisfacci\u00f3n de los comit\u00e9s d");
+    const headerRowV2 = findRowWithValue(sheetV2, "PRG.1");
+    if (!headerRowV2) throw new Error('No se encontro "PRG.1" en la hoja de V2.');
+    const rowsV2 = rowLabels.map((_, i) => {
+      const vals = [];
+      for (let c = 1; c <= v2Count; c += 1) vals.push(base[`V2_${c}`][i]);
+      return vals;
+    });
+    writeSheetData(sheetV2, headerRowV2, rowsV2, rowLabels);
+  }
 
   const valoracionSheets = ["Por Valoracion (3) Dimension", "Por Valoracion (3) Dimension 2"];
   valoracionSheets.forEach((name, idx) => {
+    if (idx === 1 && v2Count <= 0) return;
     const sheet = workbook.sheet(name);
     if (!sheet) return;
     const headerRow = findRowWithValue(sheet, "N\u00b0 de Personas");
@@ -634,6 +638,7 @@ export const generateArtifacts = async (config, opts = {}) => {
 
   const conteoSheets = ["Por conteo Dimension", "Por conteo Dimension 2"];
   conteoSheets.forEach((name, idx) => {
+    if (idx === 1 && v2Count <= 0) return;
     const sheet = workbook.sheet(name);
     if (!sheet) return;
     const used = sheet.usedRange();
