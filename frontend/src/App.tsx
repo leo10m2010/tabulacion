@@ -294,20 +294,13 @@ function resolveViewFromPath(): AppView {
 function calcBaremoIntervalos(preguntas: number, respuesta: number, niveles: number): { desde: string[]; hasta: string[] } {
   const pMin = preguntas;
   const pMax = preguntas * respuesta;
-  const amplitud = Math.round((pMax - pMin) / niveles);
+  const amplitud = Math.max(1, Math.ceil((pMax - pMin) / niveles));
   const desde: string[] = [];
   const hasta: string[] = [];
   for (let i = 0; i < niveles; i++) {
-    if (i === 0) {
-      desde[i] = String(pMin);
-      hasta[i] = String(pMin + amplitud);
-    } else if (i === niveles - 1) {
-      desde[i] = String(parseInt(hasta[i - 1]) + 1);
-      hasta[i] = String(pMax);
-    } else {
-      desde[i] = String(parseInt(hasta[i - 1]) + 1);
-      hasta[i] = String(pMin + (i + 1) * amplitud);
-    }
+    const d = pMin + i * amplitud;
+    desde[i] = String(d);
+    hasta[i] = String(i === niveles - 1 ? pMax : d + amplitud - 1);
   }
   return { desde, hasta };
 }

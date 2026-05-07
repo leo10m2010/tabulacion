@@ -308,8 +308,9 @@ const calcMedian = (arr) => {
 };
 
 const calcStddev = (arr) => {
+  if (arr.length < 2) return 0;
   const m = calcMean(arr);
-  return Math.sqrt(arr.reduce((acc, v) => acc + (v - m) ** 2, 0) / arr.length);
+  return Math.sqrt(arr.reduce((acc, v) => acc + (v - m) ** 2, 0) / (arr.length - 1));
 };
 
 const round2 = (v) => Math.round(v * 100) / 100;
