@@ -984,15 +984,42 @@ export default function App() {
   useEffect(() => () => revokeDownloadLinks(downloadLinks), [downloadLinks]);
 
   useEffect(() => {
-    if (estructuraV1.length === 0) return;
+    if (estructuraV1.length === 0 && estructuraV2.length === 0) return;
+    const v1Inds = estructuraV1.flatMap((d) => d.indicadores.map((i) => i.nombre));
+    const v2Inds = estructuraV2.flatMap((d) => d.indicadores.map((i) => i.nombre));
+    const hasV2 = estructuraV2.length > 0;
     setConfig((prev) => ({
       ...prev,
-      nombre_dimension: estructuraV1.map((d) => d.nombre),
-      numero_dimension: estructuraV1.map((_, i) => String(i + 1)),
-      nombre_indicador: estructuraV1.flatMap((d) => d.indicadores.map((i) => i.nombre)),
-      numero_indicador0: estructuraV1.map((d) => String(d.indicadores.length)),
+      nombre_indicador: [...v1Inds, ...v2Inds],
+      numero_indicador0: hasV2
+        ? [String(v1Inds.length), String(v2Inds.length)]
+        : [String(v1Inds.length)],
+      nombre_dims_v1: estructuraV1.map((d) => d.nombre),
+      items_por_dim_v1: estructuraV1.map((d) => String(d.indicadores.flatMap((i) => i.items).length)),
+      nombre_items_v1: estructuraV1.flatMap((d) => d.indicadores.flatMap((i) => i.items.map((it) => it.nombre))),
+      nombre_dims_v2: estructuraV2.map((d) => d.nombre),
+      items_por_dim_v2: estructuraV2.map((d) => String(d.indicadores.flatMap((i) => i.items).length)),
+      nombre_items_v2: estructuraV2.flatMap((d) => d.indicadores.flatMap((i) => i.items.map((it) => it.nombre))),
     }));
-  }, [estructuraV1]);
+  }, [estructuraV1, estructuraV2]);
+
+  useEffect(() => {
+    const muestra = parseIntSafe(config.muestra);
+    if (!muestra || muestra <= 0) return;
+    setConfig((prev) => {
+      const recalc = (pctKey: string, cantKey: string) => {
+        const pcts = toStringList(prev[pctKey]);
+        if (!pcts.length) return {};
+        return {
+          [cantKey]: pcts.map((v) => {
+            const p = parseFloat(v.trim());
+            return Number.isFinite(p) ? String(Math.round((p / 100) * muestra)) : "";
+          }),
+        };
+      };
+      return { ...prev, ...recalc("porcentaje", "cantidad"), ...recalc("porcentaje_v2", "cantidad_v2") };
+    });
+  }, [config.muestra]);
 
   useEffect(() => {
     if (!authToken) { setAuthLoading(false); setAuthUser(null); return; }
@@ -1284,10 +1311,19 @@ export default function App() {
     setIsGenerating(true);
     setStatusMessage("Enviando configuración a la API...");
     try {
+      const hasV2gen = (parseIntSafe(config.variable) ?? 2) >= 2;
+      const dimCount = hasV2gen ? 2 : 1;
+      const resolvedConfig = {
+        ...config,
+        nombre_dimension: Array.from({ length: dimCount }, (_, i) => {
+          const val = toStringList(config.nombre_dimension)[i] ?? "";
+          return val.trim() || `Variable ${i + 1}`;
+        }),
+      };
       const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
-        body: JSON.stringify({ config, responseMode: "inline" }),
+        body: JSON.stringify({ config: resolvedConfig, responseMode: "inline" }),
       });
       const payload = (await res.json()) as InlineGenerateResponse;
       if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
@@ -1859,6 +1895,23 @@ export default function App() {
                       />
                     </CardHeader>
                     <CardContent>
+                      <div className="mb-5">
+                        <label className="block">
+                          <span className="text-sm font-medium text-foreground">Nombre de la variable</span>
+                          <Input
+                            className="mt-1.5"
+                            value={toStringList(config.nombre_dimension)[0] ?? ""}
+                            onChange={(e) => setConfig((prev) => {
+                              const dims = [...toStringList(prev.nombre_dimension)];
+                              while (dims.length < 1) dims.push("");
+                              dims[0] = e.target.value;
+                              return { ...prev, nombre_dimension: dims };
+                            })}
+                            placeholder="Ej: Gestión de abastecimiento"
+                          />
+                        </label>
+                        <FieldHint text="Este nombre aparece como etiqueta de Variable 1 en el Excel generado." />
+                      </div>
                       <HierarchyEditor
                         label="Variable 1"
                         totalItems={parseIntSafe(config.item) ?? 0}
@@ -1881,6 +1934,23 @@ export default function App() {
                         />
                       </CardHeader>
                       <CardContent>
+                        <div className="mb-5">
+                          <label className="block">
+                            <span className="text-sm font-medium text-foreground">Nombre de la variable</span>
+                            <Input
+                              className="mt-1.5"
+                              value={toStringList(config.nombre_dimension)[1] ?? ""}
+                              onChange={(e) => setConfig((prev) => {
+                                const dims = [...toStringList(prev.nombre_dimension)];
+                                while (dims.length < 2) dims.push("");
+                                dims[1] = e.target.value;
+                                return { ...prev, nombre_dimension: dims };
+                              })}
+                              placeholder="Ej: Satisfacción del servicio"
+                            />
+                          </label>
+                          <FieldHint text="Este nombre aparece como etiqueta de Variable 2 en el Excel generado." />
+                        </div>
                         <HierarchyEditor
                           label="Variable 2"
                           totalItems={parseIntSafe(config.itemv2) ?? 0}
@@ -1978,7 +2048,7 @@ export default function App() {
                           ...((parseIntSafe(config.variable) ?? 2) >= 2 ? [{ label: "Niveles baremo V2", value: getScalar("escala_v2") }] : []),
                           { label: "Opciones por pregunta", value: `1 al ${getScalar("respuesta")}` },
                           { label: "Relación", value: getScalar("relacionversa") === "1" ? "Inversa" : "Directa" },
-                          { label: "Dimensiones", value: getList("nombre_dimension").filter(Boolean).join(", ") || "—" },
+                          { label: "Variables", value: getList("nombre_dimension").filter(Boolean).join(", ") || "—" },
                         ].map((item) => (
                           <div key={item.label} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2.5">
                             <p className="text-xs text-muted-foreground">{item.label}</p>

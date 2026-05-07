@@ -289,6 +289,273 @@ const buildBaseCsv = (base, v1Count, v2Count) => {
   return csvLines.join("\n");
 };
 
+// ── Statistical helpers ─────────────────────────────────────────────────────
+
+const calcMode = (arr) => {
+  const freq = {};
+  arr.forEach((v) => { freq[v] = (freq[v] || 0) + 1; });
+  return Number(Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0]);
+};
+
+const calcMean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+
+const calcMedian = (arr) => {
+  const s = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+};
+
+const calcStddev = (arr) => {
+  const m = calcMean(arr);
+  return Math.sqrt(arr.reduce((acc, v) => acc + (v - m) ** 2, 0) / arr.length);
+};
+
+const round2 = (v) => Math.round(v * 100) / 100;
+
+// ── Baremación helpers ──────────────────────────────────────────────────────
+
+const calcDimBaremo = (itemsInDim, numEscalas, respuestaMax) => {
+  const minVal = itemsInDim;
+  const maxVal = itemsInDim * respuestaMax;
+  const range = maxVal - minVal;
+  const amplitud = Math.max(1, Math.ceil(range / numEscalas));
+  return Array.from({ length: numEscalas }, (_, k) => {
+    const desde = minVal + k * amplitud;
+    const hasta = k === numEscalas - 1 ? maxVal : Math.min(desde + amplitud - 1, maxVal);
+    return { desde, hasta };
+  });
+};
+
+const getLevelText = (sum, baremo, scaleNames) => {
+  for (let k = 0; k < baremo.length; k += 1) {
+    if (sum >= baremo[k].desde && sum <= baremo[k].hasta) {
+      return String(scaleNames[k] ?? `Nivel ${k + 1}`);
+    }
+  }
+  return String(scaleNames[baremo.length - 1] ?? `Nivel ${baremo.length}`);
+};
+
+const safeSheetName = (prefix, suffix) => {
+  const maxLen = 31 - suffix.length;
+  return (prefix.length > maxLen ? prefix.substring(0, maxLen) : prefix) + suffix;
+};
+
+// ── New sheet builders ──────────────────────────────────────────────────────
+
+const addBaseSheet = (workbook, sheetName, varNum, itemCount, itemNames, config, base, sampleLabel) => {
+  const sheet = workbook.addSheet(sheetName);
+  const muestra = toInt(config.muestra, 0);
+  const respuestaMax = Math.max(toInt(config.respuesta, 5), 1);
+  const respNames = Array.isArray(config.nombre_respuesta) ? config.nombre_respuesta : [];
+  const getItemName = (i) => String(itemNames[i - 1] ?? "").trim() || `Ítem ${i}`;
+
+  let row = 1;
+
+  // Section A: raw data matrix
+  sheet.cell(row, 1).value("N°");
+  sheet.cell(row, 2).value(sampleLabel);
+  for (let c = 1; c <= itemCount; c += 1) sheet.cell(row, 2 + c).value(getItemName(c));
+  sheet.cell(row, 3 + itemCount).value("Total");
+  row += 1;
+
+  const rowTotals = [];
+  for (let i = 0; i < muestra; i += 1) {
+    sheet.cell(row, 1).value(i + 1);
+    sheet.cell(row, 2).value(`${sampleLabel} ${i + 1}`);
+    let sum = 0;
+    for (let c = 1; c <= itemCount; c += 1) {
+      const val = base[`V${varNum}_${c}`]?.[i] ?? 0;
+      sheet.cell(row, 2 + c).value(val);
+      sum += val;
+    }
+    sheet.cell(row, 3 + itemCount).value(sum);
+    rowTotals.push(sum);
+    row += 1;
+  }
+  row += 1; // blank
+
+  // Section B: descriptive stats
+  const statDefs = [
+    ["Moda", calcMode],
+    ["Media", calcMean],
+    ["Mediana", calcMedian],
+    ["Desv. Est.", calcStddev],
+  ];
+  statDefs.forEach(([label, fn]) => {
+    sheet.cell(row, 1).value(label);
+    for (let c = 1; c <= itemCount; c += 1) {
+      const colData = Array.from({ length: muestra }, (_, i) => base[`V${varNum}_${c}`]?.[i] ?? 0);
+      sheet.cell(row, 2 + c).value(round2(fn(colData)));
+    }
+    sheet.cell(row, 3 + itemCount).value(round2(fn(rowTotals)));
+    row += 1;
+  });
+  row += 1; // blank
+
+  // Section C: Likert frequency table
+  sheet.cell(row, 1).value("Opción de respuesta");
+  for (let c = 1; c <= itemCount; c += 1) sheet.cell(row, 1 + c).value(getItemName(c));
+  sheet.cell(row, 2 + itemCount).value("Total");
+  row += 1;
+
+  for (let r = 1; r <= respuestaMax; r += 1) {
+    const respLabel = String(respNames[r - 1] ?? "").trim() || `Opción ${r}`;
+    sheet.cell(row, 1).value(respLabel);
+    let rowSum = 0;
+    for (let c = 1; c <= itemCount; c += 1) {
+      const colData = Array.from({ length: muestra }, (_, i) => base[`V${varNum}_${c}`]?.[i] ?? 0);
+      const freq = colData.filter((v) => v === r).length;
+      sheet.cell(row, 1 + c).value(freq);
+      rowSum += freq;
+    }
+    sheet.cell(row, 2 + itemCount).value(rowSum);
+    row += 1;
+  }
+
+  sheet.cell(row, 1).value("Total");
+  for (let c = 1; c <= itemCount; c += 1) sheet.cell(row, 1 + c).value(muestra);
+  sheet.cell(row, 2 + itemCount).value(muestra * itemCount);
+};
+
+const addValoracionSheet = (workbook, sheetName, varNum, varLabel, dimNames, itemsPerDim, config, base, sampleLabel, scaleNames) => {
+  const sheet = workbook.addSheet(sheetName);
+  const muestra = toInt(config.muestra, 0);
+  const numEscalas = Math.max(toInt(config.escala, 3), 1);
+  const respuestaMax = Math.max(toInt(config.respuesta, 5), 1);
+  const getDimName = (di) => String(dimNames[di] ?? "").trim() || `Dimensión ${di + 1}`;
+  const getScaleName = (k) => String(scaleNames[k] ?? "").trim() || `Nivel ${k + 1}`;
+
+  // Cumulative 1-indexed start column per dimension
+  const dimStartCols = [];
+  let cumulative = 1;
+  itemsPerDim.forEach((count) => { dimStartCols.push(cumulative); cumulative += count; });
+
+  const dimBaremos = itemsPerDim.map((count) => calcDimBaremo(count, numEscalas, respuestaMax));
+
+  // Precompute sums per dimension per respondent
+  const dimSums = dimNames.map((_, di) => {
+    const start = dimStartCols[di];
+    const count = itemsPerDim[di];
+    return Array.from({ length: muestra }, (_, i) => {
+      let s = 0;
+      for (let c = start; c < start + count; c += 1) s += base[`V${varNum}_${c}`]?.[i] ?? 0;
+      return s;
+    });
+  });
+
+  let row = 1;
+
+  // Section A: per-respondent table
+  sheet.cell(row, 1).value("N°");
+  sheet.cell(row, 2).value(sampleLabel);
+  let col = 3;
+  dimNames.forEach((_, di) => {
+    sheet.cell(row, col).value(`${getDimName(di)} (Suma)`);
+    sheet.cell(row, col + 1).value(`${getDimName(di)} (Nivel)`);
+    col += 2;
+  });
+  row += 1;
+
+  for (let i = 0; i < muestra; i += 1) {
+    sheet.cell(row, 1).value(i + 1);
+    sheet.cell(row, 2).value(`${sampleLabel} ${i + 1}`);
+    col = 3;
+    dimNames.forEach((_, di) => {
+      const s = dimSums[di][i];
+      sheet.cell(row, col).value(s);
+      sheet.cell(row, col + 1).value(getLevelText(s, dimBaremos[di], scaleNames));
+      col += 2;
+    });
+    row += 1;
+  }
+  row += 1; // blank
+
+  // Section B: per-dimension summary blocks
+  dimNames.forEach((_, di) => {
+    const baremo = dimBaremos[di];
+    const itemsInDim = itemsPerDim[di];
+    const sums = dimSums[di];
+    const amplitud = baremo.length > 1 ? baremo[1].desde - baremo[0].desde : 0;
+
+    sheet.cell(row, 1).value("Variable:"); sheet.cell(row, 2).value(varLabel); row += 1;
+    sheet.cell(row, 1).value("Dimensión:"); sheet.cell(row, 2).value(getDimName(di)); row += 1;
+    sheet.cell(row, 1).value("N° de ítems:"); sheet.cell(row, 2).value(itemsInDim); row += 1;
+    sheet.cell(row, 1).value("Escalas valorativas:"); sheet.cell(row, 2).value(numEscalas); row += 1;
+    sheet.cell(row, 1).value("Mín. puntaje:"); sheet.cell(row, 2).value(itemsInDim); row += 1;
+    sheet.cell(row, 1).value("Máx. puntaje:"); sheet.cell(row, 2).value(itemsInDim * respuestaMax); row += 1;
+    sheet.cell(row, 1).value("Amplitud:"); sheet.cell(row, 2).value(amplitud); row += 1;
+    row += 1; // blank
+
+    sheet.cell(row, 1).value("Calificación");
+    sheet.cell(row, 2).value("Desde");
+    sheet.cell(row, 3).value("Hasta");
+    sheet.cell(row, 4).value("Frec.");
+    sheet.cell(row, 5).value("%");
+    row += 1;
+
+    baremo.forEach(({ desde, hasta }, k) => {
+      const freq = sums.filter((s) => s >= desde && s <= hasta).length;
+      const pct = muestra > 0 ? round2((freq / muestra) * 100) : 0;
+      sheet.cell(row, 1).value(getScaleName(k));
+      sheet.cell(row, 2).value(desde);
+      sheet.cell(row, 3).value(hasta);
+      sheet.cell(row, 4).value(freq);
+      sheet.cell(row, 5).value(pct);
+      row += 1;
+    });
+
+    sheet.cell(row, 1).value("Total");
+    sheet.cell(row, 4).value(muestra);
+    sheet.cell(row, 5).value(100);
+    row += 2; // blank between dimensions
+  });
+};
+
+const addItemsSheet = (workbook, sheetName, varNum, itemCount, itemNames, config, base) => {
+  const sheet = workbook.addSheet(sheetName);
+  const muestra = toInt(config.muestra, 0);
+  const respuestaMax = Math.max(toInt(config.respuesta, 5), 1);
+  const respNames = Array.isArray(config.nombre_respuesta) ? config.nombre_respuesta : [];
+  const getItemName = (i) => String(itemNames[i - 1] ?? "").trim() || `Ítem ${i}`;
+
+  let row = 1;
+
+  for (let c = 1; c <= itemCount; c += 1) {
+    const itemLabel = getItemName(c);
+
+    sheet.cell(row, 1).value(`Ítem ${c}`);
+    sheet.cell(row, 2).value(`Tabla ${c}`);
+    if (itemLabel !== `Ítem ${c}`) sheet.cell(row, 3).value(itemLabel);
+    row += 1;
+
+    sheet.cell(row, 1).value("Opción de respuesta");
+    sheet.cell(row, 2).value("Frec.");
+    sheet.cell(row, 3).value("%");
+    row += 1;
+
+    const colData = Array.from({ length: muestra }, (_, i) => base[`V${varNum}_${c}`]?.[i] ?? 0);
+
+    for (let r = 1; r <= respuestaMax; r += 1) {
+      const freq = colData.filter((v) => v === r).length;
+      const pct = muestra > 0 ? round2((freq / muestra) * 100) : 0;
+      const respLabel = String(respNames[r - 1] ?? "").trim() || `Opción ${r}`;
+      sheet.cell(row, 1).value(respLabel);
+      sheet.cell(row, 2).value(freq);
+      sheet.cell(row, 3).value(pct);
+      row += 1;
+    }
+
+    sheet.cell(row, 1).value("Total");
+    sheet.cell(row, 2).value(muestra);
+    sheet.cell(row, 3).value(100);
+    row += 1;
+    sheet.cell(row, 1).value("Elaboración: Propia");
+    row += 1;
+    sheet.cell(row, 1).value("Fuente: Encuesta aplicada");
+    row += 2; // blank separator
+  }
+};
+
 export const generateArtifacts = async (config, opts = {}) => {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw new Error("La configuracion enviada no es valida.");
@@ -395,6 +662,31 @@ export const generateArtifacts = async (config, opts = {}) => {
       }
       updateListRow(sheet, headerRow, list);
     }
+  });
+
+  // Add analysis sheets for each variable
+  const dimNamesArr = Array.isArray(config.nombre_dimension) ? config.nombre_dimension : [];
+  const scaleNames1 = Array.isArray(config.nombre_escala) ? config.nombre_escala : [];
+  const scaleNames2 = Array.isArray(config.nombre_escala_v2) ? config.nombre_escala_v2 : scaleNames1;
+
+  [[1, v1Count, scaleNames1], [2, v2Count, scaleNames2]].forEach(([varNum, varCount, scaleNames]) => {
+    if (varCount <= 0) return;
+    const varLabel = String(dimNamesArr[varNum - 1] ?? "").trim() || `Variable ${varNum}`;
+    const prefix = varLabel.substring(0, 18);
+    const dimNamesV = Array.isArray(config[`nombre_dims_v${varNum}`]) ? config[`nombre_dims_v${varNum}`] : [];
+    const itemsPerDimV = Array.isArray(config[`items_por_dim_v${varNum}`])
+      ? config[`items_por_dim_v${varNum}`].map((v) => toInt(v, 0))
+      : [];
+    const itemNamesV = Array.isArray(config[`nombre_items_v${varNum}`]) ? config[`nombre_items_v${varNum}`] : [];
+
+    addBaseSheet(workbook, safeSheetName(prefix, " - Base"), varNum, varCount, itemNamesV, config, base, sampleLabel);
+    if (dimNamesV.length > 0 && itemsPerDimV.length > 0) {
+      addValoracionSheet(
+        workbook, safeSheetName(prefix, " - Valoración"),
+        varNum, varLabel, dimNamesV, itemsPerDimV, config, base, sampleLabel, scaleNames,
+      );
+    }
+    addItemsSheet(workbook, safeSheetName(prefix, " - Ítems"), varNum, varCount, itemNamesV, config, base);
   });
 
   applySampleLabelReplacements(workbook, sampleLabel);
