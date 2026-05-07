@@ -240,7 +240,7 @@ const findRowWithValue = (sheet, value) => {
 
 const buildSampleLabel = (config) => {
   const label = String(config.nommuestra ?? "").trim();
-  return label || "Beneficiaros";
+  return label || "Beneficiarios";
 };
 
 const applySampleLabelReplacements = (workbook, sampleLabel) => {
@@ -339,8 +339,9 @@ const getLevelText = (sum, baremo, scaleNames) => {
 };
 
 const safeSheetName = (prefix, suffix) => {
+  const sanitized = prefix.replace(/[\[\]:*?/\\]/g, "_");
   const maxLen = 31 - suffix.length;
-  return (prefix.length > maxLen ? prefix.substring(0, maxLen) : prefix) + suffix;
+  return (sanitized.length > maxLen ? sanitized.substring(0, maxLen) : sanitized) + suffix;
 };
 
 // ── New sheet builders ──────────────────────────────────────────────────────
@@ -673,6 +674,10 @@ export const generateArtifacts = async (config, opts = {}) => {
     }
   });
 
+  // Apply label replacements on the original template sheets before adding analysis sheets,
+  // so the new sheets (which already use sampleLabel directly) are not re-processed.
+  applySampleLabelReplacements(workbook, sampleLabel);
+
   // Add analysis sheets for each variable
   const dimNamesArr = Array.isArray(config.nombre_dimension) ? config.nombre_dimension : [];
   const scaleNames1 = Array.isArray(config.nombre_escala) ? config.nombre_escala : [];
@@ -697,8 +702,6 @@ export const generateArtifacts = async (config, opts = {}) => {
     }
     addItemsSheet(workbook, safeSheetName(prefix, " - Ítems"), varNum, varCount, itemNamesV, config, base);
   });
-
-  applySampleLabelReplacements(workbook, sampleLabel);
 
   const excelBuffer = await workbook.outputAsync({ type: "nodebuffer" });
   const baseCsv = buildBaseCsv(base, v1Count, v2Count);
