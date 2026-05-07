@@ -377,6 +377,11 @@ const addBaseSheet = (workbook, sheetName, varNum, itemCount, itemNames, config,
   }
   row += 1; // blank
 
+  // Pre-compute column arrays once; reused by sections B and C
+  const colArrays = Array.from({ length: itemCount }, (_, ci) =>
+    Array.from({ length: muestra }, (_, i) => base[`V${varNum}_${ci + 1}`]?.[i] ?? 0)
+  );
+
   // Section B: descriptive stats
   const statDefs = [
     ["Moda", calcMode],
@@ -387,8 +392,7 @@ const addBaseSheet = (workbook, sheetName, varNum, itemCount, itemNames, config,
   statDefs.forEach(([label, fn]) => {
     sheet.cell(row, 1).value(label);
     for (let c = 1; c <= itemCount; c += 1) {
-      const colData = Array.from({ length: muestra }, (_, i) => base[`V${varNum}_${c}`]?.[i] ?? 0);
-      sheet.cell(row, 2 + c).value(round2(fn(colData)));
+      sheet.cell(row, 2 + c).value(round2(fn(colArrays[c - 1])));
     }
     sheet.cell(row, 3 + itemCount).value(round2(fn(rowTotals)));
     row += 1;
@@ -406,8 +410,7 @@ const addBaseSheet = (workbook, sheetName, varNum, itemCount, itemNames, config,
     sheet.cell(row, 1).value(respLabel);
     let rowSum = 0;
     for (let c = 1; c <= itemCount; c += 1) {
-      const colData = Array.from({ length: muestra }, (_, i) => base[`V${varNum}_${c}`]?.[i] ?? 0);
-      const freq = colData.filter((v) => v === r).length;
+      const freq = colArrays[c - 1].filter((v) => v === r).length;
       sheet.cell(row, 1 + c).value(freq);
       rowSum += freq;
     }
