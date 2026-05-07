@@ -351,6 +351,7 @@ function ListEditorField({
   readOnly?: boolean;
 }) {
   const [rows, setRows] = useState<string[]>(() => values.length > 0 ? [...values] : [""]);
+  const [rowKeys, setRowKeys] = useState<string[]>(() => (values.length > 0 ? values : [""]).map(() => eid()));
   const prevValuesRef = useRef<string[]>(values);
 
   // Sync from parent when config changes externally (e.g. reset)
@@ -359,7 +360,9 @@ function ListEditorField({
     const changed = prev.length !== values.length || values.some((v, i) => v !== prev[i]);
     if (changed) {
       prevValuesRef.current = [...values];
-      setRows(values.length > 0 ? [...values] : [""]);
+      const newRows = values.length > 0 ? [...values] : [""];
+      setRows(newRows);
+      setRowKeys(newRows.map(() => eid()));
     }
   }, [values]);
 
@@ -394,6 +397,10 @@ function ListEditorField({
     const safe = next.length > 0 ? next : [""];
     const final = isPercentage ? applyAutoLast(safe) : safe;
     setRows(final);
+    setRowKeys((prev) => {
+      const f = prev.filter((_, i) => i !== index);
+      return f.length > 0 ? f : [eid()];
+    });
     push(final);
   };
 
@@ -402,8 +409,10 @@ function ListEditorField({
     if (isPercentage) {
       // Insert new editable field before the auto-calc last, recalculate last
       next = applyAutoLast([...rows.slice(0, -1), "0", rows[rows.length - 1]]);
+      setRowKeys((prev) => [...prev.slice(0, -1), eid(), prev[prev.length - 1]]);
     } else {
       next = [...rows, ""];
+      setRowKeys((prev) => [...prev, eid()]);
     }
     setRows(next);
     push(next);
@@ -428,7 +437,7 @@ function ListEditorField({
           const fieldNotNumeric = isPercentage && !isAutoCalc && value.trim() !== "" && !Number.isFinite(n);
           const fieldInvalid = isPercentage && !isAutoCalc && Number.isFinite(n) && n > 100;
           return (
-            <div key={`${label}-${index}`}>
+            <div key={rowKeys[index] ?? `${label}-${index}`}>
               <div className="flex items-center gap-2">
                 {rowLabels[index] && (
                   <span className="w-16 shrink-0 rounded bg-muted px-2 py-1.5 text-center text-xs font-semibold text-muted-foreground">

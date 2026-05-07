@@ -146,12 +146,16 @@ const ensureUserStore = () => {
 
 const readUsers = () => {
   ensureUserStore();
-  const raw = fs.readFileSync(USER_STORE_PATH, "utf-8");
-  const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed)) {
-    throw new Error("El store de usuarios no tiene formato de arreglo.");
+  try {
+    const raw = fs.readFileSync(USER_STORE_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error("El store no tiene formato de arreglo.");
+    users = parsed;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[WARN] users.json ilegible (${err.message}). Iniciando con lista vacía.`);
+    users = [];
   }
-  users = parsed;
 };
 
 const writeUsers = () => {
