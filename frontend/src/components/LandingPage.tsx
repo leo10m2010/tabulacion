@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowRight, Building2, Check, Download, FileSpreadsheet, Loader2, Mail, MessageCircle, Moon, Sun, UserRound } from "lucide-react";
+import { ArrowRight, Building2, Check, Download, FileSpreadsheet, GraduationCap, Loader2, Mail, MessageCircle, Moon, Sun, UserRound } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -132,10 +132,20 @@ export function LandingPage({
         </div>
       </header>
 
-      <section className="grid items-center gap-12 py-14 md:grid-cols-[7fr_5fr] md:py-20">
+      <section className="relative grid items-center gap-12 py-14 md:grid-cols-[7fr_5fr] md:py-20">
+        <div aria-hidden className="hero-dots pointer-events-none absolute -inset-x-8 -top-8 bottom-0 -z-10" />
+        <div aria-hidden className="pointer-events-none absolute right-0 top-1/2 -z-10 h-[420px] w-[560px] -translate-y-1/2 rounded-full bg-primary/15 blur-3xl" />
+
         <motion.div variants={heroStagger} initial="hidden" animate="show">
-          <motion.h1 variants={heroItem} className="text-4xl font-bold leading-[1.06] tracking-tight md:text-5xl">
-            La tabulación de tu tesis, lista en minutos.
+          <motion.div
+            variants={heroItem}
+            className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3.5 py-1.5 text-xs font-medium text-primary"
+          >
+            <GraduationCap className="h-3.5 w-3.5" />
+            Para tesis cuantitativas
+          </motion.div>
+          <motion.h1 variants={heroItem} className="mt-5 text-4xl font-bold leading-[1.06] tracking-tight md:text-[3.4rem] md:leading-[1.05]">
+            La tabulación de tu tesis, <span className="text-primary">lista en minutos.</span>
           </motion.h1>
           <motion.p variants={heroItem} className="mt-5 max-w-[46ch] text-base text-muted-foreground md:text-lg">
             Configura tu encuesta y descarga el Excel con baremos, frecuencias, gráficos e interpretaciones.
@@ -166,7 +176,29 @@ export function LandingPage({
           transition={{ ...springSoft, delay: 0.25 }}
         >
           <TiltCard>
-            <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_24px_64px_-28px_hsl(var(--primary)/0.45)]">
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_32px_80px_-32px_hsl(var(--primary)/0.55)] ring-1 ring-primary/10">
+              <div className="mb-4 flex items-center justify-between border-b border-border pb-3">
+                <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+                  <FileSpreadsheet className="h-3.5 w-3.5 text-primary" />
+                  Tabulacion_generada.xlsx
+                </div>
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.span
+                    key={fase}
+                    initial={reduce ? false : { opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium",
+                      fase === 2 ? "bg-primary text-primary-foreground" : "bg-accent text-accent-foreground",
+                    )}
+                  >
+                    {fase === 1 && <Loader2 className="h-3 w-3 animate-spin" />}
+                    {fase === 2 && <Check className="h-3 w-3" />}
+                    {fase === 0 ? "Calculando" : fase === 1 ? "Generando" : "Listo"}
+                  </motion.span>
+                </AnimatePresence>
+              </div>
               <div className="min-h-[280px]">
                 <AnimatePresence mode="wait" initial={false}>
                   {fase === 0 && (
@@ -184,13 +216,18 @@ export function LandingPage({
                           <div key={fila.nivel}>
                             <div className="flex items-baseline justify-between text-sm">
                               <span className="font-medium">{fila.nivel}</span>
-                              <span className="font-mono text-muted-foreground">
-                                <AnimatedNumber value={fila.f} /> · <AnimatedNumber value={fila.pct} decimals={1} suffix="%" />
+                              <span className="font-mono text-sm">
+                                <span className="font-semibold">
+                                  <AnimatedNumber value={fila.f} />
+                                </span>{" "}
+                                <span className="text-muted-foreground">
+                                  · <AnimatedNumber value={fila.pct} decimals={1} suffix="%" />
+                                </span>
                               </span>
                             </div>
-                            <div className="mt-1.5 h-2 w-full">
+                            <div className="mt-2 h-2.5 w-full">
                               <motion.div
-                                className="h-full w-full origin-left rounded-full bg-primary"
+                                className="h-full w-full origin-left rounded-full bg-gradient-to-r from-primary to-primary/65"
                                 initial={reduce ? false : { scaleX: 0 }}
                                 animate={{ scaleX: fila.pct / 100 }}
                                 transition={{ type: "spring", stiffness: 70, damping: 16, delay: 0.15 + i * 0.1 }}
@@ -261,7 +298,7 @@ export function LandingPage({
                       >
                         <FileSpreadsheet className="h-8 w-8" />
                       </motion.div>
-                      <p className="mt-4 font-mono text-sm font-semibold">Tabulacion_generada.xlsx</p>
+                      <p className="mt-4 text-base font-semibold">Tu Excel está listo</p>
                       <p className="mt-1 text-sm text-muted-foreground">11 hojas, 37 gráficos e interpretaciones</p>
                       <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }} className="mt-5">
                         <Button size="sm" onClick={onOpenApp}>
@@ -273,10 +310,25 @@ export function LandingPage({
                   )}
                 </AnimatePresence>
               </div>
+              <div className="mt-4 flex gap-1 border-t border-border pt-3">
+                {["Variable 1", "Dimensiones", "Ítems", "Conteo"].map((tab, i) => (
+                  <span
+                    key={tab}
+                    className={cn(
+                      "rounded-md px-2.5 py-1 text-[11px] transition-colors",
+                      i === (fase === 0 ? 1 : fase === 1 ? 2 : 3)
+                        ? "bg-accent font-medium text-accent-foreground"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {tab}
+                  </span>
+                ))}
+              </div>
             </div>
           </TiltCard>
           <p className="mt-3 text-center text-xs text-muted-foreground">
-            Así calcula y entrega tu Excel, con datos de una muestra de 289 encuestados.
+            Demo del flujo real: calcula, genera y entrega tu Excel.
           </p>
         </motion.div>
       </section>
