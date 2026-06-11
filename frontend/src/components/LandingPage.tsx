@@ -600,7 +600,7 @@ export function LandingPage({
             >
               <Button
                 size="lg"
-                className="h-13 bg-background px-8 text-base text-foreground shadow-2xl hover:bg-background/90"
+                className="h-12 bg-background px-8 text-base text-foreground shadow-2xl hover:bg-background/90"
                 onClick={onOpenApp}
               >
                 Generar mi tabulación
