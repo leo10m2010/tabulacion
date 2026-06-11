@@ -1,0 +1,48 @@
+# Blueprint de Render para la API (sin Docker: Render ejecuta Node directo).
+# Crear el servicio desde el dashboard de Render: New -> Blueprint -> este repo.
+#
+# MODO PRUEBAS (plan gratuito, configuracion actual):
+# - Sin disco persistente: los usuarios que crees funcionan normal, pero se
+#   borran cuando el servicio se reinicia, despierta de la suspension o haces
+#   deploy. El admin inicial se recrea solo (ADMIN_EMAIL/ADMIN_PASSWORD).
+#
+# MODO PRODUCCION (plan Starter o superior): descomenta el bloque `disk` y la
+# variable USER_STORE_PATH para que los usuarios persistan en /var/data.
+services:
+  - type: web
+    name: tabulacion-api
+    runtime: node
+    plan: free
+    rootDir: node_app
+    buildCommand: npm ci --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /health
+    autoDeploy: true
+    # disk:
+    #   name: tabulacion-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: AUTH_REQUIRED
+        value: "true"
+      # Secretos: definirlos en el dashboard de Render (sync: false hace que
+      # Render los pida al crear el servicio; nunca van al repositorio).
+      - key: AUTH_TOKEN_SECRET
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      # Dominio del frontend en Vercel (p. ej. https://tabulacion.vercel.app).
+      - key: CORS_ORIGIN
+        sync: false
+      # - key: USER_STORE_PATH
+      #   value: /var/data/users.json
+      - key: AUTH_TOKEN_TTL_SECONDS
+        value: "86400"
+      - key: RESULT_TTL_SECONDS
+        value: "900"
+      - key: MAX_BODY_BYTES
+        value: "4194304"

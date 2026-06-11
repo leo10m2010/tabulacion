@@ -19,13 +19,13 @@ VITE_API_BASE_URL=http://localhost:8080
 
 ## Login
 
-El frontend ahora requiere autenticación para generar tabulación.
-La configuración, generación y descarga están visibles solo para rol `admin`.
+El frontend requiere autenticación para generar tabulación. Cualquier usuario
+activo con suscripción vigente puede generar; la gestión de usuarios
+(pestaña `Usuarios`) es solo para administradores.
 
-- Usuario inicial local: `admin@tabulacion.local`
-- Clave inicial local: `Admin12345!`
-
-Ese usuario admin puede crear usuarios y asignar suscripción por días desde la pestaña `Usuarios`.
+El admin inicial lo crea la API en el primer arranque con `ADMIN_EMAIL` /
+`ADMIN_PASSWORD`; si no defines contraseña, se genera una aleatoria y se
+imprime una sola vez en la consola de la API.
 
 ## Build
 
@@ -33,11 +33,8 @@ Ese usuario admin puede crear usuarios y asignar suscripción por días desde la
 npm run build
 ```
 
-## Netlify
+## Vercel
 
-- Base directory: `frontend`
-- Build command: `npm run build`
-- Publish directory: `dist`
-- Env var: `VITE_API_BASE_URL=https://tu-api.com`
-
-El archivo `netlify.toml` ya incluye redirect SPA.
+- New Project → este repositorio → **Root Directory: `frontend`** (Vite se autodetecta).
+- Env var: `VITE_API_BASE_URL=https://tu-api.onrender.com` (la URL del servicio de Render).
+- `vercel.json` ya incluye el rewrite del SPA.
