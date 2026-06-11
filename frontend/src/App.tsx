@@ -683,18 +683,21 @@ function WizardProgress({ currentStep }: { currentStep: WizardStep }) {
         return (
           <div key={stepInfo.step} className="flex flex-1 items-start">
             <div className="flex flex-col items-center">
-              <div
+              <motion.div
+                initial={false}
+                animate={{ scale: isActive ? 1.12 : 1 }}
+                transition={springSoft}
                 className={cn(
-                  "flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-bold transition-all",
+                  "flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-bold transition-colors",
                   isCompleted
                     ? "border-primary bg-primary text-primary-foreground"
                     : isActive
-                      ? "border-primary bg-primary/10 text-primary"
+                      ? "border-primary bg-primary/10 text-primary shadow-[0_0_0_5px_hsl(var(--primary)/0.12)]"
                       : "border-border bg-background text-muted-foreground",
                 )}
               >
                 {isCompleted ? <Check className="h-4 w-4" /> : stepInfo.step}
-              </div>
+              </motion.div>
               <div className="mt-2 text-center">
                 <p className={cn("text-xs font-semibold", isActive ? "text-foreground" : "text-muted-foreground")}>
                   {stepInfo.label}
@@ -703,12 +706,14 @@ function WizardProgress({ currentStep }: { currentStep: WizardStep }) {
               </div>
             </div>
             {index < WIZARD_STEPS.length - 1 && (
-              <div
-                className={cn(
-                  "mx-3 mt-4 h-0.5 flex-1 transition-all",
-                  currentStep > stepInfo.step ? "bg-primary" : "bg-border",
-                )}
-              />
+              <div className="mx-3 mt-4 h-0.5 flex-1 overflow-hidden rounded bg-border">
+                <motion.div
+                  className="h-full origin-left bg-primary"
+                  initial={false}
+                  animate={{ scaleX: currentStep > stepInfo.step ? 1 : 0 }}
+                  transition={{ type: "spring", stiffness: 80, damping: 20 }}
+                />
+              </div>
             )}
           </div>
         );
@@ -1654,12 +1659,17 @@ export default function App() {
   if (!authUser && !authLoading) {
     return (
       <div className="flex min-h-[100dvh] items-center justify-center bg-[radial-gradient(ellipse_at_top,hsl(var(--accent)/0.55)_0%,hsl(var(--background))_60%)] p-4 transition-colors">
-        <div className="w-full max-w-sm">
+        <motion.div
+          className="w-full max-w-sm"
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={springSoft}
+        >
           <div className="mb-6 text-center">
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-[0_14px_36px_-14px_hsl(var(--primary)/0.8)]">
               <FileSpreadsheet className="h-6 w-6" />
             </div>
-            <h1 className="text-2xl font-bold tracking-tight">Sistema de Tabulación</h1>
+            <h1 className="text-2xl font-bold tracking-tight">TesisTab</h1>
             <p className="mt-1 text-sm text-muted-foreground">Ingresa con tu cuenta para continuar</p>
           </div>
           <Card className="rounded-2xl border-border/70 shadow-[0_20px_70px_rgba(15,23,42,0.15)]">
@@ -1719,7 +1729,7 @@ export default function App() {
               <Input value={apiBaseUrl} onChange={(e) => setApiBaseUrl(e.target.value)} placeholder="https://tu-api.com" className="text-xs" />
             </div>
           )}
-        </div>
+        </motion.div>
       </div>
     );
   }
@@ -1886,7 +1896,7 @@ export default function App() {
 
               {/* Step 1: Datos básicos */}
               {wizardStep === 1 && (
-                <div className="space-y-5">
+                <div className="step-enter space-y-5">
                   <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
                     <CardHeader>
                       <CardTitle>Datos de tu encuesta</CardTitle>
@@ -2117,7 +2127,7 @@ export default function App() {
 
               {/* Step 2: Escalas y estructura */}
               {wizardStep === 2 && (
-                <div className="space-y-5">
+                <div className="step-enter space-y-5">
                   {LIST_GROUPS.filter((group) => !("variable" in group && group.variable === "v2") || parseInt(getScalar("variable"), 10) >= 2).map((group) => (
                     <Card key={group.title} className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
                       <CardHeader>
@@ -2307,7 +2317,7 @@ export default function App() {
 
               {/* Step 3: Generar */}
               {wizardStep === 3 && (
-                <div className="space-y-5">
+                <div className="step-enter space-y-5">
                   {/* Summary */}
                   <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
                     <CardHeader>
@@ -2383,7 +2393,7 @@ export default function App() {
 
                   {/* Result */}
                   {result && (
-                    <Card className="rounded-2xl border-primary/30 bg-primary/5 shadow-sm">
+                    <Card className="step-enter rounded-2xl border-primary/30 bg-primary/5 shadow-sm">
                       <CardHeader>
                         <CardTitle className="text-primary flex items-center gap-2">
                           <Check className="h-5 w-5" />

@@ -59,3 +59,22 @@ body {
   font-family: "Outfit Variable", "Segoe UI", system-ui, sans-serif;
   transition: background-color 220ms ease, color 220ms ease;
 }
+
+/* Entrada de los pasos del wizard y del resultado (se remontan al cambiar de
+   paso); estático bajo prefers-reduced-motion. */
+@keyframes step-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .step-enter {
+    animation: step-rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
