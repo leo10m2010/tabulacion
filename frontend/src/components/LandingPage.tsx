@@ -416,7 +416,7 @@ export function LandingPage({
         </motion.div>
       </section>
 
-      <section className="border-t border-border py-14">
+      <section id="como-funciona" className="border-t border-border py-14">
         <Reveal>
           <h2 className="text-2xl font-bold tracking-tight md:text-3xl">De la encuesta al Excel en tres pasos</h2>
         </Reveal>
@@ -430,7 +430,7 @@ export function LandingPage({
         </div>
       </section>
 
-      <section className="border-t border-border py-14">
+      <section id="incluye" className="border-t border-border py-14">
         <div className="grid gap-10 md:grid-cols-[2fr_3fr]">
           <Reveal>
             <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Todo lo que tu asesor espera ver</h2>
@@ -539,7 +539,7 @@ export function LandingPage({
         </div>
       </section>
 
-      <section className="border-t border-border py-16">
+      <section id="faq" className="border-t border-border py-16">
         <Reveal className="text-center">
           <span className="inline-flex rounded-full bg-foreground px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide text-background">
             FAQ
@@ -593,54 +593,91 @@ export function LandingPage({
         </div>
       </section>
 
-      <Reveal className="my-14">
-        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary to-primary/80 px-8 py-16 text-center text-primary-foreground md:px-12">
-          <div
-            aria-hidden
-            className="absolute inset-0 bg-[radial-gradient(circle_at_28%_18%,hsl(var(--primary-foreground)/0.16),transparent_55%)]"
-          />
-          <div aria-hidden className="cta-dots absolute inset-0" />
-          <div className="relative z-10">
-            <h2 className="mx-auto max-w-[22ch] text-3xl font-bold leading-tight tracking-tight md:text-4xl">
-              ¿Listo para generar tu tabulación?
-            </h2>
-            <p className="mx-auto mt-4 max-w-[46ch] text-sm opacity-90 md:text-base">
-              Configura tu encuesta hoy y entrega a tu asesor un Excel con tablas, figuras e interpretaciones.
-            </p>
-            <motion.div
-              className="mt-8 inline-block"
-              whileHover={reduce ? undefined : { y: -2 }}
-              whileTap={reduce ? undefined : { scale: 0.97 }}
-            >
-              <Button
-                size="lg"
-                className="h-12 bg-background px-8 text-base text-foreground shadow-2xl hover:bg-background/90"
-                onClick={onOpenApp}
-              >
+      <section className="border-t border-border py-20 text-center md:py-28">
+        <Reveal>
+          <h2 className="mx-auto max-w-[16ch] text-4xl font-bold leading-[1.08] tracking-tight md:text-5xl">
+            ¿Listo para generar tu tabulación?
+          </h2>
+          <p className="mx-auto mt-5 max-w-[46ch] text-sm text-muted-foreground md:text-base">
+            Configura tu encuesta hoy y entrega a tu asesor un Excel con tablas, figuras e interpretaciones.
+          </p>
+          <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+            <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
+              <Button size="lg" className="h-12 px-8 text-base shadow-lg" onClick={onOpenApp}>
                 Generar mi tabulación
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </motion.div>
+            <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
+              <Button size="lg" variant="outline" className="h-12 px-8 text-base" onClick={openWhatsApp}>
+                <MessageCircle className="h-4 w-4" />
+                Hablar por WhatsApp
+              </Button>
+            </motion.div>
           </div>
-        </section>
-      </Reveal>
+        </Reveal>
+      </section>
 
-      <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-border py-8 text-sm text-muted-foreground">
-        <div className="flex items-center gap-2 font-medium text-foreground">
-          <FileSpreadsheet className="h-4 w-4 text-primary" />
-          TesisTab
+      <footer className="border-t border-border pb-10 pt-14">
+        <div className="grid gap-10 md:grid-cols-[2fr_1fr_1fr_1fr]">
+          <div>
+            <div className="flex items-center gap-2.5 text-lg font-semibold tracking-tight">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                <FileSpreadsheet className="h-4 w-4" />
+              </span>
+              TesisTab
+            </div>
+            <p className="mt-3 max-w-[30ch] text-sm text-muted-foreground">
+              La tabulación estadística de tu tesis, lista en minutos.
+            </p>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Producto</p>
+            <ul className="mt-4 space-y-3 text-sm">
+              <li><a href="#como-funciona" className="text-muted-foreground hover:text-foreground">Cómo funciona</a></li>
+              <li><a href="#incluye" className="text-muted-foreground hover:text-foreground">Qué incluye</a></li>
+              <li><a href="#planes" className="text-muted-foreground hover:text-foreground">Planes y precios</a></li>
+            </ul>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Soporte</p>
+            <ul className="mt-4 space-y-3 text-sm">
+              <li><a href="#faq" className="text-muted-foreground hover:text-foreground">Preguntas frecuentes</a></li>
+              <li>
+                <button onClick={openWhatsApp} className="text-muted-foreground hover:text-foreground">
+                  WhatsApp +51 975 212 132
+                </button>
+              </li>
+              <li>
+                <a href={`mailto:${CONTACT_EMAIL}`} className="text-muted-foreground hover:text-foreground">
+                  {CONTACT_EMAIL}
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cuenta</p>
+            <ul className="mt-4 space-y-3 text-sm">
+              <li>
+                <button onClick={onOpenApp} className="text-muted-foreground hover:text-foreground">
+                  Iniciar sesión
+                </button>
+              </li>
+              <li>
+                <button onClick={onOpenApp} className="text-muted-foreground hover:text-foreground">
+                  Generar mi tabulación
+                </button>
+              </li>
+            </ul>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-5">
-          <a href={`mailto:${CONTACT_EMAIL}`} className="flex items-center gap-1.5 hover:text-foreground">
-            <Mail className="h-4 w-4" />
-            {CONTACT_EMAIL}
-          </a>
-          <button onClick={openWhatsApp} className="flex items-center gap-1.5 hover:text-foreground">
-            <MessageCircle className="h-4 w-4" />
-            +51 975 212 132
-          </button>
+
+        <div className="mt-12 border-t border-border pt-6 text-center text-xs text-muted-foreground">
+          © {new Date().getFullYear()} TesisTab. Todos los derechos reservados.
         </div>
-        <p>© {new Date().getFullYear()} TesisTab</p>
       </footer>
     </div>
   );

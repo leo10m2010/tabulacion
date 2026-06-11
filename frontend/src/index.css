@@ -69,14 +69,6 @@ body {
   mask-image: radial-gradient(ellipse 80% 70% at 65% 35%, black, transparent 70%);
 }
 
-/* Textura de puntos clara para la banda CTA final. */
-.cta-dots {
-  background-image: radial-gradient(hsl(var(--primary-foreground) / 0.14) 1px, transparent 1px);
-  background-size: 22px 22px;
-  -webkit-mask-image: radial-gradient(ellipse 75% 80% at 50% 40%, black, transparent 75%);
-  mask-image: radial-gradient(ellipse 75% 80% at 50% 40%, black, transparent 75%);
-}
-
 /* Entrada de los pasos del wizard y del resultado (se remontan al cambiar de
    paso); estático bajo prefers-reduced-motion. */
 @keyframes step-rise {
