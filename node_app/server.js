@@ -4,16 +4,14 @@ import http from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import {
-  DEFAULT_TEMPLATE_PATH,
+  MAX_ITEMS_POR_VARIABLE,
+  MAX_MUESTRA,
   generateArtifacts,
 } from "./generator.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number.parseInt(process.env.PORT ?? "8080", 10);
-const TEMPLATE_PATH = process.env.TEMPLATE_PATH
-  ? path.resolve(process.env.TEMPLATE_PATH)
-  : DEFAULT_TEMPLATE_PATH;
 const MAX_BODY_BYTES = Number.parseInt(process.env.MAX_BODY_BYTES ?? "4194304", 10);
 const RESULT_TTL_SECONDS = Number.parseInt(process.env.RESULT_TTL_SECONDS ?? "900", 10);
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL ?? "").trim();
@@ -23,13 +21,33 @@ const ALLOWED_ORIGINS = ALLOWED_ORIGIN_RAW.split(",")
   .filter(Boolean);
 
 const AUTH_REQUIRED = !new Set(["0", "false", "no", "off"]).has(String(process.env.AUTH_REQUIRED ?? "true").trim().toLowerCase());
-const AUTH_TOKEN_SECRET = String(process.env.AUTH_TOKEN_SECRET ?? "change-this-token-secret").trim();
+
+// Sin secreto configurado (o con el viejo valor de ejemplo) se genera uno
+// aleatorio por proceso: los tokens dejan de ser validos tras un reinicio,
+// pero nadie puede forjarlos con un secreto publicado en el repositorio.
+const INSECURE_SECRETS = new Set(["", "change-this-token-secret"]);
+const envSecret = String(process.env.AUTH_TOKEN_SECRET ?? "").trim();
+const AUTH_TOKEN_SECRET = INSECURE_SECRETS.has(envSecret)
+  ? crypto.randomBytes(32).toString("hex")
+  : envSecret;
+if (INSECURE_SECRETS.has(envSecret) && AUTH_REQUIRED) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[AVISO] AUTH_TOKEN_SECRET no esta configurado: se genero un secreto aleatorio para esta ejecucion. "
+    + "Las sesiones se invalidan al reiniciar. Define AUTH_TOKEN_SECRET en produccion.",
+  );
+}
+
 const AUTH_TOKEN_TTL_SECONDS = Number.parseInt(process.env.AUTH_TOKEN_TTL_SECONDS ?? "86400", 10);
 const USER_STORE_PATH = process.env.USER_STORE_PATH
   ? path.resolve(process.env.USER_STORE_PATH)
   : path.join(SCRIPT_DIR, "data", "users.json");
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL ?? "admin@tabulacion.local").trim();
-const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD ?? "Admin12345!").trim();
+const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD ?? "").trim();
+
+// Limite de intentos de login fallidos por origen+email.
+const LOGIN_MAX_ATTEMPTS = Number.parseInt(process.env.LOGIN_MAX_ATTEMPTS ?? "5", 10);
+const LOGIN_WINDOW_MS = Number.parseInt(process.env.LOGIN_WINDOW_SECONDS ?? "900", 10) * 1000;
 
 const results = new Map();
 let users = [];
@@ -312,16 +330,24 @@ const patchUser = (user, payload) => {
 
 const ensureBootstrapAdmin = () => {
   if (users.length > 0) return;
+  // Si no hay contraseña configurada se genera una aleatoria y se muestra una
+  // sola vez; nunca se usa una contraseña por defecto conocida.
+  const generated = !ADMIN_PASSWORD;
+  const password = ADMIN_PASSWORD || crypto.randomBytes(9).toString("base64url");
   const admin = createUser({
     email: ADMIN_EMAIL,
-    password: ADMIN_PASSWORD,
+    password,
     role: "admin",
     status: "active",
     plan: "enterprise",
     subscriptionEndsAt: null,
   });
   // eslint-disable-next-line no-console
-  console.log(`Admin inicial creado: ${admin.email} | cambia la contraseña luego de ingresar.`);
+  console.log(
+    generated
+      ? `Admin inicial creado: ${admin.email} | contraseña generada (guardala y cambiala): ${password}`
+      : `Admin inicial creado: ${admin.email} | cambia la contraseña luego de ingresar.`,
+  );
 };
 
 const base64UrlJson = (obj) => Buffer.from(JSON.stringify(obj), "utf-8").toString("base64url");
@@ -399,6 +425,39 @@ const requireAuth = (req, opts = {}) => {
   return user;
 };
 
+// ── Rate limiting de login (en memoria) ─────────────────────────────────────
+const loginAttempts = new Map();
+
+const cleanupLoginAttempts = () => {
+  const now = Date.now();
+  for (const [key, entry] of loginAttempts.entries()) {
+    if (now - entry.firstAt > LOGIN_WINDOW_MS) loginAttempts.delete(key);
+  }
+};
+
+const assertLoginAllowed = (key) => {
+  cleanupLoginAttempts();
+  const entry = loginAttempts.get(key);
+  if (entry && entry.count >= LOGIN_MAX_ATTEMPTS) {
+    const retryInSec = Math.ceil((entry.firstAt + LOGIN_WINDOW_MS - Date.now()) / 1000);
+    throw new HttpError(429, `Demasiados intentos fallidos. Intenta de nuevo en ${Math.max(retryInSec, 1)} segundos.`);
+  }
+};
+
+const registerLoginFailure = (key) => {
+  const entry = loginAttempts.get(key);
+  if (entry) {
+    entry.count += 1;
+  } else {
+    loginAttempts.set(key, { count: 1, firstAt: Date.now() });
+  }
+};
+
+const getClientIp = (req) => {
+  const fwd = String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim();
+  return fwd || req.socket?.remoteAddress || "unknown";
+};
+
 const getStoredResult = (id) => {
   const item = results.get(id);
   if (!item) throw new HttpError(404, "Resultado no encontrado o expirado.");
@@ -446,10 +505,14 @@ const server = http.createServer(async (req, res) => {
       const payload = await parseJsonBody(req);
       const email = normalizeEmail(payload?.email);
       const password = String(payload?.password ?? "");
+      const rateKey = `${getClientIp(req)}|${email}`;
+      assertLoginAllowed(rateKey);
       const user = users.find((item) => item.emailLower === email);
       if (!user || !checkPassword(password, user)) {
+        registerLoginFailure(rateKey);
         throw new HttpError(401, "Credenciales invalidas.");
       }
+      loginAttempts.delete(rateKey);
       if (user.status !== "active") {
         throw new HttpError(403, "Usuario inactivo.");
       }
@@ -539,8 +602,23 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Limites del generador (el Excel se construye por codigo, sin plantilla).
+    if (req.method === "GET" && pathname === "/template-info") {
+      requireAuth(req);
+      sendJson(res, 200, {
+        ok: true,
+        maxMuestra: MAX_MUESTRA,
+        maxItemsV1: MAX_ITEMS_POR_VARIABLE,
+        maxItemsV2: MAX_ITEMS_POR_VARIABLE,
+        baseCapacity: MAX_MUESTRA,
+      });
+      return;
+    }
+
+    // Cualquier usuario autenticado, activo y con suscripcion vigente puede
+    // generar (el plan de suscripcion es justamente para esto).
     if (req.method === "POST" && pathname === "/generate") {
-      const authUser = requireAuth(req, { adminOnly: true });
+      const authUser = requireAuth(req);
       const payload = await parseJsonBody(req);
       const config = payload?.config && typeof payload.config === "object"
         ? payload.config
@@ -550,12 +628,13 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(400, "Debes enviar una configuracion valida (objeto JSON).");
       }
 
-      const artifacts = await generateArtifacts(config, { templatePath: TEMPLATE_PATH });
+      const artifacts = await generateArtifacts(config);
       const responseMode = String(payload?.responseMode ?? "links").toLowerCase();
 
       if (responseMode === "inline") {
         sendJson(res, 200, {
           correlation: artifacts.correlation,
+          warnings: artifacts.warnings ?? [],
           baseCsv: artifacts.baseCsv,
           excelBase64: artifacts.excelBuffer.toString("base64"),
           excelFileName: "Tabulacion_generada.xlsx",
@@ -578,6 +657,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         id,
         correlation: artifacts.correlation,
+        warnings: artifacts.warnings ?? [],
         expiresAt: new Date(expiresAt).toISOString(),
         links: {
           meta: `${baseUrl}/results/${id}`,
@@ -648,5 +728,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   // eslint-disable-next-line no-console
-  console.log(`API lista en puerto ${PORT} | template=${TEMPLATE_PATH}`);
+  console.log(`API lista en puerto ${PORT} | generador por codigo (sin plantilla)`);
 });

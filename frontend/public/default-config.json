@@ -30,7 +30,5 @@
   "nombre_dimension": ["Gestion de abastecimiento", "Satisfaccion del servicio"],
   "numero_dimension": ["1", "2"],
   "nombre_indicador": ["Planificacion", "Transparencia", "Cumplimiento normativo", "Satisfaccion del servicio"],
-  "numero_indicador0": ["3", "1"],
-  "numero_pregunta0": ["6", "6", "6"],
-  "numero_pregunta1": ["9"]
+  "numero_indicador0": ["3", "1"]
 }

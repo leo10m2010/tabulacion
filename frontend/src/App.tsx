@@ -30,7 +30,6 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
-import * as XLSX from "xlsx";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
@@ -39,7 +38,9 @@ import { Textarea } from "./components/ui/textarea";
 import { cn } from "./lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-type ConfigValue = string | string[] | number | boolean | null | undefined;
+interface EstructuraIndicador { nombre: string; items: number }
+interface EstructuraDimension { nombre: string; indicadores: EstructuraIndicador[] }
+type ConfigValue = string | string[] | number | boolean | null | undefined | EstructuraDimension[];
 type TabConfig = Record<string, ConfigValue>;
 type TableCell = string | number | boolean | null;
 type TableRows = TableCell[][];
@@ -49,11 +50,18 @@ interface IndicadorDef { id: string; nombre: string; items: ItemDef[] }
 interface DimensionDef { id: string; nombre: string; indicadores: IndicadorDef[] }
 
 interface InlineGenerateResponse {
-  correlation: number;
+  correlation: number | null;
+  warnings?: string[];
   baseCsv: string;
   excelBase64: string;
   excelFileName?: string;
   error?: string;
+}
+
+interface TemplateInfo {
+  maxMuestra: number;
+  maxItemsV1: number;
+  maxItemsV2: number;
 }
 
 interface DownloadLinks {
@@ -63,7 +71,8 @@ interface DownloadLinks {
 }
 
 interface GeneratedResult {
-  correlation: number;
+  correlation: number | null;
+  warnings: string[];
   csvRows: TableRows;
   sheetNames: string[];
   sheetData: Record<string, TableRows>;
@@ -135,8 +144,6 @@ const FALLBACK_CONFIG: TabConfig = {
   numero_dimension: ["1", "2"],
   nombre_indicador: ["Planificacion", "Transparencia", "Cumplimiento normativo", "Satisfaccion del servicio"],
   numero_indicador0: ["3", "1"],
-  numero_pregunta0: ["6", "6", "6"],
-  numero_pregunta1: ["9"],
 };
 
 const LIST_GROUPS = [
@@ -235,7 +242,10 @@ function base64ToUint8Array(base64: string): Uint8Array {
   return bytes;
 }
 
-function csvToRows(csvText: string): TableRows {
+// xlsx se carga bajo demanda: solo hace falta para la vista previa del
+// resultado y pesa ~400 kB, no debe ir en el bundle inicial.
+async function csvToRows(csvText: string): Promise<TableRows> {
+  const XLSX = await import("xlsx");
   const workbook = XLSX.read(csvText, { type: "string" });
   const firstSheet = workbook.SheetNames[0];
   if (!firstSheet) return [];
@@ -246,7 +256,8 @@ function csvToRows(csvText: string): TableRows {
   });
 }
 
-function workbookToSheetRows(arrayBuffer: Uint8Array): { names: string[]; data: Record<string, TableRows> } {
+async function workbookToSheetRows(arrayBuffer: Uint8Array): Promise<{ names: string[]; data: Record<string, TableRows> }> {
+  const XLSX = await import("xlsx");
   const workbook = XLSX.read(arrayBuffer, { type: "array" });
   const data: Record<string, TableRows> = {};
   workbook.SheetNames.forEach((name) => {
@@ -920,7 +931,10 @@ export default function App() {
 
   const [config, setConfig] = useState<TabConfig>(FALLBACK_CONFIG);
   const [jsonDraft, setJsonDraft] = useState<string>(JSON.stringify(FALLBACK_CONFIG, null, 2));
-  const [apiBaseUrl, setApiBaseUrl] = useState<string>(() => localStorage.getItem("apiBaseUrl") || DEFAULT_API_BASE_URL);
+  // El override por localStorage es una comodidad de desarrollo; en produccion
+  // manda siempre VITE_API_BASE_URL (un valor viejo guardado romperia la app).
+  const [apiBaseUrl, setApiBaseUrl] = useState<string>(() =>
+    (import.meta.env.DEV ? localStorage.getItem("apiBaseUrl") : null) || DEFAULT_API_BASE_URL);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     const saved = localStorage.getItem("themeMode");
     if (saved === "light" || saved === "dark") return saved;
@@ -933,6 +947,7 @@ export default function App() {
   const [result, setResult] = useState<GeneratedResult | null>(null);
   const [downloadLinks, setDownloadLinks] = useState<DownloadLinks | null>(null);
 
+  const [templateInfo, setTemplateInfo] = useState<TemplateInfo | null>(null);
   const [authToken, setAuthToken] = useState<string>(() => localStorage.getItem("authToken") ?? "");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(() => Boolean(localStorage.getItem("authToken")));
@@ -969,7 +984,7 @@ export default function App() {
   }, []);
 
   useEffect(() => { setJsonDraft(JSON.stringify(config, null, 2)); }, [config]);
-  useEffect(() => { localStorage.setItem("apiBaseUrl", apiBaseUrl); }, [apiBaseUrl]);
+  useEffect(() => { if (import.meta.env.DEV) localStorage.setItem("apiBaseUrl", apiBaseUrl); }, [apiBaseUrl]);
   useEffect(() => {
     if (authToken) localStorage.setItem("authToken", authToken);
     else localStorage.removeItem("authToken");
@@ -990,12 +1005,18 @@ export default function App() {
     const v1Inds = estructuraV1.flatMap((d) => d.indicadores.map((i) => i.nombre));
     const v2Inds = estructuraV2.flatMap((d) => d.indicadores.map((i) => i.nombre));
     const hasV2 = estructuraV2.length > 0;
+    const toEstructura = (dims: DimensionDef[]): EstructuraDimension[] => dims.map((d) => ({
+      nombre: d.nombre,
+      indicadores: d.indicadores.map((i) => ({ nombre: i.nombre, items: i.items.length })),
+    }));
     setConfig((prev) => ({
       ...prev,
       nombre_indicador: [...v1Inds, ...v2Inds],
       numero_indicador0: hasV2
         ? [String(v1Inds.length), String(v2Inds.length)]
         : [String(v1Inds.length)],
+      estructura_v1: toEstructura(estructuraV1),
+      estructura_v2: toEstructura(estructuraV2),
       nombre_dims_v1: estructuraV1.map((d) => d.nombre),
       items_por_dim_v1: estructuraV1.map((d) => String(d.indicadores.flatMap((i) => i.items).length)),
       nombre_items_v1: estructuraV1.flatMap((d) => d.indicadores.flatMap((i) => i.items.map((it) => it.nombre))),
@@ -1044,6 +1065,28 @@ export default function App() {
     return () => { isMounted = false; };
   }, [apiBaseUrl, authToken]);
 
+  // Limites del generador (muestra maxima e items por variable),
+  // para validar antes de llamar a /generate.
+  useEffect(() => {
+    if (!authToken || !authUser) { setTemplateInfo(null); return; }
+    let isMounted = true;
+    fetch(`${apiBaseUrl.replace(/\/$/, "")}/template-info`, { headers: { Authorization: `Bearer ${authToken}` } })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const payload = (await res.json()) as Partial<TemplateInfo>;
+        if (!isMounted) return;
+        if (typeof payload.maxMuestra === "number" && typeof payload.maxItemsV1 === "number") {
+          setTemplateInfo({
+            maxMuestra: payload.maxMuestra,
+            maxItemsV1: payload.maxItemsV1,
+            maxItemsV2: payload.maxItemsV2 ?? 0,
+          });
+        }
+      })
+      .catch(() => {});
+    return () => { isMounted = false; };
+  }, [apiBaseUrl, authToken, authUser]);
+
   // ── Validation ─────────────────────────────────────────────────────────────
   const validationMessages = useMemo(() => {
     const issues: string[] = [];
@@ -1057,6 +1100,21 @@ export default function App() {
     if (hasV2) {
       const itemv2 = parseIntSafe(config.itemv2);
       if (itemv2 === null || itemv2 <= 0) issues.push("Las preguntas de V2 deben ser mayor a 0.");
+    }
+    // Limites reportados por el servidor
+    if (templateInfo) {
+      if (muestra !== null && muestra > templateInfo.maxMuestra) {
+        issues.push(`El sistema soporta máximo ${templateInfo.maxMuestra} personas encuestadas (configuraste ${muestra}).`);
+      }
+      if (item !== null && item > templateInfo.maxItemsV1) {
+        issues.push(`El sistema soporta máximo ${templateInfo.maxItemsV1} preguntas en la Variable 1 (configuraste ${item}).`);
+      }
+      if (hasV2) {
+        const itemv2 = parseIntSafe(config.itemv2);
+        if (itemv2 !== null && itemv2 > templateInfo.maxItemsV2) {
+          issues.push(`El sistema soporta máximo ${templateInfo.maxItemsV2} preguntas en la Variable 2 (configuraste ${itemv2}).`);
+        }
+      }
     }
     if (escala === null || escala <= 0) issues.push("Los niveles del baremo (V1) deben ser mayor a 0.");
     if (hasV2) {
@@ -1086,7 +1144,7 @@ export default function App() {
     if (hasV2) validatePorcentaje("porcentaje_v2", "Baremo V2");
 
     return issues;
-  }, [config]);
+  }, [config, templateInfo]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   const setScalar = (key: string, value: string) => setConfig((prev) => {
@@ -1308,7 +1366,6 @@ export default function App() {
   const handleGenerate = async () => {
     setErrorMessage(null);
     if (!authToken || !authUser) { setErrorMessage("Debes iniciar sesión para generar tabulación."); return; }
-    if (authUser.role !== "admin") { setErrorMessage("Solo el administrador puede generar tabulación."); return; }
     if (validationMessages.length > 0) { setErrorMessage("Corrige las validaciones antes de generar."); return; }
     setIsGenerating(true);
     setStatusMessage("Enviando configuración a la API...");
@@ -1329,20 +1386,21 @@ export default function App() {
       });
       const payload = (await res.json()) as InlineGenerateResponse;
       if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
-      if (typeof payload.correlation !== "number" || !payload.baseCsv || !payload.excelBase64) {
+      const correlationOk = typeof payload.correlation === "number" || payload.correlation === null;
+      if (!correlationOk || !payload.baseCsv || !payload.excelBase64) {
         throw new Error("La API respondió sin los artefactos esperados.");
       }
       setStatusMessage("Procesando resultados...");
       const excelBytes = base64ToUint8Array(payload.excelBase64);
-      const csvRows = csvToRows(payload.baseCsv);
-      const parsedWorkbook = workbookToSheetRows(excelBytes);
+      const csvRows = await csvToRows(payload.baseCsv);
+      const parsedWorkbook = await workbookToSheetRows(excelBytes);
       const nextLinks: DownloadLinks = {
         json: URL.createObjectURL(new Blob([JSON.stringify(config, null, 2)], { type: "application/json;charset=utf-8" })),
         csv: URL.createObjectURL(new Blob([payload.baseCsv], { type: "text/csv;charset=utf-8" })),
         xlsx: URL.createObjectURL(new Blob([excelBytes.buffer as ArrayBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })),
       };
       setDownloadLinks((cur) => { revokeDownloadLinks(cur); return nextLinks; });
-      setResult({ correlation: payload.correlation, csvRows, sheetNames: parsedWorkbook.names, sheetData: parsedWorkbook.data, generatedAt: new Date().toISOString() });
+      setResult({ correlation: payload.correlation, warnings: payload.warnings ?? [], csvRows, sheetNames: parsedWorkbook.names, sheetData: parsedWorkbook.data, generatedAt: new Date().toISOString() });
       setSelectedSheet(parsedWorkbook.names[0] ?? "");
       setStatusMessage("Tabulación generada correctamente.");
     } catch (err) {
@@ -1467,7 +1525,6 @@ export default function App() {
         {/* Nav items */}
         <nav className="flex-1 space-y-1 overflow-y-auto p-3">
           <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Herramientas</p>
-          {isAdmin ? (
           <button
             onClick={() => { setActiveSection("tabulacion"); }}
             className={cn(
@@ -1481,13 +1538,6 @@ export default function App() {
             Tabulación
             {activeSection === "tabulacion" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
           </button>
-          ) : (
-          <div className="flex w-full cursor-not-allowed items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground/50">
-            <FileSpreadsheet className="h-4 w-4 shrink-0" />
-            Tabulación
-            <Badge variant="muted" className="ml-auto text-[9px] px-1.5 py-0">Solo admin</Badge>
-          </div>
-          )}
 
           {/* Coming soon items */}
           {[
@@ -1601,7 +1651,7 @@ export default function App() {
         <main className="flex-1 overflow-auto p-6">
 
           {/* ── Tabulación Wizard ── */}
-          {activeSection === "tabulacion" && isAdmin && (
+          {activeSection === "tabulacion" && authUser && (
             <div className="mx-auto max-w-3xl">
               <div className="mb-6">
                 <h2 className="text-2xl font-bold tracking-tight">Generar tabulación</h2>
@@ -2118,19 +2168,33 @@ export default function App() {
                         <CardDescription>Generado el {new Date(result.generatedAt).toLocaleString()}</CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-5">
-                        {/* Correlation */}
-                        <div className="rounded-xl border border-border/60 bg-background/80 p-4">
-                          <p className="text-sm text-muted-foreground">Coeficiente de correlación de Pearson</p>
-                          <div className="mt-1 flex items-baseline gap-3">
-                            <span className="text-4xl font-bold tracking-tight text-primary">{(result.correlation ?? 0).toFixed(3)}</span>
-                            <div>
-                              <span className={cn("text-sm font-semibold", correlationInfo(result.correlation ?? 0).colorClass)}>
-                                Correlación {correlationInfo(result.correlation ?? 0).label}
-                              </span>
-                              <p className="text-xs text-muted-foreground">{correlationInfo(result.correlation ?? 0).explanation}</p>
+                        {/* Correlation: con 1 sola variable no aplica */}
+                        {result.correlation !== null && (
+                          <div className="rounded-xl border border-border/60 bg-background/80 p-4">
+                            <p className="text-sm text-muted-foreground">Coeficiente de correlación de Pearson</p>
+                            <div className="mt-1 flex items-baseline gap-3">
+                              <span className="text-4xl font-bold tracking-tight text-primary">{result.correlation.toFixed(3)}</span>
+                              <div>
+                                <span className={cn("text-sm font-semibold", correlationInfo(result.correlation).colorClass)}>
+                                  Correlación {correlationInfo(result.correlation).label}
+                                </span>
+                                <p className="text-xs text-muted-foreground">{correlationInfo(result.correlation).explanation}</p>
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        )}
+
+                        {/* Avisos del generador */}
+                        {result.warnings.length > 0 && (
+                          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 space-y-1.5">
+                            {result.warnings.map((w) => (
+                              <p key={w} className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+                                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                {w}
+                              </p>
+                            ))}
+                          </div>
+                        )}
 
                         {/* Downloads */}
                         {downloadLinks && (
@@ -2367,16 +2431,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Non-admin message */}
-          {activeSection === "tabulacion" && !isAdmin && authUser && (
-            <div className="mx-auto max-w-md mt-20 text-center">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-                <ShieldCheck className="h-6 w-6" />
-              </div>
-              <h2 className="text-lg font-semibold">Acceso restringido</h2>
-              <p className="mt-2 text-sm text-muted-foreground">Tu cuenta está activa pero solo los administradores pueden operar el sistema. Solicita elevación de permisos.</p>
-            </div>
-          )}
         </main>
       </div>
     </div>

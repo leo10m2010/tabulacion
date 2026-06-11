@@ -2,14 +2,17 @@
   "name": "tabulacion-xlsx-populate",
   "version": "1.0.0",
   "private": true,
-  "description": "Genera Tabulacion.xlsx preservando graficos con xlsx-populate",
+  "description": "Genera el Excel de tabulacion completo por codigo (formulas y graficos) con xlsx-populate + jszip",
   "type": "module",
   "scripts": {
     "generate": "node index.js",
+    "plantilla": "node index.js --sin-datos",
     "api": "node server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
+    "jszip": "^3.10.1",
     "xlsx-populate": "^1.21.0"
   }
 }
