@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowRight, Building2, Check, Download, FileSpreadsheet, GraduationCap, Loader2, Mail, MessageCircle, Moon, Sun, UserRound } from "lucide-react";
+import { ArrowRight, Building2, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, Loader2, Mail, MessageCircle, Moon, Sun, UserRound } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -539,40 +539,54 @@ export function LandingPage({
         </div>
       </section>
 
-      <section className="border-t border-border py-14">
-        <Reveal>
-          <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Preguntas frecuentes</h2>
+      <section className="border-t border-border py-16">
+        <Reveal className="text-center">
+          <span className="inline-flex rounded-full bg-foreground px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide text-background">
+            FAQ
+          </span>
+          <h2 className="mx-auto mt-4 max-w-[18ch] text-3xl font-bold leading-tight tracking-tight md:text-4xl">
+            Preguntas frecuentes
+          </h2>
         </Reveal>
-        <div className="mt-8 max-w-3xl divide-y divide-border border-y border-border">
+        <div className="mx-auto mt-10 flex max-w-3xl flex-col gap-3">
           {faqs.map((faq, i) => {
             const abierta = faqAbierta === i;
             return (
-              <Reveal key={faq.q} delay={i * 0.04}>
-                <button
-                  className="flex w-full items-center justify-between gap-4 py-5 text-left"
-                  aria-expanded={abierta}
-                  onClick={() => setFaqAbierta(abierta ? null : i)}
-                >
-                  <span className={cn("text-sm font-semibold md:text-base", abierta && "text-primary")}>{faq.q}</span>
-                  <motion.span
-                    animate={{ rotate: abierta ? 45 : 0 }}
-                    transition={springSoft}
-                    className={cn("text-xl leading-none", abierta ? "text-primary" : "text-muted-foreground")}
-                    aria-hidden
-                  >
-                    +
-                  </motion.span>
-                </button>
-                <div
+              <Reveal key={faq.q} delay={i * 0.05}>
+                <motion.div
+                  whileHover={reduce || abierta ? undefined : { y: -2 }}
+                  transition={springSoft}
                   className={cn(
-                    "grid transition-[grid-template-rows] duration-300 ease-out",
-                    abierta ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+                    "rounded-2xl border bg-card shadow-sm transition-colors",
+                    abierta ? "border-primary/40 shadow-md" : "border-border",
                   )}
                 >
-                  <div className="min-h-0 overflow-hidden">
-                    <p className="max-w-[68ch] pb-5 text-sm leading-relaxed text-muted-foreground">{faq.a}</p>
+                  <button
+                    className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left"
+                    aria-expanded={abierta}
+                    onClick={() => setFaqAbierta(abierta ? null : i)}
+                  >
+                    <span className={cn("text-sm font-semibold md:text-base", abierta && "text-primary")}>{faq.q}</span>
+                    <motion.span
+                      animate={{ rotate: abierta ? 180 : 0 }}
+                      transition={springSoft}
+                      className={cn("shrink-0", abierta ? "text-primary" : "text-muted-foreground")}
+                      aria-hidden
+                    >
+                      <ChevronDown className="h-5 w-5" />
+                    </motion.span>
+                  </button>
+                  <div
+                    className={cn(
+                      "grid transition-[grid-template-rows] duration-300 ease-out",
+                      abierta ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+                    )}
+                  >
+                    <div className="min-h-0 overflow-hidden">
+                      <p className="px-6 pb-5 text-sm leading-relaxed text-muted-foreground">{faq.a}</p>
+                    </div>
                   </div>
-                </div>
+                </motion.div>
               </Reveal>
             );
           })}
