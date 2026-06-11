@@ -949,6 +949,7 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState<string>("Listo para generar.");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationElapsed, setGenerationElapsed] = useState(0);
   const [result, setResult] = useState<GeneratedResult | null>(null);
   const [downloadLinks, setDownloadLinks] = useState<DownloadLinks | null>(null);
 
@@ -994,6 +995,21 @@ export default function App() {
     if (authToken) localStorage.setItem("authToken", authToken);
     else localStorage.removeItem("authToken");
   }, [authToken]);
+
+  // Despierta la API apenas se abre la app: si el hosting suspende el servidor
+  // por inactividad (arranque en frío), el login y la generación lo encuentran
+  // ya caliente.
+  useEffect(() => {
+    fetch(`${apiBaseUrl.replace(/\/$/, "")}/health`).catch(() => {});
+  }, [apiBaseUrl]);
+
+  // Cronómetro de la generación para informar el progreso por etapas.
+  useEffect(() => {
+    if (!isGenerating) return;
+    setGenerationElapsed(0);
+    const timer = window.setInterval(() => setGenerationElapsed((s) => s + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [isGenerating]);
   useEffect(() => {
     const onPop = () => setAppView(resolveViewFromPath());
     window.addEventListener("popstate", onPop);
@@ -1417,6 +1433,17 @@ export default function App() {
       setIsGenerating(false);
     }
   };
+
+  // Mensaje de progreso por etapas: con servidores que despiertan de una
+  // suspensión, la generación puede tardar 1-2 minutos y el usuario debe
+  // saber que todo va bien.
+  const generationProgressMessage = !isGenerating
+    ? statusMessage
+    : generationElapsed < 8
+      ? "Enviando configuración a la API..."
+      : generationElapsed < 40
+        ? `El servidor está procesando (${generationElapsed}s)... puede tardar hasta 2 minutos, no cierres la página.`
+        : `Generando tu Excel: estadísticos, baremos y gráficos (${generationElapsed}s)... ya falta poco.`;
 
   const toggleTheme = () => setThemeMode((cur) => (cur === "dark" ? "light" : "dark"));
   const goToApp = () => { window.history.pushState({}, "", "/app"); setAppView("app"); };
@@ -2149,7 +2176,7 @@ export default function App() {
                         {isGenerating ? (
                           <>
                             <Loader2 className="h-5 w-5 animate-spin" />
-                            Generando tu Excel...
+                            {`Generando tu Excel...${generationElapsed > 0 ? ` (${generationElapsed}s)` : ""}`}
                           </>
                         ) : (
                           <>
@@ -2158,7 +2185,7 @@ export default function App() {
                           </>
                         )}
                       </Button>
-                      <p className="text-center text-xs text-muted-foreground">{statusMessage}</p>
+                      <p className="text-center text-xs text-muted-foreground">{generationProgressMessage}</p>
                     </CardContent>
                   </Card>
 
