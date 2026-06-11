@@ -93,6 +93,34 @@ export function LandingPage({
     { titulo: "Descarga", desc: "Un Excel con tablas numeradas, gráficos e interpretaciones, con el formato que pide tu informe." },
   ];
 
+  const faqs = [
+    {
+      q: "¿Qué recibo exactamente al generar?",
+      a: "Un archivo Excel con 11 hojas: base de datos, estadísticos por ítem, baremos con valoración automática, frecuencias, gráficos e interpretaciones narrativas bajo cada figura. También un CSV con la base de datos.",
+    },
+    {
+      q: "¿Funciona con mi instrumento?",
+      a: "Sí. Configuras tus variables, dimensiones, indicadores e ítems, con la escala que use tu cuestionario (Likert de 3, 5, 7 o más opciones) y la cantidad de niveles de baremo que necesites.",
+    },
+    {
+      q: "¿Cuánto tarda en generarse?",
+      a: "La configuración guiada toma unos minutos y la generación del Excel entre uno y dos minutos. El archivo queda listo para descargar al instante.",
+    },
+    {
+      q: "¿Las fórmulas del Excel son reales?",
+      a: "Sí. El archivo usa fórmulas reales de Excel, no valores pegados: si editas una respuesta en la base de datos, los estadísticos, baremos, gráficos y porcentajes se recalculan solos.",
+    },
+    {
+      q: "¿El formato sirve para mi informe de tesis?",
+      a: "El archivo sale con formato de tesis: tablas y figuras numeradas, con su fuente y elaboración en cada bloque, listas para copiar a tu informe o presentar a tu asesor.",
+    },
+    {
+      q: "¿Cómo pago y qué pasa si tengo dudas?",
+      a: "Hay planes en soles o dólares, con pago mensual o anual. Para el plan institucional o cualquier consulta, escríbenos por WhatsApp o al correo del pie de página.",
+    },
+  ];
+  const [faqAbierta, setFaqAbierta] = useState<number | null>(0);
+
   const incluye = [
     "Variables, dimensiones e indicadores configurables",
     "Baremos e intervalos calculados automáticamente",
@@ -184,8 +212,8 @@ export function LandingPage({
             className="absolute -left-9 -top-7 z-10 hidden lg:block"
           >
             <motion.div
-              animate={reduce ? undefined : { y: [0, -7, 0] }}
-              transition={reduce ? undefined : { duration: 5.5, repeat: Infinity, ease: "easeInOut", delay: 0.4 }}
+              animate={reduce ? undefined : { y: [0, -13, 0], x: [0, 5, 0], rotate: [0, -1.4, 0] }}
+              transition={reduce ? undefined : { duration: 5, repeat: Infinity, ease: "easeInOut", delay: 0.4 }}
               className="rounded-2xl border border-border bg-card px-4 py-3 shadow-xl"
             >
               <p className="text-[11px] font-medium text-muted-foreground">Correlación de Pearson</p>
@@ -204,8 +232,8 @@ export function LandingPage({
             className="absolute -bottom-9 -right-4 z-10 hidden lg:block"
           >
             <motion.div
-              animate={reduce ? undefined : { y: [0, -6, 0] }}
-              transition={reduce ? undefined : { duration: 6.2, repeat: Infinity, ease: "easeInOut", delay: 1.1 }}
+              animate={reduce ? undefined : { y: [0, -11, 0], x: [0, -6, 0], rotate: [0, 1.6, 0] }}
+              transition={reduce ? undefined : { duration: 6, repeat: Infinity, ease: "easeInOut", delay: 1.2 }}
               className="w-[160px] rounded-2xl border border-border bg-card px-4 py-3 shadow-xl"
             >
               <p className="text-[11px] font-medium text-muted-foreground">Figura 1 · {tabla.dim}</p>
@@ -511,19 +539,68 @@ export function LandingPage({
         </div>
       </section>
 
+      <section className="border-t border-border py-14">
+        <Reveal>
+          <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Preguntas frecuentes</h2>
+        </Reveal>
+        <div className="mt-8 max-w-3xl divide-y divide-border border-y border-border">
+          {faqs.map((faq, i) => {
+            const abierta = faqAbierta === i;
+            return (
+              <Reveal key={faq.q} delay={i * 0.04}>
+                <button
+                  className="flex w-full items-center justify-between gap-4 py-5 text-left"
+                  aria-expanded={abierta}
+                  onClick={() => setFaqAbierta(abierta ? null : i)}
+                >
+                  <span className={cn("text-sm font-semibold md:text-base", abierta && "text-primary")}>{faq.q}</span>
+                  <motion.span
+                    animate={{ rotate: abierta ? 45 : 0 }}
+                    transition={springSoft}
+                    className={cn("text-xl leading-none", abierta ? "text-primary" : "text-muted-foreground")}
+                    aria-hidden
+                  >
+                    +
+                  </motion.span>
+                </button>
+                <div
+                  className={cn(
+                    "grid transition-[grid-template-rows] duration-300 ease-out",
+                    abierta ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+                  )}
+                >
+                  <div className="min-h-0 overflow-hidden">
+                    <p className="max-w-[68ch] pb-5 text-sm leading-relaxed text-muted-foreground">{faq.a}</p>
+                  </div>
+                </div>
+              </Reveal>
+            );
+          })}
+        </div>
+      </section>
+
       <Reveal className="my-14">
-        <section className="rounded-2xl bg-primary px-8 py-12 text-primary-foreground md:px-12">
-          <div className="flex flex-wrap items-center justify-between gap-6">
-            <div>
-              <h2 className="text-2xl font-bold tracking-tight md:text-3xl">¿Listo para generar tu tabulación?</h2>
-              <p className="mt-2 max-w-[44ch] text-sm opacity-90">
-                Entra con tu cuenta, configura tu encuesta y entrega el Excel a tu asesor.
-              </p>
-            </div>
-            <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary to-primary/80 px-8 py-16 text-center text-primary-foreground md:px-12">
+          <div
+            aria-hidden
+            className="absolute inset-0 bg-[radial-gradient(circle_at_28%_18%,hsl(var(--primary-foreground)/0.16),transparent_55%)]"
+          />
+          <div aria-hidden className="cta-dots absolute inset-0" />
+          <div className="relative z-10">
+            <h2 className="mx-auto max-w-[22ch] text-3xl font-bold leading-tight tracking-tight md:text-4xl">
+              ¿Listo para generar tu tabulación?
+            </h2>
+            <p className="mx-auto mt-4 max-w-[46ch] text-sm opacity-90 md:text-base">
+              Configura tu encuesta hoy y entrega a tu asesor un Excel con tablas, figuras e interpretaciones.
+            </p>
+            <motion.div
+              className="mt-8 inline-block"
+              whileHover={reduce ? undefined : { y: -2 }}
+              whileTap={reduce ? undefined : { scale: 0.97 }}
+            >
               <Button
                 size="lg"
-                className="h-12 bg-background px-6 text-base text-foreground hover:bg-background/90"
+                className="h-13 bg-background px-8 text-base text-foreground shadow-2xl hover:bg-background/90"
                 onClick={onOpenApp}
               >
                 Generar mi tabulación
