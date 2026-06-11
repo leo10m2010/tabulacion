@@ -1,70 +1,34 @@
-# Estado tecnico del proyecto
+# Estado técnico del proyecto
 
-## Resumen ejecutivo
+Actualizado: 2026-06-11.
 
-- La generacion de base y Excel esta migrada a Node.js (`node_app/generator.js`).
-- `app.py` queda como UI/orquestador en Streamlit.
-- Existe API HTTP Node (`node_app/server.js`) para frontend externo (Netlify).
-- Existe frontend React en `frontend/` con estilo shadcn-like y consumo directo de la API.
-- Se elimina dependencia operativa de `pywin32` y Excel COM.
+## Resumen
 
-## Objetivo vigente
+- Generación **100% por código** (`node_app/generator.js`): `xlsx-populate` construye celdas/fórmulas/estilos y un post-procesado con `jszip` deduplica estilos e inyecta los gráficos OOXML. **No existe plantilla**: `Tabulacion.xlsx` fue eliminada del repositorio.
+- API HTTP propia (`node_app/server.js`) con auth por tokens, roles, suscripciones y rate limiting.
+- Frontend React/Vite en `frontend/` consumiendo la API (`POST /generate` en modo `inline`); envía la estructura jerárquica en `estructura_v1`/`estructura_v2`.
+- Suite de tests con `node:test` (`cd node_app && npm test`): 16 tests de generador y API.
 
-- Configurar tabulacion desde web.
-- Generar `Tabulacion_base.csv` y `Tabulacion_generada.xlsx`.
-- Preservar graficos y formas de `Tabulacion.xlsx`.
+## Migración a generador sin plantilla (2026-06-11)
 
-## Flujo actual
+- Reescritura completa de `generator.js`: el Excel se construye desde cero en cada generación (por variable: hoja base, "Ítems", "Dimensiones" y "Conteo"; globales: "Relaciones", "Correlación" e "Información"). Sin límites heredados de la plantilla: muestra 2–2,000, hasta 60 ítems por variable, escala y niveles de baremo libres.
+- Formato de tesis replicado del Excel original: rótulos "Tabla N"/"Figura N", "Fuente: Encuesta aplicada"/"Elaboración: Propia", encabezados amarillos por bloque, marco verde, tablas de normalidad (KS/Shapiro-Wilk, para completar desde SPSS) y correlaciones con Sig. bilateral.
+- **Interpretaciones narrativas automáticas** por ítem, dimensión y conteo, redactadas en JS con los porcentajes reales de los datos generados (con base vacía se emite un texto guía).
+- Gráficos generados por código (barras con etiquetas de datos): uno por ítem, uno por dimensión (conteo), uno por dimensión y uno consolidado por variable (frecuencia baremada).
+- Deduplicación de estilos en post-procesado (xlsx-populate crea un estilo por celda: styles.xml pasaba de ~10 MB a ~5 KB).
+- `conDatos: "0"` genera la base vacía para ingreso manual (las fórmulas muestran vacío, nunca errores).
+- `GET /template-info` ahora reporta los límites del generador.
+- Despliegue sin Docker (2026-06-11): frontend en Vercel (`frontend/vercel.json`) y API en Render (`render.yaml`, Node directo con healthcheck y disco persistente para `users.json`). Dockerfile, docker-compose y netlify.toml eliminados.
+- Eliminados: `Tabulacion.xlsx`, salidas versionadas (`Tabulacion_generada.xlsx`, `Tabulacion_base.csv`), restos de la era Python en los ignores y ~800 líneas de maquinaria de adaptación de plantilla.
 
-1. Streamlit carga configuracion desde `Tabulacion.json`.
-2. Usuario edita y valida en UI.
-3. Boton **Generar**:
-   - Guarda JSON.
-   - Ejecuta Node (`node_app/index.js`).
-   - Node genera base, correlacion y Excel final.
-4. Streamlit consume resultados y habilita descargas.
+## Seguridad (auditoría 2026-06)
 
-## Flujo alterno (frontend externo)
+- Sin secretos por defecto: `AUTH_TOKEN_SECRET` y `ADMIN_PASSWORD` se exigen por entorno (con fallback aleatorio por arranque); `users.json` y `.env` fuera de git.
+- El rol `user` puede generar (la suscripción se valida en cada request); la gestión de usuarios sigue siendo solo admin.
+- El historial de git contiene un `users.json` antiguo con hash del admin y la contraseña documentada `Admin12345!`: cualquier despliegue que conserve ese usuario debe rotar la contraseña.
 
-1. Frontend (por ejemplo Netlify) envía `POST /generate` a la API Node.
-2. API genera artefactos en memoria temporal y devuelve links con expiración.
-3. Frontend descarga:
-   - `GET /results/:id/xlsx`
-   - `GET /results/:id/csv`
+## Riesgos y pendientes conocidos
 
-## Mejoras implementadas recientemente
-
-- Generador Node robusto ante cambios de `cwd` (rutas basadas en `import.meta.url`).
-- Validacion estricta de hojas requeridas y cabeceras `PRG.1`.
-- Control de correlacion no valida (`NaN`) y requerimiento `muestra >= 2`.
-- Estado UI consistente en errores (evita mostrar resultados viejos).
-- Pestaña de tabulacion enfocada en el Excel generado.
-- Correccion de descarga: `Tabulacion_generada.xlsx` como nombre de salida.
-- Reemplazo automático del nombre de muestra en todas las hojas (incluye variantes tipo `Beneficiaross`).
-- Dockerfile y `docker-compose.yml` para despliegue containerizado de la API.
-
-## Dependencias
-
-- Python: `streamlit`, `pandas`.
-- Node.js 18+.
-- Node package: `xlsx-populate`.
-
-## Riesgos/pendientes
-
-- No hay suite de tests automatizados (solo verificacion de sintaxis y pruebas manuales).
-- El generador depende de nombres exactos de hojas y etiquetas de la plantilla.
-- Si cambia estructura de `Tabulacion.xlsx`, se deben ajustar constantes/etiquetas en `node_app/generator.js`.
-
-## Archivos clave
-
-- `app.py`
-- `node_app/index.js`
-- `node_app/server.js`
-- `node_app/generator.js`
-- `frontend/`
-- `Dockerfile`
-- `docker-compose.yml`
-- `Tabulacion.json`
-- `Tabulacion.xlsx`
-- `Tabulacion_generada.xlsx` (salida)
-- `Tabulacion_base.csv` (salida)
+- Los resultados en modo `links` viven en memoria: se pierden al reiniciar y no escalan a múltiples réplicas (el frontend usa modo `inline`, que no depende de esto).
+- Los gráficos se validaron estructuralmente (openpyxl los parsea contra el esquema OOXML) pero conviene una verificación visual en Excel de escritorio tras cambios al XML de charts.
+- `frontend/src/App.tsx` concentra toda la UI (~2,400 líneas): conviene dividirlo en módulos.

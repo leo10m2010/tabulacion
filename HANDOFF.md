@@ -1,101 +1,35 @@
 # Handoff del Proyecto
 
-## Estado actual
+Actualizado: 2026-06-11. Para arranque y despliegue ver `README.md`; para estado y riesgos ver `ESTADO_TECNICO.md`.
 
-- Generación de tabulación migrada a **Node.js**.
-- Frontend web nuevo en **React + Vite + Tailwind (estilo shadcn-like)**.
-- API backend lista para consumo desde frontend (ideal para Netlify + API en Docker).
-- El nombre de muestra (`nommuestra`) ahora se reemplaza automáticamente en el Excel generado, incluyendo variantes previas tipo `Beneficiaros` / `Beneficiaross`.
+## Qué es
 
-## Arquitectura actual
-
-- Frontend:
-  - `frontend/` (React)
-  - Consume API vía `POST /generate`
-- Backend:
-  - `node_app/server.js` (API HTTP)
-  - `node_app/generator.js` (lógica central de generación)
-  - `node_app/index.js` (modo CLI para generación local)
-- Plantilla:
-  - `Tabulacion.xlsx` (entrada)
-- Salidas:
-  - `Tabulacion_generada.xlsx`
-  - `Tabulacion_base.csv`
+Generador de tabulaciones de tesis: API Node (`node_app/`) + frontend React (`frontend/`). **El Excel se construye 100% por código** (estructura, fórmulas reales y gráficos); no hay plantilla.
 
 ## Archivos clave
 
-- `node_app/generator.js`: motor de generación reutilizable.
-- `node_app/server.js`: endpoints API (`/health`, `/generate`, `/results/:id/...`).
-- `node_app/index.js`: ejecución local CLI.
-- `Dockerfile` y `docker-compose.yml`: despliegue backend en contenedor.
-- `frontend/src/App.tsx`: UI completa (configuración, validaciones, generación, descargas, vista previa).
-- `frontend/src/index.css`: variables de tema y modo dark.
-- `frontend/netlify.toml`: configuración de build para Netlify.
-- `frontend/.env.example`: variable `VITE_API_BASE_URL`.
+- `node_app/generator.js` — motor de generación: normalización del config, simulación de datos, construcción de hojas con xlsx-populate, y post-procesado OOXML (`postProcessWorkbook`: deduplicación de estilos + inyección de gráficos vía jszip).
+- `node_app/server.js` — API: auth (tokens HMAC), usuarios/roles/suscripciones, rate limiting, `/generate`, `/template-info` (límites del generador), resultados temporales.
+- `node_app/index.js` — modo CLI (`npm run generate`, usa `Tabulacion.json` de la raíz; `--sin-datos` deja la base vacía).
+- `node_app/test/` — tests (`npm test`).
+- `frontend/src/App.tsx` — toda la UI (wizard, login, gestión de usuarios). Envía la estructura jerárquica en `estructura_v1`/`estructura_v2`.
+- `render.yaml` (API en Render, Node directo, disco persistente para `users.json`), `frontend/vercel.json` (SPA en Vercel) y `.env.example` — despliegue sin Docker; secretos por entorno, nunca en el repo.
 
-## Endpoints API
+## Invariantes que no hay que romper
 
-- `GET /health`
-- `POST /generate`
-- `GET /results/:id`
-- `GET /results/:id/xlsx`
-- `GET /results/:id/csv`
-- `DELETE /results/:id`
+1. **El Excel generado debe abrirse en Excel sin reparaciones y con todos los gráficos** — cualquier cambio al XML de charts/drawings debe validarse (los tests verifican estructura; openpyxl parsea los charts contra el esquema).
+2. **Ningún error de fórmula en el archivo** (`#DIV/0!`, `#N/A`, `#REF!`, `#VALUE!`), incluso con base vacía: toda fórmula calculada va protegida con `IFERROR`/`IF`.
+3. **No generar Excel silenciosamente incorrecto** — si la configuración excede los límites, error explícito o aviso (`warnings`).
+4. **Sin secretos en el repo** — `users.json`, `.env` y contraseñas quedan fuera de git; en Render se definen por el dashboard.
+5. `cd node_app && npm test` debe pasar antes de cualquier entrega.
 
-## Variables de entorno backend
+## Mejoras pendientes sugeridas (en orden)
 
-- `PORT` (default: `8080`)
-- `TEMPLATE_PATH` (default: `Tabulacion.xlsx`)
-- `CORS_ORIGIN` (default: `*`)
-- `RESULT_TTL_SECONDS` (default: `900`)
-- `MAX_BODY_BYTES` (default: `4194304`)
-- `PUBLIC_BASE_URL` (opcional)
+1. Dividir `frontend/src/App.tsx` en componentes/módulos.
+2. Persistencia real de resultados (S3/R2 + metadatos) si se usa el modo `links`.
+3. Validación de schema del JSON con zod/ajv en la API.
+4. Historial de generaciones por usuario.
 
-## Variables de entorno frontend
+## Prompt sugerido para retomar en una nueva sesión
 
-- `VITE_API_BASE_URL` (ej: `http://localhost:8080` o dominio de la API en producción)
-
-## Cómo correr local
-
-### Opción A: API con Docker + frontend local
-
-1. Levantar API:
-   - `docker compose up --build`
-2. Levantar frontend:
-   - `cd frontend`
-   - `npm install`
-   - `npm run dev`
-
-### Opción B: API sin Docker
-
-1. API:
-   - `cd node_app`
-   - `npm install`
-   - `npm run api`
-2. Frontend:
-   - `cd frontend`
-   - `npm install`
-   - `npm run dev`
-
-## Deploy recomendado
-
-- Frontend en Netlify:
-  - Base directory: `frontend`
-  - Build command: `npm run build`
-  - Publish directory: `dist`
-  - Env: `VITE_API_BASE_URL=https://tu-api.com`
-- Backend en Render/Railway/Fly (Docker):
-  - Configurar `CORS_ORIGIN=https://tu-sitio.netlify.app`
-  - Asegurar que `Tabulacion.xlsx` esté disponible en contenedor (actualmente se copia en `Dockerfile`).
-
-## Mejoras pendientes recomendadas
-
-1. Persistencia real de resultados (S3/R2 + metadata en DB).
-2. Autenticación y rate limiting de API.
-3. Validación de schema JSON robusta (zod/ajv).
-4. Cola de trabajos para escalar generación concurrente.
-5. Historial de generaciones en frontend.
-
-## Prompt sugerido para retomar en nueva sesión
-
-`Lee HANDOFF.md y continúa desde el estado actual. Quiero implementar <X> sin romper generación de Excel ni frontend.`
+`Lee HANDOFF.md y ESTADO_TECNICO.md y continúa desde el estado actual. Quiero implementar <X> sin romper la generación de Excel ni los tests.`

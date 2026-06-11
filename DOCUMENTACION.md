@@ -1,100 +1,52 @@
-# Sistema de Tabulacion (Streamlit + Node)
+# Documentación funcional
 
-Aplicacion web para configurar tabulacion y generar salidas finales sin editar manualmente JSON o Excel.
+Guía del flujo de uso y del contrato del JSON de configuración. Para instalación, variables de entorno y despliegue, ver `README.md`.
 
-## Salidas del sistema
+## Flujo de uso (frontend)
 
-- `Tabulacion.json`: configuracion final.
-- `Tabulacion_base.csv`: base generada automaticamente.
-- `Tabulacion_generada.xlsx`: Excel final construido desde plantilla.
+1. **Login** con email y contraseña. Cualquier usuario activo con suscripción vigente puede generar tabulaciones; la gestión de usuarios es solo para administradores.
+2. **Paso 1 — Tu encuesta**: número de variables (1 o 2), nombre y tamaño de la muestra, opciones por pregunta, preguntas/dimensiones/niveles de baremo por variable, dirección de la relación (directa/inversa).
+3. **Paso 2 — Escalas y estructura**: opciones de respuesta, baremos por variable (los rangos y cantidades se calculan automáticamente; los porcentajes deben sumar 100%), y estructura jerárquica dimensión → indicador → ítem de cada variable.
+4. **Paso 3 — Generar**: resumen, validaciones (incluye los límites del generador obtenidos de `GET /template-info`) y generación. Se muestran la correlación de Pearson (si hay 2 variables), los avisos del generador, la vista previa por hoja, y las descargas de Excel, CSV y JSON.
 
-## Arquitectura actual (Node-only para generacion)
+## Contrato del JSON de configuración
 
-- Frontend/UI: `app.py` (Streamlit).
-- Motor de generacion CLI: `node_app/index.js`.
-- Motor API HTTP: `node_app/server.js`.
-- Modulo reusable de generacion: `node_app/generator.js`.
-- Libreria de Excel: `xlsx-populate`.
+Campos escalares (strings numéricos):
 
-La UI guarda configuracion y delega toda la generacion al proceso Node.
+- `muestra` — encuestados (2 a 2,000).
+- `variable` — `"1"` o `"2"`.
+- `item` / `itemv2` — preguntas por variable (máx. 60 por variable).
+- `escala` / `escala_v2` — niveles del baremo por variable.
+- `respuesta` — opciones por pregunta (escala Likert).
+- `relacionversa` — `"0"` directa, `"1"` inversa.
+- `nommuestra` — etiqueta de los encuestados (se muestra en la hoja Información).
+- `conDatos` — `"1"` (default) llena la base con datos simulados; `"0"` la deja vacía para ingreso manual.
 
-## Requisitos
+Listas (arrays de strings):
 
-- Python 3.10+.
-- Node.js 18+.
-- Dependencias Python: `streamlit`, `pandas`.
-- Dependencias Node: `xlsx-populate` (via `npm install` en `node_app/`).
+- `nombre_respuesta` — etiquetas de las opciones de respuesta.
+- `nombre_escala` / `nombre_escala_v2` — nombres de los niveles del baremo.
+- `desde`, `hasta`, `porcentaje`, `cantidad` (+ sufijo `_v2`) — baremo por variable.
+- `nombre_dimension` — nombres de las dos **variables** (etiquetas en el Excel).
+- `desde` / `hasta` (+ `_v2`) — rangos del baremo **de la variable completa** (bloque consolidado); los baremos por dimensión se calculan solos (amplitud = rango/niveles).
 
-Instalacion:
+Estructura jerárquica (objetos anidados):
 
-```bash
-python -m pip install streamlit pandas
-cd node_app && npm install
-```
+- `estructura_v1` / `estructura_v2` — `[{ nombre, indicadores: [{ nombre, items }] }]`: dimensiones con sus indicadores y número de ítems. Es la fuente preferida; si falta, se usa `nombre_dims_v*` + `items_por_dim_v*` (un indicador por dimensión).
+- `nombre_items_v1` / `nombre_items_v2` — textos de los ítems (se usan en los títulos de los gráficos por ítem).
 
-Ejecucion:
+`Tabulacion.json` (raíz) es la configuración del modo CLI y sirve como ejemplo completo.
 
-```bash
-python -m streamlit run app.py
-```
+## Resultado
 
-API Node (para frontend externo):
+- `Tabulacion_generada.xlsx`: Excel construido por código. Por variable: hoja base (datos, estadísticos, frecuencias y porcentajes), `Ítems <Variable>` (tabla, gráfico, Tabla/Figura, fuente y narrativa por ítem), `Dimensiones <Variable>` (fichas de baremo, valoración automática, tabla baremada con gráfico, narrativa y bloque consolidado) y `Conteo <Variable>` (agregado por dimensión). Más `Relaciones` (normalidad + correlaciones por pares), `Correlación` e `Información` (con 2 variables).
+- `Tabulacion_base.csv`: la base generada (columnas `V1_n`/`V2_n`, una fila por encuestado; solo cabecera con `conDatos: "0"`).
+- `correlation`: correlación de Pearson entre las sumas de V1 y V2 (el generador apunta a |r| ≥ 0.9; `null` con una sola variable o sin datos).
+- `warnings`: avisos del generador (p. ej. una sola variable).
 
-```bash
-cd node_app
-npm run api
-```
+## Validaciones
 
-Frontend React (Netlify):
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-## Flujo funcional
-
-1. Se carga `Tabulacion.json` en la UI.
-2. El usuario edita campos en **Configuracion**.
-3. Al presionar **Generar**:
-   - Se guarda `Tabulacion.json`.
-   - Se ejecuta `node_app/index.js`.
-   - Node genera `Tabulacion_base.csv`, calcula `r` y guarda `Tabulacion_generada.xlsx`.
-4. La UI:
-   - Muestra el coeficiente de correlacion.
-   - Muestra vista previa de la base.
-   - Habilita descargas de JSON y Excel generado.
-5. La pestaña **Tabulacion Excel** muestra las hojas del Excel generado para inspeccion.
-
-## Validaciones principales
-
-- `muestra` debe ser `>= 2` (para correlacion valida).
-- `item` y `itemv2` deben ser enteros `> 0`.
-- `escala` y `respuesta` deben ser enteros `> 0`.
-- Debe existir al menos una dimension.
-- Si hay conteo de indicadores, debe coincidir con cantidad de nombres.
-
-## Preservacion de graficos
-
-- El archivo final se crea a partir de `Tabulacion.xlsx`.
-- Solo se actualizan celdas de datos/etiquetas.
-- Los elementos graficos existentes se mantienen en `Tabulacion_generada.xlsx`.
-
-## Archivos clave
-
-- `app.py`: UI, validaciones y orquestacion de ejecucion Node.
-- `node_app/index.js`: generacion local por CLI.
-- `node_app/server.js`: API HTTP para frontend externo.
-- `node_app/generator.js`: logica central de generacion.
-- `Tabulacion.xlsx`: plantilla de entrada.
-- `Tabulacion.json`: configuracion editable.
-
-## Modo Netlify + Docker
-
-Para separar frontend/backend:
-
-1. Publica `frontend/` en Netlify.
-2. Despliega la API Node (`node_app/server.js`) en un contenedor Docker.
-3. Configura `CORS_ORIGIN` con tu dominio Netlify.
-4. El frontend llama `POST /generate` y luego descarga resultados desde `GET /results/:id/xlsx` y `GET /results/:id/csv`.
+- `muestra >= 2`; `item`, `itemv2`, `escala`, `respuesta` enteros > 0.
+- Límites: muestra ≤ 2,000 e ítems ≤ 60 por variable (el backend los rechaza con error explícito; el frontend los valida antes vía `/template-info`).
+- Porcentajes de cada baremo deben sumar 100%.
+- La estructura jerárquica debe usar exactamente el número de ítems declarado.

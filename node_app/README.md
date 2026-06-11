@@ -3,12 +3,11 @@
 Este módulo tiene dos modos:
 
 - `generate`: genera archivos locales (`Tabulacion_generada.xlsx` y `Tabulacion_base.csv`).
-- `api`: expone endpoints HTTP para un frontend externo (por ejemplo, Netlify).
+- `api`: expone endpoints HTTP para un frontend externo (por ejemplo, Vercel).
 
 ## Requisitos
 
-- Node.js 18+.
-- `Tabulacion.xlsx` en la raíz del proyecto.
+- Node.js 18+. El Excel se genera completo por código (no requiere plantilla ni Excel instalado).
 
 ## Instalación
 
@@ -20,12 +19,14 @@ npm install
 ## Uso local (CLI)
 
 ```bash
-npm run generate
+npm run generate                       # usa ../Tabulacion.json
+node index.js mi-config.json salida.xlsx
+npm run plantilla                      # base vacía para ingreso manual
 ```
 
 Resultado:
 
-- `Tabulacion_generada.xlsx`
+- `Tabulacion_generada.xlsx` (o la ruta indicada)
 - `Tabulacion_base.csv`
 
 ## API HTTP
@@ -34,27 +35,26 @@ Resultado:
 npm run api
 ```
 
-Variables opcionales:
+Variables de entorno: ver la tabla completa en el `README.md` de la raíz (incluye `AUTH_TOKEN_SECRET`, `ADMIN_EMAIL`/`ADMIN_PASSWORD`, rate limiting, etc.).
 
-- `PORT` (default: `8080`)
-- `TEMPLATE_PATH` (default: `../Tabulacion.xlsx`)
-- `CORS_ORIGIN` (default: `*`)
-- `RESULT_TTL_SECONDS` (default: `900`)
-- `MAX_BODY_BYTES` (default: `4194304`)
-- `PUBLIC_BASE_URL` (opcional, para construir links públicos en respuestas)
+## Tests
+
+```bash
+npm test
+```
 
 ### Endpoints
 
 - `GET /health`
-- `POST /generate`
-- `GET /results/:id`
-- `GET /results/:id/xlsx`
-- `GET /results/:id/csv`
-- `DELETE /results/:id`
+- `POST /auth/login`, `GET /auth/me`
+- `GET|POST /auth/users`, `PATCH|DELETE /auth/users/:id` (solo admin)
+- `GET /template-info` (límites del generador)
+- `POST /generate` (autenticado)
+- `GET /results/:id`, `GET /results/:id/xlsx`, `GET /results/:id/csv`, `DELETE /results/:id`
 
 ### `POST /generate`
 
-Puedes enviar el JSON de configuración directo, o dentro de `{ "config": { ... } }`.
+Requiere `Authorization: Bearer <token>` (obtenido en `/auth/login`). Puedes enviar el JSON de configuración directo, o dentro de `{ "config": { ... } }`. La respuesta incluye `correlation` (`null` con 1 variable) y `warnings`.
 
 Opcional:
 
@@ -77,18 +77,25 @@ Ejemplo:
 }
 ```
 
-## Ejemplo frontend (Netlify)
+## Ejemplo frontend (Vercel)
 
 ```js
 const apiBase = "https://tu-api.com";
 
-const generateRes = await fetch(`${apiBase}/generate`, {
+const loginRes = await fetch(`${apiBase}/auth/login`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email, password }),
+});
+const { token } = await loginRes.json();
+
+const generateRes = await fetch(`${apiBase}/generate`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
   body: JSON.stringify({ config }),
 });
 const data = await generateRes.json();
 
-console.log("r =", data.correlation);
+console.log("r =", data.correlation, data.warnings);
 window.open(data.links.xlsx, "_blank");
 ```

@@ -1,8 +1,12 @@
 node_app/node_modules/
 frontend/node_modules/
 frontend/dist/
-__pycache__/
-*.pyc
 Tabulacion_generada.xlsx
 Tabulacion_base.csv
 ~$*.xlsx
+
+# Datos y secretos locales: nunca al repositorio
+node_app/data/
+.env
+frontend/.env
+tmp_*.xlsx
