@@ -109,7 +109,12 @@ type AppSection = "tabulacion" | "usuarios";
 type WizardStep = 1 | 2 | 3;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-const DEFAULT_API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
+// En produccion apunta a la API de Render por defecto; VITE_API_BASE_URL
+// (variable de entorno del proyecto en Vercel) tiene prioridad si se define.
+const DEFAULT_API_BASE_URL = String(
+  import.meta.env.VITE_API_BASE_URL
+    ?? (import.meta.env.PROD ? "https://tabulacion-api.onrender.com" : "http://localhost:8080"),
+).replace(/\/$/, "");
 
 const FALLBACK_CONFIG: TabConfig = {
   muestra: "289",

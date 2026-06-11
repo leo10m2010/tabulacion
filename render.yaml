@@ -35,9 +35,9 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
-      # Dominio del frontend en Vercel (p. ej. https://tabulacion.vercel.app).
+      # Dominio del frontend en Vercel (+ localhost para desarrollo).
       - key: CORS_ORIGIN
-        sync: false
+        value: http://localhost:5173,https://tabulacion.vercel.app
       # - key: USER_STORE_PATH
       #   value: /var/data/users.json
       - key: AUTH_TOKEN_TTL_SECONDS
