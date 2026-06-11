@@ -31,4 +31,4 @@ Actualizado: 2026-06-11.
 
 - Los resultados en modo `links` viven en memoria: se pierden al reiniciar y no escalan a múltiples réplicas (el frontend usa modo `inline`, que no depende de esto).
 - Los gráficos se validaron estructuralmente (openpyxl los parsea contra el esquema OOXML) pero conviene una verificación visual en Excel de escritorio tras cambios al XML de charts.
-- `frontend/src/App.tsx` concentra toda la UI (~2,400 líneas): conviene dividirlo en módulos.
+- `frontend/src/App.tsx` quedó en ~1,600 líneas tras extraer `lib/` y `components/` (2026-06-11); segunda fase pendiente: extraer los pasos del wizard y la sección de usuarios.

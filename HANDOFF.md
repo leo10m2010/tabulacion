@@ -12,7 +12,7 @@ Generador de tabulaciones de tesis: API Node (`node_app/`) + frontend React (`fr
 - `node_app/server.js` — API: auth (tokens HMAC), usuarios/roles/suscripciones, rate limiting, `/generate`, `/template-info` (límites del generador), resultados temporales.
 - `node_app/index.js` — modo CLI (`npm run generate`, usa `Tabulacion.json` de la raíz; `--sin-datos` deja la base vacía).
 - `node_app/test/` — tests (`npm test`).
-- `frontend/src/App.tsx` — toda la UI (wizard, login, gestión de usuarios). Envía la estructura jerárquica en `estructura_v1`/`estructura_v2`.
+- `frontend/src/App.tsx` — estado principal, login, wizard y gestión de usuarios (envía la estructura jerárquica en `estructura_v1`/`estructura_v2`). Módulos extraídos: `lib/` (types, constants, helpers) y `components/` (LandingPage, WizardProgress, wizard-fields, PreviewTable, motion-primitives).
 - `render.yaml` (API en Render, Node directo, disco persistente para `users.json`), `frontend/vercel.json` (SPA en Vercel) y `.env.example` — despliegue sin Docker; secretos por entorno, nunca en el repo.
 
 ## Invariantes que no hay que romper
@@ -25,10 +25,10 @@ Generador de tabulaciones de tesis: API Node (`node_app/`) + frontend React (`fr
 
 ## Mejoras pendientes sugeridas (en orden)
 
-1. Dividir `frontend/src/App.tsx` en componentes/módulos.
-2. Persistencia real de resultados (S3/R2 + metadatos) si se usa el modo `links`.
-3. Validación de schema del JSON con zod/ajv en la API.
-4. Historial de generaciones por usuario.
+1. Persistencia real de resultados (S3/R2 + metadatos) si se usa el modo `links`.
+2. Validación de schema del JSON con zod/ajv en la API.
+3. Historial de generaciones por usuario.
+4. Extraer los pasos del wizard y la sección de usuarios de App.tsx (segunda fase del split).
 
 ## Prompt sugerido para retomar en una nueva sesión
 
