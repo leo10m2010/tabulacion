@@ -132,7 +132,7 @@ export function LandingPage({
         </div>
       </header>
 
-      <section className="relative grid items-center gap-12 py-14 md:grid-cols-[7fr_5fr] md:py-20">
+      <section className="relative grid items-center gap-12 py-14 md:grid-cols-[6fr_5fr] md:py-20 lg:gap-16">
         <div aria-hidden className="hero-dots pointer-events-none absolute -inset-x-8 -top-8 bottom-0 -z-10" />
         <div aria-hidden className="pointer-events-none absolute right-0 top-1/2 -z-10 h-[420px] w-[560px] -translate-y-1/2 rounded-full bg-primary/15 blur-3xl" />
 
@@ -171,12 +171,67 @@ export function LandingPage({
         </motion.div>
 
         <motion.div
+          className="relative"
           initial={reduce ? false : { opacity: 0, y: 30, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ ...springSoft, delay: 0.25 }}
         >
+          {/* Satélite: correlación real del producto, flotando sobre la ventana */}
+          <motion.div
+            initial={reduce ? false : { opacity: 0, scale: 0.85, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ ...springSoft, delay: 0.65 }}
+            className="absolute -left-9 -top-7 z-10 hidden lg:block"
+          >
+            <motion.div
+              animate={reduce ? undefined : { y: [0, -7, 0] }}
+              transition={reduce ? undefined : { duration: 5.5, repeat: Infinity, ease: "easeInOut", delay: 0.4 }}
+              className="rounded-2xl border border-border bg-card px-4 py-3 shadow-xl"
+            >
+              <p className="text-[11px] font-medium text-muted-foreground">Correlación de Pearson</p>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="font-mono text-2xl font-bold tracking-tight">0.977</span>
+                <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium text-accent-foreground">Muy alta</span>
+              </div>
+            </motion.div>
+          </motion.div>
+
+          {/* Satélite: la Figura con su mini gráfico de columnas, en vivo */}
+          <motion.div
+            initial={reduce ? false : { opacity: 0, scale: 0.85, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ ...springSoft, delay: 0.85 }}
+            className="absolute -bottom-9 -right-4 z-10 hidden lg:block"
+          >
+            <motion.div
+              animate={reduce ? undefined : { y: [0, -6, 0] }}
+              transition={reduce ? undefined : { duration: 6.2, repeat: Infinity, ease: "easeInOut", delay: 1.1 }}
+              className="w-[160px] rounded-2xl border border-border bg-card px-4 py-3 shadow-xl"
+            >
+              <p className="text-[11px] font-medium text-muted-foreground">Figura 1 · {tabla.dim}</p>
+              <div className="mt-2 flex h-16 items-end gap-2">
+                {tabla.filas.map((fila, i) => (
+                  <motion.div
+                    key={fila.nivel}
+                    className="h-full flex-1 origin-bottom rounded-t-md bg-gradient-to-t from-primary/60 to-primary"
+                    initial={reduce ? false : { scaleY: 0 }}
+                    animate={{ scaleY: fila.pct / 50 }}
+                    transition={{ type: "spring", stiffness: 80, damping: 15, delay: i * 0.08 }}
+                  />
+                ))}
+              </div>
+              <div className="mt-1.5 flex gap-2">
+                {tabla.filas.map((fila) => (
+                  <span key={fila.nivel} className="flex-1 text-center text-[9px] text-muted-foreground">
+                    {fila.nivel}
+                  </span>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+
           <TiltCard>
-            <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_32px_80px_-32px_hsl(var(--primary)/0.55)] ring-1 ring-primary/10">
+            <div className="rounded-3xl border border-border bg-card p-6 shadow-[0_40px_90px_-30px_hsl(var(--primary)/0.5)] ring-1 ring-primary/10">
               <div className="mb-4 flex items-center justify-between border-b border-border pb-3">
                 <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
                   <FileSpreadsheet className="h-3.5 w-3.5 text-primary" />
