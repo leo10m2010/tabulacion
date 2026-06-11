@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { ArrowRight, Building2, Check, FileSpreadsheet, Moon, Sun, UserRound } from "lucide-react";
+import { ArrowRight, Building2, Check, FileSpreadsheet, Mail, MessageCircle, Moon, Sun, UserRound } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -18,6 +18,13 @@ export function LandingPage({
 }) {
   const [billingMode, setBillingMode] = useState<"monthly" | "yearly">("monthly");
   const reduce = useReducedMotion();
+
+  const CONTACT_EMAIL = "contacto@tutorica.com";
+  const CONTACT_WHATSAPP = "51975212132"; // +51 975 212 132
+  const openWhatsApp = () => {
+    const text = encodeURIComponent("Hola, me interesa el Plan Institucional de TesisTab.");
+    window.open(`https://wa.me/${CONTACT_WHATSAPP}?text=${text}`, "_blank", "noopener");
+  };
 
   const plans = useMemo(
     () => [
@@ -276,9 +283,23 @@ export function LandingPage({
                     </li>
                   ))}
                 </ul>
-                <Button className="mt-7 w-full" size="lg" variant={plan.featured ? "default" : "outline"} onClick={onOpenApp}>
+                <Button
+                  className="mt-7 w-full"
+                  size="lg"
+                  variant={plan.featured ? "default" : "outline"}
+                  onClick={plan.id === "business" ? openWhatsApp : onOpenApp}
+                >
+                  {plan.id === "business" && <MessageCircle className="h-4 w-4" />}
                   {plan.cta}
                 </Button>
+                {plan.id === "business" && (
+                  <p className="mt-3 text-center text-xs text-muted-foreground">
+                    o escríbenos a{" "}
+                    <a href={`mailto:${CONTACT_EMAIL}`} className="font-medium text-primary hover:underline">
+                      {CONTACT_EMAIL}
+                    </a>
+                  </p>
+                )}
               </motion.div>
             </Reveal>
           ))}
@@ -308,12 +329,21 @@ export function LandingPage({
         </section>
       </Reveal>
 
-      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border py-8 text-sm text-muted-foreground">
+      <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-border py-8 text-sm text-muted-foreground">
         <div className="flex items-center gap-2 font-medium text-foreground">
           <FileSpreadsheet className="h-4 w-4 text-primary" />
           TesisTab
         </div>
-        <p>Hecho para tesistas de habla hispana.</p>
+        <div className="flex flex-wrap items-center gap-5">
+          <a href={`mailto:${CONTACT_EMAIL}`} className="flex items-center gap-1.5 hover:text-foreground">
+            <Mail className="h-4 w-4" />
+            {CONTACT_EMAIL}
+          </a>
+          <button onClick={openWhatsApp} className="flex items-center gap-1.5 hover:text-foreground">
+            <MessageCircle className="h-4 w-4" />
+            +51 975 212 132
+          </button>
+        </div>
         <p>© {new Date().getFullYear()} TesisTab</p>
       </footer>
     </div>
