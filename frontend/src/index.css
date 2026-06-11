@@ -2,48 +2,90 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Paleta: neutros fríos con un solo acento esmeralda profundo (guiño al Excel
+   que genera el producto) calibrado para AA en ambos modos. */
 :root {
-  --background: 220 33% 98%;
-  --foreground: 222 28% 14%;
+  --background: 160 18% 98%;
+  --foreground: 185 16% 12%;
   --card: 0 0% 100%;
-  --card-foreground: 222 28% 14%;
-  --primary: 221 78% 52%;
+  --card-foreground: 185 16% 12%;
+  --primary: 166 58% 26%;
   --primary-foreground: 0 0% 98%;
-  --muted: 220 24% 93%;
-  --muted-foreground: 220 11% 40%;
-  --accent: 212 78% 95%;
-  --accent-foreground: 222 40% 23%;
+  --muted: 162 14% 93%;
+  --muted-foreground: 170 9% 38%;
+  --accent: 164 40% 93%;
+  --accent-foreground: 168 52% 16%;
   --danger: 2 76% 50%;
   --danger-foreground: 0 0% 100%;
-  --border: 220 20% 84%;
-  --input: 220 20% 84%;
-  --ring: 221 78% 52%;
+  --border: 162 12% 85%;
+  --input: 162 12% 85%;
+  --ring: 166 58% 26%;
 }
 
 .dark {
-  --background: 222 28% 10%;
-  --foreground: 220 15% 92%;
-  --card: 222 26% 13%;
-  --card-foreground: 220 15% 92%;
-  --primary: 214 88% 62%;
-  --primary-foreground: 222 47% 14%;
-  --muted: 222 18% 20%;
-  --muted-foreground: 220 10% 72%;
-  --accent: 222 18% 24%;
-  --accent-foreground: 220 15% 90%;
+  --background: 192 14% 8%;
+  --foreground: 160 12% 92%;
+  --card: 192 13% 11%;
+  --card-foreground: 160 12% 92%;
+  --primary: 163 45% 52%;
+  --primary-foreground: 188 30% 8%;
+  --muted: 190 11% 17%;
+  --muted-foreground: 160 8% 70%;
+  --accent: 188 12% 21%;
+  --accent-foreground: 160 14% 88%;
   --danger: 2 72% 58%;
   --danger-foreground: 0 0% 100%;
-  --border: 222 16% 27%;
-  --input: 222 16% 27%;
-  --ring: 214 88% 62%;
+  --border: 190 10% 23%;
+  --input: 190 10% 23%;
+  --ring: 163 45% 52%;
 }
 
 * {
   @apply border-border;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   @apply bg-background text-foreground antialiased;
-  font-family: "Inter", "Manrope", "Segoe UI", system-ui, sans-serif;
+  font-family: "Outfit Variable", "Segoe UI", system-ui, sans-serif;
   transition: background-color 220ms ease, color 220ms ease;
+}
+
+/* Animaciones de entrada de la landing: solo transform/opacity y desactivadas
+   bajo prefers-reduced-motion (fuera del media query todo queda estático). */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes grow-bar {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .animate-rise {
+    opacity: 0;
+    animation: rise-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation-delay: var(--rise-delay, 0ms);
+  }
+
+  .animate-bar {
+    transform-origin: left;
+    animation: grow-bar 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: var(--bar-delay, 250ms);
+  }
 }

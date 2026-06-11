@@ -741,7 +741,8 @@ function LandingPage({
         priceYearlyPen: "S/ 1,090",
         description: "Ideal para quien trabaja su tesis de forma individual con asesor propio.",
         highlights: ["1 acceso activo", "Generación de Excel y CSV", "Baremos y dimensiones configurables", "Soporte por correo"],
-        cta: "Comenzar ahora",
+        cta: "Generar mi tabulación",
+        featured: true,
       },
       {
         id: "business",
@@ -755,77 +756,132 @@ function LandingPage({
         description: "Para equipos que gestionan múltiples tesis con control administrativo.",
         highlights: ["Hasta 20 accesos", "Panel de administrador", "Proyectos ilimitados", "Soporte prioritario"],
         cta: "Contáctanos",
+        featured: false,
       },
     ],
     [],
   );
 
-  const productFeatures = [
-    { title: "Excel en segundos", desc: "Completa tu configuración y genera el archivo de tabulación listo para entregar al asesor.", icon: Zap },
-    { title: "Metodología correcta", desc: "Baremos, dimensiones e indicadores calculados automáticamente según tu instrumento.", icon: ShieldCheck },
-    { title: "Sin conocimientos técnicos", desc: "Solo rellenas los datos de tu encuesta. El sistema hace el resto.", icon: Sparkles },
+  // Datos reales de una generación del producto (muestra de 289): el preview
+  // del hero es el artefacto que el sistema produce, no una maqueta.
+  const baremoPreview = [
+    { nivel: "Bajo", f: 133, pct: 46.0 },
+    { nivel: "Medio", f: 101, pct: 34.9 },
+    { nivel: "Alto", f: 55, pct: 19.0 },
   ];
 
+  const pasos = [
+    { titulo: "Configura", desc: "Variables, dimensiones, indicadores y la escala de tu instrumento, guiado paso a paso." },
+    { titulo: "Genera", desc: "El sistema calcula estadísticos, baremos, frecuencias y correlación con fórmulas reales de Excel." },
+    { titulo: "Descarga", desc: "Un Excel con tablas numeradas, gráficos e interpretaciones, con el formato que pide tu informe." },
+  ];
+
+  const incluye = [
+    "Variables, dimensiones e indicadores configurables",
+    "Baremos e intervalos calculados automáticamente",
+    "Estadísticos por ítem: media, moda y desviación",
+    "Frecuencias y porcentajes por escala",
+    "Gráficos por ítem y por dimensión",
+    "Interpretaciones narrativas bajo cada figura",
+    "Correlación de Pearson entre variables",
+    "Descarga en Excel y CSV",
+  ];
+
+  const riseDelay = (ms: number) => ({ "--rise-delay": `${ms}ms` } as React.CSSProperties);
+
   return (
-    <div className="container py-8">
-      <header className="mb-8 overflow-hidden rounded-[28px] border border-border/70 bg-[linear-gradient(145deg,#f5f7fb_0%,#e8eef7_100%)] p-6 shadow-[0_20px_70px_rgba(15,23,42,0.12)] dark:bg-[linear-gradient(145deg,#1b2534_0%,#111827_100%)]">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex items-center gap-2 rounded-full border border-slate-500/20 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-800 dark:border-slate-200/20 dark:bg-slate-100/10 dark:text-slate-100">
-            <Sparkles className="h-4 w-4" />
-            TesisTab
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={onToggleTheme}>
-              {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              {themeMode === "dark" ? "Modo claro" : "Modo oscuro"}
-            </Button>
-            <Button variant="outline" size="sm" onClick={onOpenApp}>
-              Iniciar sesión
-            </Button>
-          </div>
+    <div className="mx-auto max-w-6xl px-4">
+      <header className="flex h-16 items-center justify-between">
+        <div className="flex items-center gap-2.5 text-lg font-semibold tracking-tight">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <FileSpreadsheet className="h-4 w-4" />
+          </span>
+          TesisTab
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button variant="ghost" size="sm" onClick={onToggleTheme} aria-label={themeMode === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}>
+            {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
+          <Button variant="outline" size="sm" onClick={onOpenApp}>
+            Iniciar sesión
+          </Button>
         </div>
       </header>
 
-      <section className="mb-8 grid gap-5 rounded-[28px] border border-border/70 bg-card/95 p-8 shadow-[0_18px_54px_rgba(15,23,42,0.1)] md:grid-cols-[1.4fr_1fr]">
+      <section className="grid items-center gap-12 py-14 md:grid-cols-[7fr_5fr] md:py-20">
         <div>
-          <h1 className="text-3xl font-bold leading-tight tracking-tight md:text-4xl">
-            Tabulación para tu tesis, rápida y sin errores.
+          <h1 className="animate-rise text-4xl font-bold leading-[1.06] tracking-tight md:text-5xl" style={riseDelay(0)}>
+            La tabulación de tu tesis, lista en minutos.
           </h1>
-          <p className="mt-4 max-w-2xl text-sm text-muted-foreground md:text-base">
-            Genera tu archivo Excel de tabulación automáticamente. Solo configuras tu encuesta y el sistema calcula baremos, dimensiones e indicadores por ti.
+          <p className="animate-rise mt-5 max-w-[46ch] text-base text-muted-foreground md:text-lg" style={riseDelay(90)}>
+            Configura tu encuesta y descarga el Excel con baremos, frecuencias, gráficos e interpretaciones.
           </p>
-          <div className="mt-6 flex flex-wrap gap-2">
-            <Button size="lg" onClick={onOpenApp}>
+          <div className="animate-rise mt-8 flex flex-wrap items-center gap-3" style={riseDelay(170)}>
+            <Button size="lg" className="h-12 px-6 text-base" onClick={onOpenApp}>
               Generar mi tabulación
               <ArrowRight className="h-4 w-4" />
             </Button>
-          </div>
-          <div className="mt-5 flex flex-wrap gap-2 text-xs">
-            <Badge variant="muted">
-              <Clock3 className="mr-1 h-3.5 w-3.5" />
-              Resultado en segundos
-            </Badge>
-            <Badge variant="muted">
-              <ShieldCheck className="mr-1 h-3.5 w-3.5" />
-              Acceso con suscripción
-            </Badge>
-            <Badge variant="muted">
-              <FileSpreadsheet className="mr-1 h-3.5 w-3.5" />
-              Excel y CSV listos para entregar
-            </Badge>
+            <Button size="lg" variant="outline" className="h-12 px-6 text-base" onClick={() => document.getElementById("planes")?.scrollIntoView({ behavior: "smooth" })}>
+              Ver planes
+            </Button>
           </div>
         </div>
-        <div className="rounded-2xl border border-slate-400/20 bg-[linear-gradient(145deg,#f7fafc_0%,#edf2f7_100%)] p-5 dark:border-slate-200/20 dark:bg-[linear-gradient(145deg,#1e293b_0%,#0f172a_100%)]">
-          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">¿Qué incluye?</h3>
-          <ul className="space-y-2 text-sm">
-            {[
-              "Configuración de variables, dimensiones e indicadores.",
-              "Cálculo automático de baremos e intervalos.",
-              "Generación de Excel con estructura lista para tu informe.",
-              "Coeficiente de correlación calculado automáticamente.",
-            ].map((item) => (
-              <li key={item} className="flex items-start gap-2">
-                <Check className="mt-0.5 h-4 w-4 text-primary" />
+
+        <div className="animate-rise" style={riseDelay(240)}>
+          <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_24px_64px_-28px_hsl(var(--primary)/0.45)]">
+            <p className="text-sm font-semibold">Tabla 1</p>
+            <p className="text-sm text-muted-foreground">Frecuencia baremada de la variable</p>
+            <div className="mt-5 space-y-4">
+              {baremoPreview.map((fila, i) => (
+                <div key={fila.nivel}>
+                  <div className="flex items-baseline justify-between text-sm">
+                    <span className="font-medium">{fila.nivel}</span>
+                    <span className="font-mono tabular-nums text-muted-foreground">
+                      {fila.f} · {fila.pct.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div
+                    className="animate-bar mt-1.5 h-2 rounded-full bg-primary"
+                    style={{ width: `${fila.pct}%`, "--bar-delay": `${300 + i * 130}ms` } as React.CSSProperties}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 flex items-baseline justify-between border-t border-border pt-3 text-sm">
+              <span className="font-semibold">Total</span>
+              <span className="font-mono tabular-nums">289 encuestados</span>
+            </div>
+          </div>
+          <p className="mt-3 text-center text-xs text-muted-foreground">
+            Tabla generada por TesisTab a partir de una muestra real de 289 encuestados.
+          </p>
+        </div>
+      </section>
+
+      <section className="border-t border-border py-14">
+        <h2 className="text-2xl font-bold tracking-tight md:text-3xl">De la encuesta al Excel en tres pasos</h2>
+        <div className="mt-8 grid gap-8 md:grid-cols-3 md:gap-0 md:divide-x md:divide-border">
+          {pasos.map((paso) => (
+            <div key={paso.titulo} className="md:px-8 md:first:pl-0 md:last:pr-0">
+              <h3 className="text-lg font-semibold text-primary">{paso.titulo}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{paso.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="border-t border-border py-14">
+        <div className="grid gap-10 md:grid-cols-[2fr_3fr]">
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Todo lo que tu asesor espera ver</h2>
+            <p className="mt-3 max-w-[40ch] text-sm text-muted-foreground">
+              El archivo sale con formato de tesis: tablas y figuras numeradas, fuente y elaboración en cada bloque.
+            </p>
+          </div>
+          <ul className="grid content-start gap-x-8 gap-y-3.5 text-sm sm:grid-cols-2">
+            {incluye.map((item) => (
+              <li key={item} className="flex items-start gap-2.5">
+                <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                 {item}
               </li>
             ))}
@@ -833,91 +889,96 @@ function LandingPage({
         </div>
       </section>
 
-      <section className="mb-8 grid gap-4 md:grid-cols-3">
-        {productFeatures.map((feature) => (
-          <Card key={feature.title} className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <feature.icon className="h-4 w-4 text-primary" />
-                {feature.title}
-              </CardTitle>
-              <CardDescription>{feature.desc}</CardDescription>
-            </CardHeader>
-          </Card>
-        ))}
-      </section>
+      <section id="planes" className="border-t border-border py-14">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Planes y precios</h2>
+            <p className="mt-2 text-sm text-muted-foreground">Elige el plan que se ajusta a tu situación.</p>
+          </div>
+          <div className="inline-flex rounded-xl border border-border bg-card p-1">
+            {(["monthly", "yearly"] as const).map((mode) => (
+              <button
+                key={mode}
+                className={cn(
+                  "rounded-lg px-4 py-1.5 text-sm font-medium transition-colors",
+                  billingMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => setBillingMode(mode)}
+              >
+                {mode === "monthly" ? "Mensual" : "Anual"}
+              </button>
+            ))}
+          </div>
+        </div>
 
-      <section className="mb-8">
-        <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <CardTitle>Planes y precios</CardTitle>
-                <CardDescription>Elige el plan que se ajusta a tu situación.</CardDescription>
-              </div>
-              <div className="inline-flex rounded-lg border border-border bg-background/90 p-1">
-                {(["monthly", "yearly"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    className={cn(
-                      "rounded px-3 py-1 text-sm font-medium",
-                      billingMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground",
-                    )}
-                    onClick={() => setBillingMode(mode)}
-                  >
-                    {mode === "monthly" ? "Mensual" : "Anual"}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-2">
-            {plans.map((plan) => (
-              <div key={plan.id} className="rounded-2xl border border-border/80 bg-background/90 p-5 shadow-sm">
-                <div className="mb-2 inline-flex items-center gap-2 text-sm font-medium text-primary">
+        <div className="mt-8 grid gap-6 md:grid-cols-2">
+          {plans.map((plan) => (
+            <div
+              key={plan.id}
+              className={cn(
+                "rounded-2xl p-6 md:p-8",
+                plan.featured ? "border-2 border-primary bg-accent/50" : "border border-border bg-card",
+              )}
+            >
+              <div className="flex items-center justify-between">
+                <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
                   <plan.icon className="h-4 w-4" />
                   {plan.audience}
                 </div>
-                <h3 className="text-xl font-bold">{plan.name}</h3>
-                <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
-                <div className="mt-4">
-                  <p className="text-3xl font-bold">
-                    {billingMode === "monthly" ? plan.priceMonthlyPen : plan.priceYearlyPen}
-                    <span className="ml-1 text-base font-medium text-muted-foreground">/ {billingMode === "monthly" ? "mes" : "año"}</span>
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {billingMode === "monthly" ? plan.priceMonthlyUsd : plan.priceYearlyUsd}
-                    <span className="ml-1">por {billingMode === "monthly" ? "mes" : "año"}</span>
-                  </p>
-                </div>
-                <ul className="mt-4 space-y-2 text-sm">
-                  {plan.highlights.map((item) => (
-                    <li key={item} className="flex items-start gap-2">
-                      <Check className="mt-0.5 h-4 w-4 text-primary" />
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-                <Button className="mt-5 w-full" variant={plan.id === "business" ? "outline" : "default"} onClick={onOpenApp}>
-                  {plan.cta}
-                </Button>
+                {plan.featured && <Badge>Recomendado</Badge>}
               </div>
-            ))}
-          </CardContent>
-        </Card>
+              <h3 className="mt-3 text-xl font-bold tracking-tight">{plan.name}</h3>
+              <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
+              <div className="mt-6 flex items-baseline gap-2">
+                <span className="text-4xl font-bold tracking-tight">
+                  {billingMode === "monthly" ? plan.priceMonthlyPen : plan.priceYearlyPen}
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  / {billingMode === "monthly" ? "mes" : "año"} ({billingMode === "monthly" ? plan.priceMonthlyUsd : plan.priceYearlyUsd})
+                </span>
+              </div>
+              <ul className="mt-6 space-y-2.5 text-sm">
+                {plan.highlights.map((item) => (
+                  <li key={item} className="flex items-start gap-2.5">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <Button className="mt-7 w-full" size="lg" variant={plan.featured ? "default" : "outline"} onClick={onOpenApp}>
+                {plan.cta}
+              </Button>
+            </div>
+          ))}
+        </div>
       </section>
 
-      <footer className="rounded-[28px] border border-border/70 bg-card/95 p-6 shadow-[0_16px_48px_rgba(15,23,42,0.08)]">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <section className="my-14 rounded-2xl bg-primary px-8 py-12 text-primary-foreground md:px-12">
+        <div className="flex flex-wrap items-center justify-between gap-6">
           <div>
-            <h3 className="text-lg font-semibold">¿Listo para generar tu tabulación?</h3>
-            <p className="text-sm text-muted-foreground">Inicia sesión y ten tu Excel listo en minutos.</p>
+            <h2 className="text-2xl font-bold tracking-tight md:text-3xl">¿Listo para generar tu tabulación?</h2>
+            <p className="mt-2 max-w-[44ch] text-sm opacity-90">
+              Entra con tu cuenta, configura tu encuesta y entrega el Excel a tu asesor.
+            </p>
           </div>
-          <Button size="lg" onClick={onOpenApp}>
-            Comenzar ahora
+          <Button
+            size="lg"
+            className="h-12 bg-background px-6 text-base text-foreground hover:bg-background/90"
+            onClick={onOpenApp}
+          >
+            Generar mi tabulación
             <ArrowRight className="h-4 w-4" />
           </Button>
         </div>
+      </section>
+
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border py-8 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 font-medium text-foreground">
+          <FileSpreadsheet className="h-4 w-4 text-primary" />
+          TesisTab
+        </div>
+        <p>Hecho para tesistas de habla hispana.</p>
+        <p>© {new Date().getFullYear()} TesisTab</p>
       </footer>
     </div>
   );
@@ -1452,7 +1513,7 @@ export default function App() {
   // ── Render: Landing ────────────────────────────────────────────────────────
   if (appView === "landing") {
     return (
-      <div className={cn("min-h-screen pb-14 transition-colors", themeMode === "dark" ? "bg-[radial-gradient(circle_at_top,#1b2534_0%,#121825_45%,#0b0f16_100%)]" : "bg-[radial-gradient(circle_at_top,#e4ecf8_0%,#f6f8fc_45%,#f3f5f9_100%)]")}>
+      <div className="min-h-[100dvh] bg-[radial-gradient(ellipse_at_top,hsl(var(--accent)/0.55)_0%,hsl(var(--background))_55%)] pb-10 transition-colors">
         <LandingPage themeMode={themeMode} onToggleTheme={toggleTheme} onOpenApp={goToApp} />
       </div>
     );
@@ -1461,7 +1522,7 @@ export default function App() {
   // ── Render: Login ──────────────────────────────────────────────────────────
   if (!authUser && !authLoading) {
     return (
-      <div className={cn("flex min-h-screen items-center justify-center p-4 transition-colors", themeMode === "dark" ? "bg-[radial-gradient(circle_at_top,#1b2534_0%,#0b0f16_100%)]" : "bg-[radial-gradient(circle_at_top,#e4ecf8_0%,#f3f5f9_100%)]")}>
+      <div className="flex min-h-[100dvh] items-center justify-center bg-[radial-gradient(ellipse_at_top,hsl(var(--accent)/0.55)_0%,hsl(var(--background))_60%)] p-4 transition-colors">
         <div className="w-full max-w-sm">
           <div className="mb-6 text-center">
             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -1542,7 +1603,7 @@ export default function App() {
 
   // ── Render: App (authenticated) ────────────────────────────────────────────
   return (
-    <div className={cn("flex min-h-screen transition-colors", themeMode === "dark" ? "bg-[radial-gradient(circle_at_top,#1b2534_0%,#0b0f16_100%)]" : "bg-[radial-gradient(circle_at_top,#e4ecf8_0%,#f3f5f9_100%)]")}>
+    <div className="flex min-h-[100dvh] bg-background transition-colors">
 
       {/* ── Sidebar ── */}
       <aside className="hidden w-56 shrink-0 flex-col border-r border-border/60 bg-card/80 backdrop-blur-sm md:flex sticky top-0 h-screen">
