@@ -30,6 +30,7 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
+import { motion, animate, useInView, useMotionValue, useReducedMotion, useSpring } from "motion/react";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
@@ -717,6 +718,90 @@ function WizardProgress({ currentStep }: { currentStep: WizardStep }) {
 }
 
 // ─── Landing Page ─────────────────────────────────────────────────────────────
+// ─── Motion primitives de la landing ─────────────────────────────────────────
+const springSoft = { type: "spring", stiffness: 90, damping: 17 } as const;
+
+function Reveal({
+  children,
+  delay = 0,
+  className,
+}: {
+  children: React.ReactNode;
+  delay?: number;
+  className?: string;
+}) {
+  const reduce = useReducedMotion();
+  return (
+    <motion.div
+      className={className}
+      initial={reduce ? false : { opacity: 0, y: 28 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.25 }}
+      transition={{ ...springSoft, delay }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+// Tilt 3D sutil que sigue al cursor (con springs; estático bajo reduced-motion).
+function TiltCard({ children, className }: { children: React.ReactNode; className?: string }) {
+  const reduce = useReducedMotion();
+  const rotateX = useMotionValue(0);
+  const rotateY = useMotionValue(0);
+  const springX = useSpring(rotateX, { stiffness: 160, damping: 18 });
+  const springY = useSpring(rotateY, { stiffness: 160, damping: 18 });
+
+  if (reduce) return <div className={className}>{children}</div>;
+
+  return (
+    <motion.div
+      className={className}
+      style={{ rotateX: springX, rotateY: springY, transformPerspective: 900 }}
+      onMouseMove={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const px = (e.clientX - rect.left) / rect.width - 0.5;
+        const py = (e.clientY - rect.top) / rect.height - 0.5;
+        rotateY.set(px * 8);
+        rotateX.set(py * -7);
+      }}
+      onMouseLeave={() => {
+        rotateX.set(0);
+        rotateY.set(0);
+      }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+// Contador que sube hasta el valor real cuando entra en pantalla.
+function CountUp({ value, decimals = 0, suffix = "" }: { value: number; decimals?: number; suffix?: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const inView = useInView(ref, { once: true, amount: 0.6 });
+  const reduce = useReducedMotion();
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (!inView) return;
+    if (reduce) {
+      el.textContent = `${value.toFixed(decimals)}${suffix}`;
+      return;
+    }
+    const controls = animate(0, value, {
+      duration: 1.3,
+      ease: [0.16, 1, 0.3, 1],
+      onUpdate: (v) => {
+        el.textContent = `${v.toFixed(decimals)}${suffix}`;
+      },
+    });
+    return () => controls.stop();
+  }, [inView, value, decimals, suffix, reduce]);
+
+  return <span ref={ref}>{`0${suffix}`}</span>;
+}
+
 function LandingPage({
   themeMode,
   onToggleTheme,
@@ -727,6 +812,7 @@ function LandingPage({
   onOpenApp: () => void;
 }) {
   const [billingMode, setBillingMode] = useState<"monthly" | "yearly">("monthly");
+  const reduce = useReducedMotion();
 
   const plans = useMemo(
     () => [
@@ -787,7 +873,14 @@ function LandingPage({
     "Descarga en Excel y CSV",
   ];
 
-  const riseDelay = (ms: number) => ({ "--rise-delay": `${ms}ms` } as React.CSSProperties);
+  const heroStagger = {
+    hidden: {},
+    show: { transition: { staggerChildren: 0.09, delayChildren: 0.05 } },
+  };
+  const heroItem = {
+    hidden: reduce ? {} : { opacity: 0, y: 26 },
+    show: { opacity: 1, y: 0, transition: springSoft },
+  };
 
   return (
     <div className="mx-auto max-w-6xl px-4">
@@ -809,168 +902,206 @@ function LandingPage({
       </header>
 
       <section className="grid items-center gap-12 py-14 md:grid-cols-[7fr_5fr] md:py-20">
-        <div>
-          <h1 className="animate-rise text-4xl font-bold leading-[1.06] tracking-tight md:text-5xl" style={riseDelay(0)}>
+        <motion.div variants={heroStagger} initial="hidden" animate="show">
+          <motion.h1 variants={heroItem} className="text-4xl font-bold leading-[1.06] tracking-tight md:text-5xl">
             La tabulación de tu tesis, lista en minutos.
-          </h1>
-          <p className="animate-rise mt-5 max-w-[46ch] text-base text-muted-foreground md:text-lg" style={riseDelay(90)}>
+          </motion.h1>
+          <motion.p variants={heroItem} className="mt-5 max-w-[46ch] text-base text-muted-foreground md:text-lg">
             Configura tu encuesta y descarga el Excel con baremos, frecuencias, gráficos e interpretaciones.
-          </p>
-          <div className="animate-rise mt-8 flex flex-wrap items-center gap-3" style={riseDelay(170)}>
-            <Button size="lg" className="h-12 px-6 text-base" onClick={onOpenApp}>
-              Generar mi tabulación
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-            <Button size="lg" variant="outline" className="h-12 px-6 text-base" onClick={() => document.getElementById("planes")?.scrollIntoView({ behavior: "smooth" })}>
-              Ver planes
-            </Button>
-          </div>
-        </div>
+          </motion.p>
+          <motion.div variants={heroItem} className="mt-8 flex flex-wrap items-center gap-3">
+            <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
+              <Button size="lg" className="h-12 px-6 text-base" onClick={onOpenApp}>
+                Generar mi tabulación
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </motion.div>
+            <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-12 px-6 text-base"
+                onClick={() => document.getElementById("planes")?.scrollIntoView({ behavior: "smooth" })}
+              >
+                Ver planes
+              </Button>
+            </motion.div>
+          </motion.div>
+        </motion.div>
 
-        <div className="animate-rise" style={riseDelay(240)}>
-          <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_24px_64px_-28px_hsl(var(--primary)/0.45)]">
-            <p className="text-sm font-semibold">Tabla 1</p>
-            <p className="text-sm text-muted-foreground">Frecuencia baremada de la variable</p>
-            <div className="mt-5 space-y-4">
-              {baremoPreview.map((fila, i) => (
-                <div key={fila.nivel}>
-                  <div className="flex items-baseline justify-between text-sm">
-                    <span className="font-medium">{fila.nivel}</span>
-                    <span className="font-mono tabular-nums text-muted-foreground">
-                      {fila.f} · {fila.pct.toFixed(1)}%
-                    </span>
+        <motion.div
+          initial={reduce ? false : { opacity: 0, y: 30, scale: 0.96 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ ...springSoft, delay: 0.25 }}
+        >
+          <TiltCard>
+            <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_24px_64px_-28px_hsl(var(--primary)/0.45)]">
+              <p className="text-sm font-semibold">Tabla 1</p>
+              <p className="text-sm text-muted-foreground">Frecuencia baremada de la variable</p>
+              <div className="mt-5 space-y-4">
+                {baremoPreview.map((fila, i) => (
+                  <div key={fila.nivel}>
+                    <div className="flex items-baseline justify-between text-sm">
+                      <span className="font-medium">{fila.nivel}</span>
+                      <span className="font-mono tabular-nums text-muted-foreground">
+                        {fila.f} · <CountUp value={fila.pct} decimals={1} suffix="%" />
+                      </span>
+                    </div>
+                    <motion.div
+                      className="mt-1.5 h-2 origin-left rounded-full bg-primary"
+                      style={{ width: `${fila.pct}%` }}
+                      initial={reduce ? false : { scaleX: 0 }}
+                      animate={{ scaleX: 1 }}
+                      transition={{ type: "spring", stiffness: 70, damping: 16, delay: 0.45 + i * 0.13 }}
+                    />
                   </div>
-                  <div
-                    className="animate-bar mt-1.5 h-2 rounded-full bg-primary"
-                    style={{ width: `${fila.pct}%`, "--bar-delay": `${300 + i * 130}ms` } as React.CSSProperties}
-                  />
-                </div>
-              ))}
+                ))}
+              </div>
+              <div className="mt-5 flex items-baseline justify-between border-t border-border pt-3 text-sm">
+                <span className="font-semibold">Total</span>
+                <span className="font-mono tabular-nums">
+                  <CountUp value={289} /> encuestados
+                </span>
+              </div>
             </div>
-            <div className="mt-5 flex items-baseline justify-between border-t border-border pt-3 text-sm">
-              <span className="font-semibold">Total</span>
-              <span className="font-mono tabular-nums">289 encuestados</span>
-            </div>
-          </div>
+          </TiltCard>
           <p className="mt-3 text-center text-xs text-muted-foreground">
             Tabla generada por TesisTab a partir de una muestra real de 289 encuestados.
           </p>
-        </div>
+        </motion.div>
       </section>
 
       <section className="border-t border-border py-14">
-        <h2 className="text-2xl font-bold tracking-tight md:text-3xl">De la encuesta al Excel en tres pasos</h2>
+        <Reveal>
+          <h2 className="text-2xl font-bold tracking-tight md:text-3xl">De la encuesta al Excel en tres pasos</h2>
+        </Reveal>
         <div className="mt-8 grid gap-8 md:grid-cols-3 md:gap-0 md:divide-x md:divide-border">
-          {pasos.map((paso) => (
-            <div key={paso.titulo} className="md:px-8 md:first:pl-0 md:last:pr-0">
+          {pasos.map((paso, i) => (
+            <Reveal key={paso.titulo} delay={i * 0.1} className="md:px-8 md:first:pl-0 md:last:pr-0">
               <h3 className="text-lg font-semibold text-primary">{paso.titulo}</h3>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{paso.desc}</p>
-            </div>
+            </Reveal>
           ))}
         </div>
       </section>
 
       <section className="border-t border-border py-14">
         <div className="grid gap-10 md:grid-cols-[2fr_3fr]">
-          <div>
+          <Reveal>
             <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Todo lo que tu asesor espera ver</h2>
             <p className="mt-3 max-w-[40ch] text-sm text-muted-foreground">
               El archivo sale con formato de tesis: tablas y figuras numeradas, fuente y elaboración en cada bloque.
             </p>
-          </div>
+          </Reveal>
           <ul className="grid content-start gap-x-8 gap-y-3.5 text-sm sm:grid-cols-2">
-            {incluye.map((item) => (
-              <li key={item} className="flex items-start gap-2.5">
+            {incluye.map((item, i) => (
+              <motion.li
+                key={item}
+                className="flex items-start gap-2.5"
+                initial={reduce ? false : { opacity: 0, x: -14 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true, amount: 0.5 }}
+                transition={{ ...springSoft, delay: i * 0.05 }}
+              >
                 <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                 {item}
-              </li>
+              </motion.li>
             ))}
           </ul>
         </div>
       </section>
 
       <section id="planes" className="border-t border-border py-14">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Planes y precios</h2>
-            <p className="mt-2 text-sm text-muted-foreground">Elige el plan que se ajusta a tu situación.</p>
+        <Reveal>
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Planes y precios</h2>
+              <p className="mt-2 text-sm text-muted-foreground">Elige el plan que se ajusta a tu situación.</p>
+            </div>
+            <div className="inline-flex rounded-xl border border-border bg-card p-1">
+              {(["monthly", "yearly"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  className={cn(
+                    "rounded-lg px-4 py-1.5 text-sm font-medium transition-colors",
+                    billingMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                  )}
+                  onClick={() => setBillingMode(mode)}
+                >
+                  {mode === "monthly" ? "Mensual" : "Anual"}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="inline-flex rounded-xl border border-border bg-card p-1">
-            {(["monthly", "yearly"] as const).map((mode) => (
-              <button
-                key={mode}
-                className={cn(
-                  "rounded-lg px-4 py-1.5 text-sm font-medium transition-colors",
-                  billingMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
-                onClick={() => setBillingMode(mode)}
-              >
-                {mode === "monthly" ? "Mensual" : "Anual"}
-              </button>
-            ))}
-          </div>
-        </div>
+        </Reveal>
 
         <div className="mt-8 grid gap-6 md:grid-cols-2">
-          {plans.map((plan) => (
-            <div
-              key={plan.id}
-              className={cn(
-                "rounded-2xl p-6 md:p-8",
-                plan.featured ? "border-2 border-primary bg-accent/50" : "border border-border bg-card",
-              )}
-            >
-              <div className="flex items-center justify-between">
-                <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                  <plan.icon className="h-4 w-4" />
-                  {plan.audience}
+          {plans.map((plan, i) => (
+            <Reveal key={plan.id} delay={i * 0.12}>
+              <motion.div
+                whileHover={reduce ? undefined : { y: -4 }}
+                transition={springSoft}
+                className={cn(
+                  "h-full rounded-2xl p-6 md:p-8",
+                  plan.featured ? "border-2 border-primary bg-accent/50" : "border border-border bg-card",
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                    <plan.icon className="h-4 w-4" />
+                    {plan.audience}
+                  </div>
+                  {plan.featured && <Badge>Recomendado</Badge>}
                 </div>
-                {plan.featured && <Badge>Recomendado</Badge>}
-              </div>
-              <h3 className="mt-3 text-xl font-bold tracking-tight">{plan.name}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
-              <div className="mt-6 flex items-baseline gap-2">
-                <span className="text-4xl font-bold tracking-tight">
-                  {billingMode === "monthly" ? plan.priceMonthlyPen : plan.priceYearlyPen}
-                </span>
-                <span className="text-sm text-muted-foreground">
-                  / {billingMode === "monthly" ? "mes" : "año"} ({billingMode === "monthly" ? plan.priceMonthlyUsd : plan.priceYearlyUsd})
-                </span>
-              </div>
-              <ul className="mt-6 space-y-2.5 text-sm">
-                {plan.highlights.map((item) => (
-                  <li key={item} className="flex items-start gap-2.5">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-              <Button className="mt-7 w-full" size="lg" variant={plan.featured ? "default" : "outline"} onClick={onOpenApp}>
-                {plan.cta}
-              </Button>
-            </div>
+                <h3 className="mt-3 text-xl font-bold tracking-tight">{plan.name}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
+                <div className="mt-6 flex items-baseline gap-2">
+                  <span className="text-4xl font-bold tracking-tight">
+                    {billingMode === "monthly" ? plan.priceMonthlyPen : plan.priceYearlyPen}
+                  </span>
+                  <span className="text-sm text-muted-foreground">
+                    / {billingMode === "monthly" ? "mes" : "año"} ({billingMode === "monthly" ? plan.priceMonthlyUsd : plan.priceYearlyUsd})
+                  </span>
+                </div>
+                <ul className="mt-6 space-y-2.5 text-sm">
+                  {plan.highlights.map((item) => (
+                    <li key={item} className="flex items-start gap-2.5">
+                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+                <Button className="mt-7 w-full" size="lg" variant={plan.featured ? "default" : "outline"} onClick={onOpenApp}>
+                  {plan.cta}
+                </Button>
+              </motion.div>
+            </Reveal>
           ))}
         </div>
       </section>
 
-      <section className="my-14 rounded-2xl bg-primary px-8 py-12 text-primary-foreground md:px-12">
-        <div className="flex flex-wrap items-center justify-between gap-6">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight md:text-3xl">¿Listo para generar tu tabulación?</h2>
-            <p className="mt-2 max-w-[44ch] text-sm opacity-90">
-              Entra con tu cuenta, configura tu encuesta y entrega el Excel a tu asesor.
-            </p>
+      <Reveal className="my-14">
+        <section className="rounded-2xl bg-primary px-8 py-12 text-primary-foreground md:px-12">
+          <div className="flex flex-wrap items-center justify-between gap-6">
+            <div>
+              <h2 className="text-2xl font-bold tracking-tight md:text-3xl">¿Listo para generar tu tabulación?</h2>
+              <p className="mt-2 max-w-[44ch] text-sm opacity-90">
+                Entra con tu cuenta, configura tu encuesta y entrega el Excel a tu asesor.
+              </p>
+            </div>
+            <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
+              <Button
+                size="lg"
+                className="h-12 bg-background px-6 text-base text-foreground hover:bg-background/90"
+                onClick={onOpenApp}
+              >
+                Generar mi tabulación
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </motion.div>
           </div>
-          <Button
-            size="lg"
-            className="h-12 bg-background px-6 text-base text-foreground hover:bg-background/90"
-            onClick={onOpenApp}
-          >
-            Generar mi tabulación
-            <ArrowRight className="h-4 w-4" />
-          </Button>
-        </div>
-      </section>
+        </section>
+      </Reveal>
 
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border py-8 text-sm text-muted-foreground">
         <div className="flex items-center gap-2 font-medium text-foreground">
