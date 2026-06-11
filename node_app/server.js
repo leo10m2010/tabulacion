@@ -329,7 +329,25 @@ const patchUser = (user, payload) => {
 };
 
 const ensureBootstrapAdmin = () => {
-  if (users.length > 0) return;
+  // Idempotente: el admin definido por ADMIN_EMAIL/ADMIN_PASSWORD debe poder
+  // entrar siempre, aunque el almacen ya tenga usuarios (con disco efimero el
+  // store puede regenerarse o venir de otro entorno).
+  const normalized = normalizeEmail(ADMIN_EMAIL);
+  const existing = users.find((item) => item.emailLower === normalized);
+  if (existing) {
+    if (ADMIN_PASSWORD && !checkPassword(ADMIN_PASSWORD, existing)) {
+      Object.assign(existing, buildPassword(ADMIN_PASSWORD));
+      existing.role = "admin";
+      existing.status = "active";
+      existing.updatedAt = new Date().toISOString();
+      writeUsers();
+      // eslint-disable-next-line no-console
+      console.log(`Admin ${existing.email}: contraseña sincronizada desde ADMIN_PASSWORD.`);
+    }
+    return;
+  }
+  // Sin ADMIN_PASSWORD y con usuarios existentes no se inventan admins.
+  if (users.length > 0 && !ADMIN_PASSWORD) return;
   // Si no hay contraseña configurada se genera una aleatoria y se muestra una
   // sola vez; nunca se usa una contraseña por defecto conocida.
   const generated = !ADMIN_PASSWORD;
