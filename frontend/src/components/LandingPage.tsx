@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from "react";
-import { motion, useReducedMotion } from "motion/react";
-import { ArrowRight, Building2, Check, FileSpreadsheet, Mail, MessageCircle, Moon, Sun, UserRound } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { ArrowRight, Building2, Check, Download, FileSpreadsheet, Loader2, Mail, MessageCircle, Moon, Sun, UserRound } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import type { ThemeMode } from "../lib/types";
-import { CountUp, Reveal, TiltCard, springSoft } from "./motion-primitives";
+import { AnimatedNumber, Reveal, TiltCard, springSoft } from "./motion-primitives";
 
 export function LandingPage({
   themeMode,
@@ -60,13 +60,32 @@ export function LandingPage({
     [],
   );
 
-  // Datos reales de una generación del producto (muestra de 289): el preview
-  // del hero es el artefacto que el sistema produce, no una maqueta.
-  const baremoPreview = [
-    { nivel: "Bajo", f: 133, pct: 46.0 },
-    { nivel: "Medio", f: 101, pct: 34.9 },
-    { nivel: "Alto", f: 55, pct: 19.0 },
+  // Demo en bucle del flujo real del producto: calcula la tabla baremada,
+  // genera el Excel y lo entrega. La primera tabla usa datos reales de una
+  // generación (muestra de 289); las otras son variaciones de ejemplo.
+  const PREVIEW_TABLES = [
+    { dim: "Planificación", filas: [{ nivel: "Bajo", f: 133, pct: 46.0 }, { nivel: "Medio", f: 101, pct: 34.9 }, { nivel: "Alto", f: 55, pct: 19.0 }] },
+    { dim: "Transparencia", filas: [{ nivel: "Bajo", f: 121, pct: 41.9 }, { nivel: "Medio", f: 109, pct: 37.7 }, { nivel: "Alto", f: 59, pct: 20.4 }] },
+    { dim: "Cumplimiento", filas: [{ nivel: "Bajo", f: 96, pct: 33.2 }, { nivel: "Medio", f: 138, pct: 47.8 }, { nivel: "Alto", f: 55, pct: 19.0 }] },
   ];
+  const [fase, setFase] = useState(0); // 0 tabla · 1 generando · 2 entregado
+  const [dataIdx, setDataIdx] = useState(0);
+
+  useEffect(() => {
+    if (reduce) return;
+    const duraciones = [4200, 2600, 3600];
+    const timer = window.setTimeout(() => {
+      setFase((f) => {
+        const next = (f + 1) % 3;
+        if (next === 0) setDataIdx((d) => (d + 1) % PREVIEW_TABLES.length);
+        return next;
+      });
+    }, duraciones[fase]);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fase, reduce]);
+
+  const tabla = PREVIEW_TABLES[dataIdx];
 
   const pasos = [
     { titulo: "Configura", desc: "Variables, dimensiones, indicadores y la escala de tu instrumento, guiado paso a paso." },
@@ -148,37 +167,116 @@ export function LandingPage({
         >
           <TiltCard>
             <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_24px_64px_-28px_hsl(var(--primary)/0.45)]">
-              <p className="text-sm font-semibold">Tabla 1</p>
-              <p className="text-sm text-muted-foreground">Frecuencia baremada de la variable</p>
-              <div className="mt-5 space-y-4">
-                {baremoPreview.map((fila, i) => (
-                  <div key={fila.nivel}>
-                    <div className="flex items-baseline justify-between text-sm">
-                      <span className="font-medium">{fila.nivel}</span>
-                      <span className="font-mono tabular-nums text-muted-foreground">
-                        {fila.f} · <CountUp value={fila.pct} decimals={1} suffix="%" />
-                      </span>
-                    </div>
+              <div className="min-h-[280px]">
+                <AnimatePresence mode="wait" initial={false}>
+                  {fase === 0 && (
                     <motion.div
-                      className="mt-1.5 h-2 origin-left rounded-full bg-primary"
-                      style={{ width: `${fila.pct}%` }}
-                      initial={reduce ? false : { scaleX: 0 }}
-                      animate={{ scaleX: 1 }}
-                      transition={{ type: "spring", stiffness: 70, damping: 16, delay: 0.45 + i * 0.13 }}
-                    />
-                  </div>
-                ))}
-              </div>
-              <div className="mt-5 flex items-baseline justify-between border-t border-border pt-3 text-sm">
-                <span className="font-semibold">Total</span>
-                <span className="font-mono tabular-nums">
-                  <CountUp value={289} /> encuestados
-                </span>
+                      key={`tabla-${dataIdx}`}
+                      initial={reduce ? false : { opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.35 }}
+                    >
+                      <p className="text-sm font-semibold">Tabla {dataIdx + 1}</p>
+                      <p className="text-sm text-muted-foreground">Frecuencia baremada · {tabla.dim}</p>
+                      <div className="mt-5 space-y-4">
+                        {tabla.filas.map((fila, i) => (
+                          <div key={fila.nivel}>
+                            <div className="flex items-baseline justify-between text-sm">
+                              <span className="font-medium">{fila.nivel}</span>
+                              <span className="font-mono text-muted-foreground">
+                                <AnimatedNumber value={fila.f} /> · <AnimatedNumber value={fila.pct} decimals={1} suffix="%" />
+                              </span>
+                            </div>
+                            <div className="mt-1.5 h-2 w-full">
+                              <motion.div
+                                className="h-full w-full origin-left rounded-full bg-primary"
+                                initial={reduce ? false : { scaleX: 0 }}
+                                animate={{ scaleX: fila.pct / 100 }}
+                                transition={{ type: "spring", stiffness: 70, damping: 16, delay: 0.15 + i * 0.1 }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-5 flex items-baseline justify-between border-t border-border pt-3 text-sm">
+                        <span className="font-semibold">Total</span>
+                        <span className="font-mono tabular-nums">289 encuestados</span>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {fase === 1 && (
+                    <motion.div
+                      key="generando"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.35 }}
+                    >
+                      <p className="text-sm font-semibold">Generando tu Excel</p>
+                      <p className="text-sm text-muted-foreground">Con fórmulas reales, listas para tu informe</p>
+                      <div className="mt-6 space-y-4">
+                        {["Estadísticos por ítem", "Baremos y valoraciones", "Frecuencias y porcentajes", "Gráficos e interpretaciones"].map((etapa, i) => (
+                          <motion.div
+                            key={etapa}
+                            className="flex items-center gap-2.5 text-sm"
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ ...springSoft, delay: 0.2 + i * 0.4 }}
+                          >
+                            <motion.span
+                              initial={{ scale: 0 }}
+                              animate={{ scale: 1 }}
+                              transition={{ ...springSoft, delay: 0.3 + i * 0.4 }}
+                              className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground"
+                            >
+                              <Check className="h-3 w-3" />
+                            </motion.span>
+                            {etapa}
+                          </motion.div>
+                        ))}
+                        <div className="flex items-center gap-2.5 pt-1 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                          Armando el archivo...
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {fase === 2 && (
+                    <motion.div
+                      key="entregado"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.35 }}
+                      className="flex min-h-[280px] flex-col items-center justify-center text-center"
+                    >
+                      <motion.div
+                        initial={{ scale: 0.6, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={springSoft}
+                        className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_18px_44px_-16px_hsl(var(--primary)/0.8)]"
+                      >
+                        <FileSpreadsheet className="h-8 w-8" />
+                      </motion.div>
+                      <p className="mt-4 font-mono text-sm font-semibold">Tabulacion_generada.xlsx</p>
+                      <p className="mt-1 text-sm text-muted-foreground">11 hojas, 37 gráficos e interpretaciones</p>
+                      <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }} className="mt-5">
+                        <Button size="sm" onClick={onOpenApp}>
+                          <Download className="h-4 w-4" />
+                          Descargar Excel
+                        </Button>
+                      </motion.div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             </div>
           </TiltCard>
           <p className="mt-3 text-center text-xs text-muted-foreground">
-            Tabla generada por TesisTab a partir de una muestra real de 289 encuestados.
+            Así calcula y entrega tu Excel, con datos de una muestra de 289 encuestados.
           </p>
         </motion.div>
       </section>
@@ -228,7 +326,7 @@ export function LandingPage({
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Planes y precios</h2>
-              <p className="mt-2 text-sm text-muted-foreground">Elige el plan que se ajusta a tu situación.</p>
+              <p className="mt-2 text-sm text-muted-foreground">Paga en soles o dólares, mensual o anual.</p>
             </div>
             <div className="inline-flex rounded-xl border border-border bg-card p-1">
               {(["monthly", "yearly"] as const).map((mode) => (

@@ -85,3 +85,31 @@ export function CountUp({ value, decimals = 0, suffix = "" }: { value: number; d
   return <span ref={ref}>{`0${suffix}`}</span>;
 }
 
+// Numero que se re-anima cada vez que cambia su valor (para demos en bucle).
+export function AnimatedNumber({ value, decimals = 0, suffix = "" }: { value: number; decimals?: number; suffix?: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const prev = useRef(0);
+  const reduce = useReducedMotion();
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (reduce) {
+      el.textContent = `${value.toFixed(decimals)}${suffix}`;
+      prev.current = value;
+      return;
+    }
+    const controls = animate(prev.current, value, {
+      duration: 0.8,
+      ease: [0.16, 1, 0.3, 1],
+      onUpdate: (v) => {
+        el.textContent = `${v.toFixed(decimals)}${suffix}`;
+      },
+    });
+    prev.current = value;
+    return () => controls.stop();
+  }, [value, decimals, suffix, reduce]);
+
+  return <span ref={ref} className="tabular-nums">{`${value.toFixed(decimals)}${suffix}`}</span>;
+}
+
