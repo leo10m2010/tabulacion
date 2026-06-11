@@ -16,7 +16,9 @@ services:
     rootDir: node_app
     buildCommand: npm ci --omit=dev
     startCommand: node server.js
-    healthCheckPath: /health
+    # Sin healthCheckPath HTTP: la generacion del Excel bloquea el event loop
+    # (CPU 0.1 del plan free) y el healthcheck mataba el proceso a mitad de
+    # trabajo. El check TCP por defecto no tiene ese problema.
     autoDeploy: true
     # disk:
     #   name: tabulacion-data
@@ -25,6 +27,10 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "20"
+      # Contenedor de 512 MB: limitar el heap fuerza GC agresivo y evita
+      # que el pico de memoria de la generacion mate el proceso.
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=400"
       - key: AUTH_REQUIRED
         value: "true"
       # Secretos: definirlos en el dashboard de Render (sync: false hace que

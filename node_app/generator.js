@@ -1642,8 +1642,12 @@ export const generateArtifacts = async (rawConfig) => {
     warnings.push("Se genero con 1 sola variable: no aplica correlacion entre variables.");
   }
 
-  const { workbook, sheetCharts } = await buildWorkbook(cfg, base);
-  const plainBuffer = await workbook.outputAsync({ type: "nodebuffer" });
+  // Liberar el DOM del workbook antes del post-procesado reduce el pico de
+  // memoria (importante en contenedores de 512 MB).
+  let built = await buildWorkbook(cfg, base);
+  const { sheetCharts } = built;
+  const plainBuffer = await built.workbook.outputAsync({ type: "nodebuffer" });
+  built = null;
   const excelBuffer = await postProcessWorkbook(plainBuffer, sheetCharts);
   const baseCsv = buildBaseCsv(base, cfg);
 
