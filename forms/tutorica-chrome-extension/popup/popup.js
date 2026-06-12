@@ -1,5 +1,5 @@
-const SETTINGS_KEY = 'borangTesistabSettings';
-const DIAGNOSTICS_KEY = 'borangTesistabDiagnostics';
+const SETTINGS_KEY = 'tesistabSettings';
+const DIAGNOSTICS_KEY = 'tesistabDiagnostics';
 
 const DEFAULT_SETTINGS = {
   enabled: true,

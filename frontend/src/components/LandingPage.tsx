@@ -655,6 +655,11 @@ export function LandingPage({
                   {CONTACT_EMAIL}
                 </a>
               </li>
+              <li>
+                <a href="/privacidad.html" className="text-muted-foreground hover:text-foreground">
+                  Política de privacidad
+                </a>
+              </li>
             </ul>
           </div>
 

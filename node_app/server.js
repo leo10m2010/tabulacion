@@ -14,7 +14,7 @@ import {
 // una app Express a la que se delegan las rutas /api/tesistab y /api/forms.
 const require = createRequire(import.meta.url);
 const formsApp = require("../forms/server.js");
-const FORMS_PATH_PREFIXES = ["/api/tesistab", "/api/forms", "/_submit", "/submit"];
+const FORMS_PATH_PREFIXES = ["/api/tesistab", "/api/forms", "/_submit"];
 const isFormsPath = (url) => {
   const p = String(url || "/").split("?")[0];
   return FORMS_PATH_PREFIXES.some((prefix) => p === prefix || p.startsWith(`${prefix}/`));

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="index, follow" />
+  <title>Política de Privacidad — Tutorica Forms</title>
+  <meta name="description" content="Política de privacidad de la extensión Tutorica Forms, herramienta de pruebas y QA para tus propios Google Forms." />
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --border: #e2e8f0;
+      --primary: #4f46e5;
+      --accent: #eef2ff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b1120;
+        --card: #111827;
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --border: #1f2937;
+        --primary: #818cf8;
+        --accent: #1e1b4b;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    .wrap { max-width: 780px; margin: 0 auto; padding: 48px 24px 80px; }
+    header { margin-bottom: 8px; }
+    .badge {
+      display: inline-block;
+      background: var(--accent);
+      color: var(--primary);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 999px;
+      margin-bottom: 16px;
+    }
+    h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -0.02em; }
+    h2 { font-size: 20px; margin: 36px 0 10px; letter-spacing: -0.01em; }
+    h3 { font-size: 16px; margin: 22px 0 6px; }
+    p, li { color: var(--muted); }
+    .updated { color: var(--muted); font-size: 14px; margin-top: 4px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px 32px;
+      margin-top: 28px;
+    }
+    a { color: var(--primary); }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--text); font-weight: 600; }
+    .note {
+      background: var(--accent);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin: 20px 0;
+      font-size: 14px;
+      color: var(--text);
+    }
+    footer { margin-top: 40px; text-align: center; font-size: 13px; color: var(--muted); }
+    ul { padding-left: 20px; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="badge">Herramienta de pruebas y QA</span>
+      <h1>Política de Privacidad — Tutorica Forms</h1>
+      <p class="updated">Última actualización: 12 de junio de 2026</p>
+    </header>
+
+    <div class="card">
+      <p>
+        <strong>Tutorica Forms</strong> es una extensión de Chrome para <strong>probar y validar (QA) tus
+        propios formularios de Google Forms</strong>. Permite a investigadores, tesistas y equipos de
+        control de calidad generar respuestas de prueba sobre formularios de su propiedad o de los que
+        tienen autorización, para verificar que la lógica, los baremos y la tabulación funcionan antes
+        de aplicar la encuesta real.
+      </p>
+      <p>
+        Esta política explica qué datos maneja la extensión, con qué fin y con quién se comparten.
+        Usar la extensión implica aceptar esta política.
+      </p>
+
+      <h2>1. Uso previsto (pruebas / QA)</h2>
+      <p>
+        La extensión está pensada exclusivamente para que el usuario realice <strong>pruebas de calidad
+        sobre sus propios formularios</strong>. No está diseñada ni autorizada para manipular encuestas
+        de terceros, falsear resultados de estudios reales ni para ningún uso que infrinja los Términos
+        de Servicio de Google. El usuario es responsable de tener los derechos sobre los formularios que
+        prueba.
+      </p>
+
+      <h2>2. Qué datos se procesan</h2>
+      <table>
+        <thead>
+          <tr><th>Dato</th><th>Para qué</th><th>Dónde se guarda</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Clave de API de TesisTab (<code>ttab_…</code>)</td>
+            <td>Autenticar tus solicitudes contra nuestro servidor y validar tu suscripción.</td>
+            <td>Almacenamiento local del navegador (<code>chrome.storage.local</code>), solo en tu equipo.</td>
+          </tr>
+          <tr>
+            <td>Configuración de la extensión (cantidad, perfil, demografía, tema, URL del backend)</td>
+            <td>Recordar tus preferencias entre sesiones.</td>
+            <td>Almacenamiento local del navegador.</td>
+          </tr>
+          <tr>
+            <td>Contenido del formulario en prueba (campos <code>entry.*</code> y sus opciones)</td>
+            <td>Construir las respuestas de prueba y enviarlas al formulario que tú indicas.</td>
+            <td>Se procesa en memoria y se envía a nuestro backend solo durante la corrida; no se conserva de forma permanente.</td>
+          </tr>
+          <tr>
+            <td>Datos CSV que tú importes (opcional)</td>
+            <td>Usar tus propios valores como respuestas de prueba.</td>
+            <td>Almacenamiento local del navegador hasta que pulses «Limpiar CSV».</td>
+          </tr>
+          <tr>
+            <td>Estado de la última corrida (id, estado, error)</td>
+            <td>Mostrarte el diagnóstico en el popup.</td>
+            <td>Almacenamiento local del navegador.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="note">
+        La extensión <strong>no recolecta</strong> tu historial de navegación, ni datos de salud, ni
+        ubicación, ni contraseñas, ni información financiera, ni te rastrea entre sitios web. Solo actúa
+        en páginas <code>docs.google.com/forms</code> y únicamente cuando tú inicias una corrida.
+      </div>
+
+      <h2>3. Cómo se usan y comparten</h2>
+      <p>
+        Cuando inicias una corrida de prueba, la extensión envía la URL del formulario, la configuración
+        de respuestas y tu clave de API a nuestro servidor
+        (<code>https://tabulacion-api.onrender.com</code>). El servidor envía entonces las respuestas de
+        prueba al formulario de Google que tú especificaste.
+      </p>
+      <ul>
+        <li>No vendemos ni alquilamos tus datos a terceros.</li>
+        <li>No usamos tus datos para publicidad ni para crear perfiles publicitarios.</li>
+        <li>Solo compartimos datos con Google Forms (el destino de tus respuestas de prueba) y con nuestro propio backend de TesisTab para autenticación.</li>
+        <li>La transmisión se realiza por HTTPS.</li>
+      </ul>
+
+      <h2>4. Conservación y eliminación</h2>
+      <p>
+        Los datos guardados localmente permanecen en tu navegador hasta que los borres: puedes usar
+        «Limpiar CSV» y «Revocar clave» en la extensión, o eliminar la extensión, o limpiar los datos del
+        sitio en Chrome. En el servidor, los trabajos de prueba se almacenan de forma temporal para
+        mostrarte el progreso y se eliminan automáticamente; la clave de API solo se conserva mientras tu
+        cuenta de TesisTab la mantenga activa, y puedes revocarla cuando quieras desde
+        TesisTab &gt; Integraciones.
+      </p>
+
+      <h2>5. Permisos solicitados</h2>
+      <ul>
+        <li><strong>storage</strong>: guardar tu configuración y clave de forma local.</li>
+        <li><strong>Acceso a <code>docs.google.com/forms</code></strong>: leer los campos del formulario y completar las respuestas de prueba.</li>
+        <li><strong>Acceso a <code>tabulacion-api.onrender.com</code></strong>: enviar las corridas a nuestro backend.</li>
+      </ul>
+
+      <h2>6. Seguridad</h2>
+      <p>
+        La comunicación con el servidor se hace por HTTPS. Tu clave de API se guarda solo en tu equipo y
+        se transmite únicamente a nuestro backend para autenticarte. Aun así, ningún sistema es
+        infalible; guarda tu clave con cuidado y revócala si sospechas de un uso indebido.
+      </p>
+
+      <h2>7. Menores de edad</h2>
+      <p>
+        La extensión es una herramienta profesional y académica; no está dirigida a menores de 13 años y
+        no recopila datos de ellos de forma intencionada.
+      </p>
+
+      <h2>8. Cambios en esta política</h2>
+      <p>
+        Podemos actualizar esta política. Publicaremos la versión vigente en esta misma página con su
+        fecha de actualización.
+      </p>
+
+      <h2>9. Contacto</h2>
+      <p>
+        Para cualquier consulta sobre privacidad, escríbenos a
+        <a href="mailto:contacto@tutorica.com">contacto@tutorica.com</a>.
+      </p>
+    </div>
+
+    <footer>
+      © 2026 TesisTab · Tutorica Forms — herramienta de pruebas y QA para tus propios Google Forms.
+    </footer>
+  </div>
+</body>
+</html>

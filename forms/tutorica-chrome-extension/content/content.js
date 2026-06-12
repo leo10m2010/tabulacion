@@ -1,9 +1,9 @@
-const SETTINGS_KEY = 'borangTesistabSettings';
-const CSV_ROWS_KEY = 'borangTesistabCsvRows';
-const DIAGNOSTICS_KEY = 'borangTesistabDiagnostics';
+const SETTINGS_KEY = 'tesistabSettings';
+const CSV_ROWS_KEY = 'tesistabCsvRows';
+const DIAGNOSTICS_KEY = 'tesistabDiagnostics';
 const DEFAULT_SETTINGS = {
   enabled: true,
-  backendBaseUrl: 'http://localhost:5000',
+  backendBaseUrl: 'https://tabulacion-api.onrender.com',
   apiKey: '',
   themeMode: 'system',
   panelViewMode: 'simple',
@@ -212,7 +212,7 @@ async function onDocumentKeyDown(event) {
     return;
   }
 
-  if (target.closest('#borang-tesistab-actions')) {
+  if (target.closest('#tesistab-qa-actions')) {
     return;
   }
 
@@ -373,7 +373,11 @@ async function startTesistabRun(form, event) {
       lastError: '',
       updatedAt: new Date().toISOString(),
     });
-    monitorJob(result.id, normalizeBackendUrl(settings.backendBaseUrl));
+    monitorJob(
+      result.id,
+      normalizeBackendUrl(settings.backendBaseUrl),
+      count * (delayMs + jitterMs + 2_000)
+    );
   } catch (error) {
     showStatus(error.message || 'Error desconocido al crear el job.', true);
     recordDiagnostics({
@@ -423,9 +427,9 @@ function isGoogleFormsSubmitTrigger(target) {
   }
 
   if (
-    trigger.closest('#borang-tesistab-actions') ||
-    trigger.closest('#borang-tesistab-status') ||
-    trigger.closest('#borang-tesistab-pill')
+    trigger.closest('#tesistab-qa-actions') ||
+    trigger.closest('#tesistab-qa-status') ||
+    trigger.closest('#tesistab-qa-pill')
   ) {
     return false;
   }
@@ -453,8 +457,8 @@ function isGoogleFormsNextTrigger(target) {
   }
 
   if (
-    trigger.closest('#borang-tesistab-status') ||
-    trigger.closest('#borang-tesistab-pill')
+    trigger.closest('#tesistab-qa-status') ||
+    trigger.closest('#tesistab-qa-pill')
   ) {
     return false;
   }
@@ -467,9 +471,12 @@ function isGoogleFormsNextTrigger(target) {
   return /(next|siguiente|continuar|continue)/.test(marker);
 }
 
-async function monitorJob(jobId, backendBaseUrl) {
+async function monitorJob(jobId, backendBaseUrl, expectedDurationMs = 0) {
   const pollEveryMs = 1200;
-  const maxPolls = 240;
+  // El presupuesto de espera escala con la corrida (count * delay) mas un
+  // margen; el minimo conserva el comportamiento previo (~5 minutos).
+  const budgetMs = Math.max(290_000, Number(expectedDurationMs) || 0) + 90_000;
+  const maxPolls = Math.ceil(budgetMs / pollEveryMs);
   let transientErrors = 0;
 
   for (let i = 0; i < maxPolls; i++) {
@@ -639,7 +646,7 @@ function formDataToPayload(formData) {
 }
 
 function injectStatusPill(enabled) {
-  const existing = document.getElementById('borang-tesistab-pill');
+  const existing = document.getElementById('tesistab-qa-pill');
   if (existing) {
     existing.className = enabled ? 'is-on' : 'is-off';
     existing.textContent = enabled ? 'Tutorica Forms: ON' : 'Tutorica Forms: OFF';
@@ -648,7 +655,7 @@ function injectStatusPill(enabled) {
   }
 
   const pill = document.createElement('div');
-  pill.id = 'borang-tesistab-pill';
+  pill.id = 'tesistab-qa-pill';
   pill.className = enabled ? 'is-on' : 'is-off';
   pill.textContent = enabled ? 'Tutorica Forms: ON' : 'Tutorica Forms: OFF';
   pill.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
@@ -656,13 +663,13 @@ function injectStatusPill(enabled) {
 }
 
 function injectActionsPanel() {
-  const existing = document.getElementById('borang-tesistab-actions');
+  const existing = document.getElementById('tesistab-qa-actions');
   if (existing) {
-    const existingCount = existing.querySelector('#borang-tesistab-count');
+    const existingCount = existing.querySelector('#tesistab-qa-count');
     if (existingCount instanceof HTMLInputElement && document.activeElement !== existingCount) {
       existingCount.value = String(clamp(Number(settings.submissionCount) || 1, 1, MAX_UI_SUBMISSIONS));
     }
-    const existingProfile = existing.querySelector('#borang-tesistab-profile');
+    const existingProfile = existing.querySelector('#tesistab-qa-profile');
     if (existingProfile instanceof HTMLSelectElement) {
       existingProfile.value = normalizeInlineProfileType(settings.smartProfileType);
     }
@@ -673,18 +680,18 @@ function injectActionsPanel() {
   }
 
   const panel = document.createElement('div');
-  panel.id = 'borang-tesistab-actions';
+  panel.id = 'tesistab-qa-actions';
   panel.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
 
   const header = document.createElement('div');
-  header.className = 'borang-tesistab-header';
+  header.className = 'tesistab-qa-header';
 
   const title = document.createElement('div');
-  title.className = 'borang-tesistab-title';
+  title.className = 'tesistab-qa-title';
   setPanelLabel(title, 'send', 'Envios automaticos');
 
   const backendStatus = document.createElement('div');
-  backendStatus.id = 'borang-tesistab-backend-status';
+  backendStatus.id = 'tesistab-qa-backend-status';
   backendStatus.className = 'is-checking';
   backendStatus.title = 'Verificando backend';
   backendStatus.setAttribute('aria-label', 'Verificando backend');
@@ -692,11 +699,11 @@ function injectActionsPanel() {
   header.append(title, backendStatus);
 
   const viewRow = document.createElement('label');
-  viewRow.className = 'borang-tesistab-count-row';
+  viewRow.className = 'tesistab-qa-count-row';
   const viewLabel = document.createElement('span');
   viewLabel.replaceChildren(createHelpLabel('Vista', 'Simple muestra solo lo esencial. Avanzada muestra controles extra.'));
   const viewSelect = document.createElement('select');
-  viewSelect.id = 'borang-tesistab-view-mode';
+  viewSelect.id = 'tesistab-qa-view-mode';
   viewSelect.innerHTML = [
     '<option value="simple">Simple</option>',
     '<option value="advanced">Avanzada</option>',
@@ -706,13 +713,13 @@ function injectActionsPanel() {
   viewRow.append(viewLabel, viewSelect);
 
   const countRow = document.createElement('label');
-  countRow.className = 'borang-tesistab-count-row';
+  countRow.className = 'tesistab-qa-count-row';
 
   const countLabel = document.createElement('span');
   countLabel.replaceChildren(createHelpLabel('Cantidad', 'Numero de respuestas que se enviaran en esta corrida.'));
 
   const countInput = document.createElement('input');
-  countInput.id = 'borang-tesistab-count';
+  countInput.id = 'tesistab-qa-count';
   countInput.type = 'number';
   countInput.min = '1';
   countInput.max = String(MAX_UI_SUBMISSIONS);
@@ -724,13 +731,13 @@ function injectActionsPanel() {
   countRow.append(countLabel, countInput);
 
   const profileRow = document.createElement('label');
-  profileRow.className = 'borang-tesistab-count-row';
+  profileRow.className = 'tesistab-qa-count-row';
 
   const profileLabel = document.createElement('span');
   profileLabel.replaceChildren(createHelpLabel('Perfil', 'Define el tono general de las respuestas tipo escala o Likert.'));
 
   const profileSelect = document.createElement('select');
-  profileSelect.id = 'borang-tesistab-profile';
+  profileSelect.id = 'tesistab-qa-profile';
   profileSelect.innerHTML = [
     '<option value="favorable">Favorable</option>',
     '<option value="intermedio">Intermedio</option>',
@@ -743,7 +750,7 @@ function injectActionsPanel() {
   profileRow.append(profileLabel, profileSelect);
 
   const distributionPanel = document.createElement('details');
-  distributionPanel.className = 'borang-tesistab-advanced';
+  distributionPanel.className = 'tesistab-qa-advanced';
   distributionPanel.dataset.panelSection = 'advanced';
 
   const distributionSummary = document.createElement('summary');
@@ -751,7 +758,7 @@ function injectActionsPanel() {
   distributionPanel.appendChild(distributionSummary);
 
   const distributionBody = document.createElement('div');
-  distributionBody.className = 'borang-tesistab-advanced-body';
+  distributionBody.className = 'tesistab-qa-advanced-body';
 
   const distributionModeRow = createInlineAdvancedToggle(
     'profileDistributionEnabled',
@@ -760,8 +767,8 @@ function injectActionsPanel() {
   );
 
   const distributionGrid = document.createElement('div');
-  distributionGrid.className = 'borang-tesistab-distribution-grid';
-  distributionGrid.id = 'borang-tesistab-distribution-grid';
+  distributionGrid.className = 'tesistab-qa-distribution-grid';
+  distributionGrid.id = 'tesistab-qa-distribution-grid';
   distributionGrid.append(
     createInlineDistributionField('profileShareFavorable', 'Favorable %', settings.profileShareFavorable, 60),
     createInlineDistributionField('profileShareIntermedio', 'Intermedio %', settings.profileShareIntermedio, 25),
@@ -772,7 +779,7 @@ function injectActionsPanel() {
   distributionPanel.appendChild(distributionBody);
 
   const advancedPanel = document.createElement('details');
-  advancedPanel.className = 'borang-tesistab-advanced';
+  advancedPanel.className = 'tesistab-qa-advanced';
   advancedPanel.dataset.panelSection = 'advanced';
 
   const advancedSummary = document.createElement('summary');
@@ -780,7 +787,7 @@ function injectActionsPanel() {
   advancedPanel.appendChild(advancedSummary);
 
   const advancedBody = document.createElement('div');
-  advancedBody.className = 'borang-tesistab-advanced-body';
+  advancedBody.className = 'tesistab-qa-advanced-body';
 
   const advancedModeRow = createInlineAdvancedToggle(
     'advancedMode',
@@ -819,8 +826,8 @@ function injectActionsPanel() {
 
   const runTesistabBtn = document.createElement('button');
   runTesistabBtn.type = 'button';
-  runTesistabBtn.id = 'borang-tesistab-run-btn';
-  runTesistabBtn.className = 'borang-tesistab-main-action';
+  runTesistabBtn.id = 'tesistab-qa-run-btn';
+  runTesistabBtn.className = 'tesistab-qa-main-action';
   const runMainLabel = document.createElement('span');
   runMainLabel.className = 'main-label';
   runMainLabel.textContent = 'Iniciar';
@@ -902,7 +909,7 @@ function injectActionsPanel() {
   };
 
   const csvPanel = document.createElement('details');
-  csvPanel.className = 'borang-tesistab-advanced';
+  csvPanel.className = 'tesistab-qa-advanced';
   csvPanel.dataset.panelSection = 'advanced';
 
   const csvSummary = document.createElement('summary');
@@ -910,7 +917,7 @@ function injectActionsPanel() {
   csvPanel.appendChild(csvSummary);
 
   const csvBody = document.createElement('div');
-  csvBody.className = 'borang-tesistab-advanced-body';
+  csvBody.className = 'tesistab-qa-advanced-body';
   csvBody.append(importCsvBtn, clearCsvBtn);
   csvPanel.appendChild(csvBody);
 
@@ -938,7 +945,7 @@ function createHelpLabel(text, helpText) {
   const labelText = document.createElement('span');
   labelText.textContent = text;
   const help = document.createElement('span');
-  help.className = 'borang-tesistab-help';
+  help.className = 'tesistab-qa-help';
   help.textContent = '?';
   help.title = helpText;
   help.setAttribute('aria-label', helpText);
@@ -956,7 +963,7 @@ function setPanelLabel(element, iconKey, text) {
 
 function createPanelIcon(iconKey) {
   const span = document.createElement('span');
-  span.className = 'borang-tesistab-icon';
+  span.className = 'tesistab-qa-icon';
   span.setAttribute('aria-hidden', 'true');
 
   const paths = {
@@ -1015,7 +1022,7 @@ async function saveInlinePanelViewMode(select) {
     },
   });
 
-  const panel = document.getElementById('borang-tesistab-actions');
+  const panel = document.getElementById('tesistab-qa-actions');
   if (panel) {
     syncPanelViewMode(panel);
   }
@@ -1031,7 +1038,7 @@ function syncPanelViewMode(container) {
   }
 
   const viewMode = normalizePanelViewMode(settings.panelViewMode);
-  const select = container.querySelector('#borang-tesistab-view-mode');
+  const select = container.querySelector('#tesistab-qa-view-mode');
   if (select instanceof HTMLSelectElement) {
     select.value = viewMode;
   }
@@ -1085,7 +1092,7 @@ function normalizeInlineProfileType(value) {
 
 function createInlineDistributionField(key, label, rawValue, fallback) {
   const wrapper = document.createElement('label');
-  wrapper.className = 'borang-tesistab-count-row';
+  wrapper.className = 'tesistab-qa-count-row';
   wrapper.dataset.distributionKey = key;
 
   const text = document.createElement('span');
@@ -1192,7 +1199,7 @@ async function stopActiveTesistabJob() {
 
 function createInlineAdvancedToggle(key, label, checked) {
   const row = document.createElement('label');
-  row.className = 'borang-tesistab-toggle-row';
+  row.className = 'tesistab-qa-toggle-row';
   row.dataset.settingKey = key;
 
   const text = document.createElement('span');
@@ -1213,7 +1220,7 @@ function syncInlineAdvancedControls(container) {
   }
 
   const modeEnabled = Boolean(settings.advancedMode);
-  container.querySelectorAll('.borang-tesistab-toggle-row').forEach((row) => {
+  container.querySelectorAll('.tesistab-qa-toggle-row').forEach((row) => {
     if (!(row instanceof HTMLElement)) {
       return;
     }
@@ -1270,7 +1277,7 @@ async function saveInlineAdvancedOption(key, checked) {
       },
     });
 
-    const panel = document.getElementById('borang-tesistab-actions');
+    const panel = document.getElementById('tesistab-qa-actions');
     if (panel) {
       syncInlineDistributionControls(panel);
     }
@@ -1303,7 +1310,7 @@ async function saveInlineAdvancedOption(key, checked) {
     },
   });
 
-  const panel = document.getElementById('borang-tesistab-actions');
+  const panel = document.getElementById('tesistab-qa-actions');
   if (panel) {
     syncInlineAdvancedControls(panel);
   }
@@ -1320,7 +1327,7 @@ function startBackendHealthMonitor() {
 }
 
 async function checkBackendHealth() {
-  const indicator = document.getElementById('borang-tesistab-backend-status');
+  const indicator = document.getElementById('tesistab-qa-backend-status');
   if (!indicator) {
     if (backendHealthTimer) {
       window.clearInterval(backendHealthTimer);
@@ -1343,7 +1350,7 @@ async function checkBackendHealth() {
 }
 
 function updateBackendHealthIndicator(state, title) {
-  const indicator = document.getElementById('borang-tesistab-backend-status');
+  const indicator = document.getElementById('tesistab-qa-backend-status');
   if (!(indicator instanceof HTMLElement)) {
     return;
   }
@@ -1361,7 +1368,7 @@ function normalizeThemeMode(value) {
 
 function applyThemeToInjectedUi() {
   const themeMode = resolveEffectiveThemeMode(settings.themeMode);
-  ['borang-tesistab-pill', 'borang-tesistab-actions', 'borang-tesistab-status', 'borang-tesistab-confirm-overlay'].forEach((id) => {
+  ['tesistab-qa-pill', 'tesistab-qa-actions', 'tesistab-qa-status', 'tesistab-qa-confirm-overlay'].forEach((id) => {
     const element = document.getElementById(id);
     if (element) {
       element.setAttribute('data-theme', themeMode);
@@ -1392,32 +1399,32 @@ function subscribeToSystemThemeChanges() {
 }
 
 function showTesistabConfirmDialog(details) {
-  const existing = document.getElementById('borang-tesistab-confirm-overlay');
+  const existing = document.getElementById('tesistab-qa-confirm-overlay');
   if (existing) {
     existing.remove();
   }
 
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.id = 'borang-tesistab-confirm-overlay';
+    overlay.id = 'tesistab-qa-confirm-overlay';
     overlay.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
 
     const dialog = document.createElement('div');
-    dialog.id = 'borang-tesistab-confirm-dialog';
+    dialog.id = 'tesistab-qa-confirm-dialog';
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
-    dialog.setAttribute('aria-labelledby', 'borang-tesistab-confirm-title');
+    dialog.setAttribute('aria-labelledby', 'tesistab-qa-confirm-title');
 
     const title = document.createElement('h3');
-    title.id = 'borang-tesistab-confirm-title';
+    title.id = 'tesistab-qa-confirm-title';
     title.textContent = 'Confirmar envio automatico';
 
     const subtitle = document.createElement('p');
-    subtitle.className = 'borang-tesistab-confirm-subtitle';
+    subtitle.className = 'tesistab-qa-confirm-subtitle';
     subtitle.textContent = 'Revisa los datos antes de iniciar la corrida.';
 
     const detailsBox = document.createElement('div');
-    detailsBox.className = 'borang-tesistab-confirm-details';
+    detailsBox.className = 'tesistab-qa-confirm-details';
     detailsBox.append(
       createTesistabConfirmRow('Cantidad', String(details?.count || 1)),
       createTesistabConfirmRow('Espera', `${Number(details?.delayMs || 0)} ms`)
@@ -1428,7 +1435,7 @@ function showTesistabConfirmDialog(details) {
     }
 
     const actions = document.createElement('div');
-    actions.className = 'borang-tesistab-confirm-actions';
+    actions.className = 'tesistab-qa-confirm-actions';
 
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
@@ -1471,7 +1478,7 @@ function showTesistabConfirmDialog(details) {
 
 function createTesistabConfirmRow(label, value) {
   const row = document.createElement('div');
-  row.className = 'borang-tesistab-confirm-row';
+  row.className = 'tesistab-qa-confirm-row';
 
   const labelNode = document.createElement('span');
   labelNode.className = 'label';
@@ -1486,7 +1493,7 @@ function createTesistabConfirmRow(label, value) {
 }
 
 function syncJobActionButtons() {
-  const runBtn = document.getElementById('borang-tesistab-run-btn');
+  const runBtn = document.getElementById('tesistab-qa-run-btn');
   const running = Boolean(activeJobId && (activeJobStatus === 'queued' || activeJobStatus === 'running'));
 
   if (runBtn instanceof HTMLButtonElement) {
@@ -1525,13 +1532,13 @@ function clearActiveJobState(jobId) {
 }
 
 function showStatus(message, isError) {
-  const previous = document.getElementById('borang-tesistab-status');
+  const previous = document.getElementById('tesistab-qa-status');
   if (previous) {
     previous.remove();
   }
 
   const status = document.createElement('div');
-  status.id = 'borang-tesistab-status';
+  status.id = 'tesistab-qa-status';
   status.className = isError ? 'is-error' : 'is-ok';
   status.textContent = message;
   status.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
@@ -2455,7 +2462,7 @@ async function readResponseBody(response) {
 async function sendBackgroundHttpRequest(payload) {
   try {
     const response = await chrome.runtime.sendMessage({
-      type: 'BORANG_HTTP_REQUEST',
+      type: 'tesistab_HTTP_REQUEST',
       payload,
     });
 

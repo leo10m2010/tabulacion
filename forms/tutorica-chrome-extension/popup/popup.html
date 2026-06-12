@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
@@ -42,12 +42,12 @@
       <h2 class="with-icon" data-icon="backend">Backend</h2>
 
       <label for="backendBaseUrl">URL del backend</label>
-      <input id="backendBaseUrl" type="url" placeholder="http://localhost:5000" />
-      <p class="hint tiny">Usa solo protocolo + host + puerto. Ejemplo: http://localhost:5000</p>
+      <input id="backendBaseUrl" type="url" placeholder="https://tabulacion-api.onrender.com" />
+      <p class="hint tiny">Dejala como esta salvo que uses tu propio servidor.</p>
 
-      <label for="apiKey">API Key (opcional)</label>
-      <input id="apiKey" type="password" placeholder="x-api-key" autocomplete="off" />
-      <p class="hint tiny">Solo se usa si activaste TESISTAB_API_KEY en el backend.</p>
+      <label for="apiKey">Clave de API de TesisTab</label>
+      <input id="apiKey" type="password" placeholder="ttab_..." autocomplete="off" />
+      <p class="hint tiny">Generala en TesisTab &gt; Integraciones. Sin clave los envios seran rechazados.</p>
     </section>
 
     <div class="actions-row">

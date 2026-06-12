@@ -1,8 +1,7 @@
 # Tutorica Forms
 
 Servicio de llenado automático de Google Forms para los suscriptores de TesisTab:
-backend Express + extensión de Chrome. Derivado del proyecto MIT "borang" de
-Adib Zaini (ver `LICENSE`), recortado a su núcleo de llenado y autenticado contra
+backend Express + extensión de Chrome. Derivado del proyecto MIT (ver `LICENSE`), recortado a su núcleo de llenado y autenticado contra
 las claves de API de TesisTab.
 
 ## Cómo corre

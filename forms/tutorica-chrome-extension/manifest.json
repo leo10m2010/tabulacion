@@ -1,26 +1,28 @@
 {
   "name": "Tutorica Forms",
-  "description": "Google Forms automation for authorized TESISTAB testing",
-  "version": "0.2.0",
+  "description": "Herramienta de pruebas y QA: genera respuestas de prueba en tus propios Google Forms para validar lógica, baremos y tabulación.",
+  "version": "1.0.1",
   "manifest_version": 3,
-  "icons": { "128": "icon_128.png" },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
-    "default_icon": "icon.png",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
     "default_popup": "popup/popup.html"
   },
   "permissions": [
     "storage"
   ],
   "host_permissions": [
-    "https://tabulacion-api.onrender.com/*",
-    "http://localhost:5000/*",
-    "https://localhost:5000/*",
-    "http://127.0.0.1:5000/*",
-    "https://127.0.0.1:5000/*",
-    "http://localhost/*",
-    "https://localhost/*",
-    "http://127.0.0.1/*",
-    "https://127.0.0.1/*"
+    "https://tabulacion-api.onrender.com/*"
   ],
   "background": {
     "service_worker": "background/background.js"

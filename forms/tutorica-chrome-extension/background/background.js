@@ -1,13 +1,32 @@
+const PRODUCTION_BACKEND_URL = 'https://tabulacion-api.onrender.com';
+const SETTINGS_KEY = 'tesistabSettings';
+// Claves de versiones anteriores (prefijo duplicado): se migran y eliminan.
+const LEGACY_KEY_MAP = {
+  tesistabTesistabSettings: 'tesistabSettings',
+  tesistabTesistabCsvRows: 'tesistabCsvRows',
+  tesistabTesistabDiagnostics: 'tesistabDiagnostics',
+};
+// Defaults antiguos que deben migrarse al server de produccion.
+const LEGACY_BACKEND_URLS = new Set([
+  'http://localhost:5000',
+  'https://localhost:5000',
+  'http://127.0.0.1:5000',
+  'https://127.0.0.1:5000',
+]);
+
 chrome.runtime.onInstalled.addListener(async () => {
   const defaults = {
     enabled: true,
-    backendBaseUrl: 'http://localhost:5000',
+    backendBaseUrl: PRODUCTION_BACKEND_URL,
     apiKey: '',
     themeMode: 'system',
     panelViewMode: 'simple',
     submissionCount: 5,
+    multiPageMode: true,
     smartProfileMode: true,
     smartProfileType: 'favorable',
+    specialQuestionKeyword: '',
+    specialQuestionPreferred: '',
     profileDistributionEnabled: false,
     profileShareFavorable: 60,
     profileShareIntermedio: 25,
@@ -25,17 +44,37 @@ chrome.runtime.onInstalled.addListener(async () => {
     compatApiMode: false,
   };
 
-  const { borangTesistabSettings } = await chrome.storage.local.get(['borangTesistabSettings']);
+  const stored = await chrome.storage.local.get([SETTINGS_KEY, ...Object.keys(LEGACY_KEY_MAP)]);
+  const migrated = {};
+  const obsoleteKeys = [];
+  for (const [oldKey, newKey] of Object.entries(LEGACY_KEY_MAP)) {
+    if (stored[oldKey] !== undefined) {
+      if (stored[newKey] === undefined && newKey !== SETTINGS_KEY) {
+        migrated[newKey] = stored[oldKey];
+      }
+      obsoleteKeys.push(oldKey);
+    }
+  }
+
+  const existing = { ...(stored[SETTINGS_KEY] || stored.tesistabTesistabSettings || {}) };
+  if (LEGACY_BACKEND_URLS.has(String(existing.backendBaseUrl || '').trim().replace(/\/$/, ''))) {
+    existing.backendBaseUrl = PRODUCTION_BACKEND_URL;
+  }
+
   await chrome.storage.local.set({
-    borangTesistabSettings: {
+    ...migrated,
+    [SETTINGS_KEY]: {
       ...defaults,
-      ...(borangTesistabSettings || {}),
+      ...existing,
     },
   });
+  if (obsoleteKeys.length > 0) {
+    await chrome.storage.local.remove(obsoleteKeys);
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== 'BORANG_HTTP_REQUEST') {
+  if (!message || message.type !== 'tesistab_HTTP_REQUEST') {
     return false;
   }
 
