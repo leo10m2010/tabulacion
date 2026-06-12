@@ -46,7 +46,10 @@ npm test
 
 ## Extensión de Chrome
 
-En `tutorica-chrome-extension/`: cargarla descomprimida desde
-`chrome://extensions` (modo desarrollador) o empaquetarla para la Web Store.
+Publicada en la Chrome Web Store:
+<https://chromewebstore.google.com/detail/tutorica-forms/kdppbednjfajcjogdajmagfabidfjmem>
+
+El código fuente está en `tutorica-chrome-extension/`; para desarrollo se carga
+descomprimida desde `chrome://extensions` (modo desarrollador).
 El usuario pega su clave de TesisTab en el popup; el backend por defecto ya es
 `https://tabulacion-api.onrender.com`.

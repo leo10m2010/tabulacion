@@ -1627,7 +1627,17 @@ export default function App() {
                     <p className="text-sm font-semibold">Cómo conectar la extensión</p>
                     <ol className="mt-3 space-y-3 text-sm text-muted-foreground">
                       {[
-                        <>Instala la extensión <strong className="text-foreground">Tutorica Forms</strong> en Chrome (te la entregamos como archivo; pronto estará en la Chrome Web Store).</>,
+                        <>
+                          Instala la extensión <strong className="text-foreground">Tutorica Forms</strong> desde la{" "}
+                          <a
+                            href="https://chromewebstore.google.com/detail/tutorica-forms/kdppbednjfajcjogdajmagfabidfjmem"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-medium text-primary underline underline-offset-2 hover:opacity-80"
+                          >
+                            Chrome Web Store
+                          </a>.
+                        </>,
                         <>Abre la extensión y pega tu clave en el campo <strong className="text-foreground">API key</strong>.</>,
                         <>
                           En el campo <strong className="text-foreground">Backend</strong> usa{" "}

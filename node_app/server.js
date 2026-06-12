@@ -61,6 +61,10 @@ const USER_STORE_PATH = process.env.USER_STORE_PATH
   : path.join(SCRIPT_DIR, "data", "users.json");
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL ?? "admin@tabulacion.local").trim();
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD ?? "").trim();
+// Clave de API fija del admin (formato ttab_...): con disco efimero (plan free
+// de Render) users.json se borra en cada reinicio y las claves generadas desde
+// la pagina dejan de existir; esta variable la restaura en cada arranque.
+const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY ?? "").trim();
 
 // Limite de intentos de login fallidos por origen+email.
 const LOGIN_MAX_ATTEMPTS = Number.parseInt(process.env.LOGIN_MAX_ATTEMPTS ?? "5", 10);
@@ -349,6 +353,24 @@ const patchUser = (user, payload) => {
   return next;
 };
 
+const syncAdminApiKey = (admin) => {
+  if (!ADMIN_API_KEY) return false;
+  if (!ADMIN_API_KEY.startsWith("ttab_") || ADMIN_API_KEY.length < 20) {
+    // eslint-disable-next-line no-console
+    console.warn("[WARN] ADMIN_API_KEY ignorada: debe empezar con ttab_ y tener al menos 20 caracteres.");
+    return false;
+  }
+  const hash = hashApiKey(ADMIN_API_KEY);
+  if (admin.apiKeyHash === hash) return false;
+  admin.apiKeyHash = hash;
+  admin.apiKeyLast4 = ADMIN_API_KEY.slice(-4);
+  admin.apiKeyCreatedAt = new Date().toISOString();
+  admin.updatedAt = admin.apiKeyCreatedAt;
+  // eslint-disable-next-line no-console
+  console.log(`Admin ${admin.email}: clave de API restaurada desde ADMIN_API_KEY (···${admin.apiKeyLast4}).`);
+  return true;
+};
+
 const ensureBootstrapAdmin = () => {
   // Idempotente: el admin definido por ADMIN_EMAIL/ADMIN_PASSWORD debe poder
   // entrar siempre, aunque el almacen ya tenga usuarios (con disco efimero el
@@ -356,15 +378,18 @@ const ensureBootstrapAdmin = () => {
   const normalized = normalizeEmail(ADMIN_EMAIL);
   const existing = users.find((item) => item.emailLower === normalized);
   if (existing) {
+    let changed = false;
     if (ADMIN_PASSWORD && !checkPassword(ADMIN_PASSWORD, existing)) {
       Object.assign(existing, buildPassword(ADMIN_PASSWORD));
       existing.role = "admin";
       existing.status = "active";
       existing.updatedAt = new Date().toISOString();
-      writeUsers();
+      changed = true;
       // eslint-disable-next-line no-console
       console.log(`Admin ${existing.email}: contraseña sincronizada desde ADMIN_PASSWORD.`);
     }
+    if (syncAdminApiKey(existing)) changed = true;
+    if (changed) writeUsers();
     return;
   }
   // Sin ADMIN_PASSWORD y con usuarios existentes no se inventan admins.
@@ -381,6 +406,7 @@ const ensureBootstrapAdmin = () => {
     plan: "enterprise",
     subscriptionEndsAt: null,
   });
+  if (syncAdminApiKey(admin)) writeUsers();
   // eslint-disable-next-line no-console
   console.log(
     generated

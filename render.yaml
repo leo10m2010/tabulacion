@@ -44,6 +44,11 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
+      # Clave de API fija del admin para la extension Tutorica Forms (formato
+      # ttab_ + 43 caracteres aleatorios). Sin disco persistente users.json se
+      # borra en cada reinicio; esta variable restaura la clave al arrancar.
+      - key: ADMIN_API_KEY
+        sync: false
       # Dominio del frontend en Vercel (+ localhost para desarrollo).
       - key: CORS_ORIGIN
         value: http://localhost:5173,https://tabulacion.vercel.app

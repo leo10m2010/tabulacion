@@ -4,6 +4,9 @@ Extensión para completar y enviar respuestas automáticas en tus propios Google
 Funciona junto al backend de Tutorica Forms (montado en la API de TesisTab) y se
 autentica con la clave de API del usuario (`ttab_...`, se genera en TesisTab > Integraciones).
 
+**Instalación para usuarios (Chrome Web Store):**
+<https://chromewebstore.google.com/detail/tutorica-forms/kdppbednjfajcjogdajmagfabidfjmem>
+
 ## Cómo funciona
 
 1. El content script se inyecta en `docs.google.com/forms/*` y muestra un panel.
