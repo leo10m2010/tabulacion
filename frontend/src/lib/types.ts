@@ -67,5 +67,5 @@ export interface AuthUsersResponse {
 
 export type ThemeMode = "light" | "dark";
 export type AppView = "landing" | "app";
-export type AppSection = "tabulacion" | "usuarios";
+export type AppSection = "tabulacion" | "integraciones" | "usuarios";
 export type WizardStep = 1 | 2 | 3;

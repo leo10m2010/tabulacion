@@ -39,6 +39,12 @@ if (INSECURE_SECRETS.has(envSecret) && AUTH_REQUIRED) {
 }
 
 const AUTH_TOKEN_TTL_SECONDS = Number.parseInt(process.env.AUTH_TOKEN_TTL_SECONDS ?? "86400", 10);
+
+// Secreto compartido para que otros servicios (p. ej. Tutorica Forms) validen
+// claves de API en /integrations/validate-key. Si esta vacio, el endpoint
+// responde igual (las claves son inadivinables: 48 hex aleatorios), pero en
+// produccion conviene configurarlo en ambos servicios.
+const SERVICE_SHARED_SECRET = String(process.env.SERVICE_SHARED_SECRET ?? "").trim();
 const USER_STORE_PATH = process.env.USER_STORE_PATH
   ? path.resolve(process.env.USER_STORE_PATH)
   : path.join(SCRIPT_DIR, "data", "users.json");
@@ -207,6 +213,10 @@ const buildPassword = (password) => {
   const hash = hashPassword(password, salt);
   return { passwordSalt: salt, passwordHash: hash };
 };
+
+// Claves de API por usuario (servicios externos como Tutorica Forms): se
+// guarda solo el hash; la clave en claro se muestra una unica vez.
+const hashApiKey = (key) => crypto.createHash("sha256").update(key).digest("hex");
 
 const checkPassword = (password, user) => {
   const expected = Buffer.from(user.passwordHash, "hex");
@@ -553,6 +563,79 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && pathname === "/auth/me") {
       const user = requireAuth(req);
       sendJson(res, 200, { ok: true, user: sanitizeUser(user) });
+      return;
+    }
+
+    // ── Clave de API del usuario (para la extension Tutorica Forms) ─────────
+    if (pathname === "/auth/api-key") {
+      const user = requireAuth(req);
+      if (req.method === "GET") {
+        sendJson(res, 200, {
+          ok: true,
+          hasKey: Boolean(user.apiKeyHash),
+          last4: user.apiKeyLast4 ?? null,
+          createdAt: user.apiKeyCreatedAt ?? null,
+        });
+        return;
+      }
+      if (req.method === "POST") {
+        const apiKey = `ttab_${crypto.randomBytes(24).toString("hex")}`;
+        user.apiKeyHash = hashApiKey(apiKey);
+        user.apiKeyLast4 = apiKey.slice(-4);
+        user.apiKeyCreatedAt = new Date().toISOString();
+        user.updatedAt = user.apiKeyCreatedAt;
+        writeUsers();
+        // La clave en claro solo viaja en esta respuesta.
+        sendJson(res, 200, { ok: true, apiKey, last4: user.apiKeyLast4, createdAt: user.apiKeyCreatedAt });
+        return;
+      }
+      if (req.method === "DELETE") {
+        delete user.apiKeyHash;
+        delete user.apiKeyLast4;
+        delete user.apiKeyCreatedAt;
+        user.updatedAt = new Date().toISOString();
+        writeUsers();
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+    }
+
+    // ── Validacion de claves para servicios integrados ───────────────────────
+    if (req.method === "POST" && pathname === "/integrations/validate-key") {
+      if (SERVICE_SHARED_SECRET) {
+        const provided = Buffer.from(String(req.headers["x-service-secret"] ?? "").trim());
+        const expected = Buffer.from(SERVICE_SHARED_SECRET);
+        if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
+          throw new HttpError(401, "Secreto de servicio invalido.");
+        }
+      }
+      const payload = await parseJsonBody(req);
+      const key = String(payload?.key ?? "").trim();
+      const reply = (valid, extra = {}) => sendJson(res, 200, { ok: true, valid, ...extra });
+      if (!key.startsWith("ttab_") || key.length < 20) {
+        reply(false, { reason: "formato_invalido" });
+        return;
+      }
+      const hash = hashApiKey(key);
+      const owner = users.find((item) => item.apiKeyHash === hash);
+      if (!owner) {
+        reply(false, { reason: "clave_desconocida" });
+        return;
+      }
+      if (owner.status !== "active") {
+        reply(false, { reason: "usuario_inactivo" });
+        return;
+      }
+      if (isSubscriptionExpired(owner)) {
+        reply(false, { reason: "suscripcion_vencida", subscriptionEndsAt: owner.subscriptionEndsAt });
+        return;
+      }
+      reply(true, {
+        email: owner.email,
+        plan: owner.plan,
+        role: owner.role,
+        subscriptionEndsAt: owner.subscriptionEndsAt,
+      });
       return;
     }
 

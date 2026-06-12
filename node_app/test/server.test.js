@@ -139,6 +139,68 @@ test("config que excede los limites devuelve 500 con mensaje claro", async () =>
   assert.match(itemsPayload.error, /maximo 60 items/);
 });
 
+test("claves de API: generar, validar, vencimiento y revocar", async () => {
+  const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  const auth = { "Content-Type": "application/json", Authorization: `Bearer ${admin.body.token}` };
+
+  // Sin clave al inicio
+  let res = await fetch(`${BASE}/auth/api-key`, { headers: auth });
+  let body = await res.json();
+  assert.equal(body.hasKey, false);
+
+  // Generar: la clave en claro llega una sola vez
+  res = await fetch(`${BASE}/auth/api-key`, { method: "POST", headers: auth });
+  body = await res.json();
+  assert.match(body.apiKey, /^ttab_[0-9a-f]{48}$/);
+  const apiKey = body.apiKey;
+
+  // Validacion de servicio: clave valida
+  const validate = (key) => fetch(`${BASE}/integrations/validate-key`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key }),
+  }).then((r) => r.json());
+
+  let v = await validate(apiKey);
+  assert.equal(v.valid, true);
+  assert.equal(v.email, ADMIN_EMAIL);
+
+  // Clave desconocida y formato invalido
+  v = await validate(`ttab_${"0".repeat(48)}`);
+  assert.equal(v.valid, false);
+  assert.equal(v.reason, "clave_desconocida");
+  v = await validate("no-es-una-clave");
+  assert.equal(v.valid, false);
+
+  // Usuario con suscripcion vencida: clave rechazada
+  const created = await fetch(`${BASE}/auth/users`, {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({ email: "vencido@test.local", password: "ClaveVencida1!", subscriptionDays: 30 }),
+  });
+  const createdBody = await created.json();
+  const expiredLogin = await login("vencido@test.local", "ClaveVencida1!");
+  const expiredKeyRes = await fetch(`${BASE}/auth/api-key`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${expiredLogin.body.token}` },
+  });
+  const expiredKey = (await expiredKeyRes.json()).apiKey;
+  await fetch(`${BASE}/auth/users/${createdBody.user.id}`, {
+    method: "PATCH",
+    headers: auth,
+    body: JSON.stringify({ subscriptionEndsAt: "2020-01-01T00:00:00.000Z" }),
+  });
+  v = await validate(expiredKey);
+  assert.equal(v.valid, false);
+  assert.equal(v.reason, "suscripcion_vencida");
+
+  // Revocar
+  res = await fetch(`${BASE}/auth/api-key`, { method: "DELETE", headers: auth });
+  assert.equal(res.status, 200);
+  v = await validate(apiKey);
+  assert.equal(v.valid, false);
+});
+
 test("rate limiting: bloquea tras varios intentos fallidos", async () => {
   const email = "fuerza-bruta@test.local";
   for (let i = 0; i < 3; i += 1) {
