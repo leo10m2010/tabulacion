@@ -650,7 +650,7 @@ function injectStatusPill(enabled) {
   if (existing) {
     existing.className = enabled ? 'is-on' : 'is-off';
     existing.textContent = enabled ? 'Tutorica Forms: ON' : 'Tutorica Forms: OFF';
-    existing.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
+    existing.setAttribute('data-theme', resolveEffectiveThemeMode(settings.themeMode));
     return;
   }
 
@@ -658,7 +658,7 @@ function injectStatusPill(enabled) {
   pill.id = 'tesistab-qa-pill';
   pill.className = enabled ? 'is-on' : 'is-off';
   pill.textContent = enabled ? 'Tutorica Forms: ON' : 'Tutorica Forms: OFF';
-  pill.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
+  pill.setAttribute('data-theme', resolveEffectiveThemeMode(settings.themeMode));
   document.documentElement.appendChild(pill);
 }
 
@@ -681,7 +681,7 @@ function injectActionsPanel() {
 
   const panel = document.createElement('div');
   panel.id = 'tesistab-qa-actions';
-  panel.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
+  panel.setAttribute('data-theme', resolveEffectiveThemeMode(settings.themeMode));
 
   const header = document.createElement('div');
   header.className = 'tesistab-qa-header';
@@ -1407,7 +1407,7 @@ function showTesistabConfirmDialog(details) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.id = 'tesistab-qa-confirm-overlay';
-    overlay.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
+    overlay.setAttribute('data-theme', resolveEffectiveThemeMode(settings.themeMode));
 
     const dialog = document.createElement('div');
     dialog.id = 'tesistab-qa-confirm-dialog';
@@ -1541,7 +1541,7 @@ function showStatus(message, isError) {
   status.id = 'tesistab-qa-status';
   status.className = isError ? 'is-error' : 'is-ok';
   status.textContent = message;
-  status.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
+  status.setAttribute('data-theme', resolveEffectiveThemeMode(settings.themeMode));
   document.documentElement.appendChild(status);
 
   window.setTimeout(() => {

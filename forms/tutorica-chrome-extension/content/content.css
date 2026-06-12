@@ -1,3 +1,49 @@
+/* Tokens de diseno espejo de frontend/src/index.css (TesisTab): neutros frios
+   con un solo acento azul cobalto. Se declaran sobre cada raiz inyectada
+   porque el body pertenece a Google Forms. Mantener sincronizados con la web. */
+#tesistab-qa-pill,
+#tesistab-qa-status,
+#tesistab-qa-actions,
+#tesistab-qa-confirm-overlay {
+  --background: 220 30% 98%;
+  --foreground: 224 25% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 224 25% 12%;
+  --primary: 222 65% 40%;
+  --primary-foreground: 0 0% 98%;
+  --muted: 220 18% 93%;
+  --muted-foreground: 222 12% 40%;
+  --accent: 221 55% 94%;
+  --accent-foreground: 223 50% 20%;
+  --danger: 2 76% 50%;
+  --danger-foreground: 0 0% 100%;
+  --border: 220 16% 85%;
+  --input: 220 16% 85%;
+  --ring: 222 65% 40%;
+  --tt-font: 'Outfit', 'Outfit Variable', 'Segoe UI', system-ui, sans-serif;
+}
+
+#tesistab-qa-pill[data-theme='dark'],
+#tesistab-qa-status[data-theme='dark'],
+#tesistab-qa-actions[data-theme='dark'],
+#tesistab-qa-confirm-overlay[data-theme='dark'] {
+  --background: 224 22% 8%;
+  --foreground: 218 15% 92%;
+  --card: 224 20% 11%;
+  --card-foreground: 218 15% 92%;
+  --primary: 218 80% 68%;
+  --primary-foreground: 224 45% 10%;
+  --muted: 223 15% 17%;
+  --muted-foreground: 218 10% 70%;
+  --accent: 223 16% 21%;
+  --accent-foreground: 218 16% 88%;
+  --danger: 2 72% 58%;
+  --danger-foreground: 0 0% 100%;
+  --border: 223 14% 23%;
+  --input: 223 14% 23%;
+  --ring: 218 80% 68%;
+}
+
 #tesistab-qa-pill {
   position: fixed;
   top: 12px;
@@ -5,29 +51,24 @@
   z-index: 999999;
   padding: 8px 12px;
   border-radius: 999px;
+  border: 1px solid hsl(var(--border));
   font-size: 12px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  font-weight: 700;
+  font-family: var(--tt-font);
+  font-weight: 600;
   letter-spacing: 0.2px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+  box-shadow: 0 8px 24px hsl(224 25% 12% / 0.14);
 }
 
 #tesistab-qa-pill.is-on {
-  background: linear-gradient(145deg, #1d4ed8, #2563eb);
-  color: #eff6ff;
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
 
 #tesistab-qa-pill.is-off {
-  background: linear-gradient(145deg, #b91c1c, #dc2626);
-  color: #fff5f5;
-}
-
-#tesistab-qa-pill[data-theme='dark'].is-on {
-  background: linear-gradient(145deg, #2563eb, #3b82f6);
-}
-
-#tesistab-qa-pill[data-theme='dark'].is-off {
-  background: linear-gradient(145deg, #dc2626, #ef4444);
+  background: hsl(var(--danger));
+  border-color: hsl(var(--danger));
+  color: hsl(var(--danger-foreground));
 }
 
 #tesistab-qa-status {
@@ -37,19 +78,20 @@
   max-width: 380px;
   z-index: 999999;
   padding: 12px 14px;
-  border-radius: 10px;
-  color: #ffffff;
+  border-radius: 12px;
   font-size: 13px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  font-family: var(--tt-font);
+  box-shadow: 0 8px 24px hsl(224 25% 12% / 0.22);
 }
 
 #tesistab-qa-status.is-ok {
-  background: #1d4ed8;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
 
 #tesistab-qa-status.is-error {
-  background: #b91c1c;
+  background: hsl(var(--danger));
+  color: hsl(var(--danger-foreground));
 }
 
 #tesistab-qa-confirm-overlay {
@@ -60,49 +102,31 @@
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(2, 6, 23, 0.58);
+  background: hsl(224 25% 12% / 0.55);
   backdrop-filter: blur(4px);
 }
 
 #tesistab-qa-confirm-dialog {
   width: min(420px, calc(100vw - 32px));
-  border: 1px solid #cbd5e1;
-  border-radius: 18px;
-  background: linear-gradient(180deg, #ffffff 0%, #eef2ff 100%);
-  color: #0f172a;
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
+  border: 1px solid hsl(var(--border));
+  border-radius: 16px;
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  box-shadow: 0 18px 48px hsl(224 25% 12% / 0.28);
   padding: 18px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-}
-
-#tesistab-qa-confirm-overlay[data-theme='dark'] #tesistab-qa-confirm-dialog {
-  border-color: #334155;
-  background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
-  color: #f8fafc;
-}
-
-#tesistab-qa-confirm-overlay[data-theme='dark'] #tesistab-qa-confirm-dialog .tesistab-qa-confirm-subtitle,
-#tesistab-qa-confirm-overlay[data-theme='dark'] #tesistab-qa-confirm-dialog .tesistab-qa-confirm-row .label {
-  color: #cbd5e1;
-}
-
-#tesistab-qa-confirm-overlay[data-theme='dark'] #tesistab-qa-confirm-dialog .tesistab-qa-confirm-details {
-  background: rgba(15, 23, 42, 0.82);
-  border-color: #334155;
-}
-
-#tesistab-qa-confirm-overlay[data-theme='dark'] #tesistab-qa-confirm-dialog .tesistab-qa-confirm-row .value {
-  color: #f8fafc;
+  font-family: var(--tt-font);
 }
 
 #tesistab-qa-confirm-dialog h3 {
   margin: 10px 0 4px;
   font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 #tesistab-qa-confirm-dialog .tesistab-qa-confirm-subtitle {
   margin: 0 0 14px;
-  color: #475569;
+  color: hsl(var(--muted-foreground));
   font-size: 13px;
 }
 
@@ -112,9 +136,9 @@
   gap: 8px;
   margin-bottom: 16px;
   padding: 12px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  background: hsl(var(--muted) / 0.55);
+  border: 1px solid hsl(var(--border));
 }
 
 #tesistab-qa-confirm-dialog .tesistab-qa-confirm-row {
@@ -125,11 +149,11 @@
 }
 
 #tesistab-qa-confirm-dialog .tesistab-qa-confirm-row .label {
-  color: #475569;
+  color: hsl(var(--muted-foreground));
 }
 
 #tesistab-qa-confirm-dialog .tesistab-qa-confirm-row .value {
-  color: #0f172a;
+  color: hsl(var(--card-foreground));
   font-weight: 600;
   text-align: right;
   word-break: break-word;
@@ -146,26 +170,29 @@
   border-radius: 10px;
   padding: 10px 14px;
   font-size: 13px;
-  font-weight: 700;
+  font-family: var(--tt-font);
+  font-weight: 600;
   cursor: pointer;
+  transition: background-color 160ms ease;
 }
 
 #tesistab-qa-confirm-dialog .tesistab-qa-confirm-actions button.secondary {
-  background: #334155;
-  color: #ecfeff;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border));
 }
 
 #tesistab-qa-confirm-dialog .tesistab-qa-confirm-actions button:not(.secondary) {
-  background: #1d4ed8;
-  color: #eff6ff;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
 
 #tesistab-qa-confirm-dialog .tesistab-qa-confirm-actions button.secondary:hover {
-  background: #475569;
+  background: hsl(var(--accent));
 }
 
 #tesistab-qa-confirm-dialog .tesistab-qa-confirm-actions button:not(.secondary):hover {
-  background: #2563eb;
+  background: hsl(var(--primary) / 0.88);
 }
 
 #tesistab-qa-actions {
@@ -177,23 +204,18 @@
   flex-direction: column;
   gap: 6px;
   width: 220px;
-  padding: 10px;
-  border-radius: 12px;
-  background: linear-gradient(145deg, #f8fafc, #eef2ff);
-  border: 1px solid #cbd5e1;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
-}
-
-#tesistab-qa-actions[data-theme='dark'] {
-  background: linear-gradient(145deg, #0f172a, #111827);
-  border-color: #334155;
+  padding: 12px;
+  border-radius: 14px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  box-shadow: 0 12px 30px hsl(224 25% 12% / 0.14);
 }
 
 #tesistab-qa-actions .tesistab-qa-title {
-  color: #0f172a;
+  color: hsl(var(--card-foreground));
   font-size: 12px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  font-weight: 700;
+  font-family: var(--tt-font);
+  font-weight: 600;
 }
 
 #tesistab-qa-actions .tesistab-qa-icon {
@@ -202,22 +224,12 @@
   height: 15px;
   margin-right: 6px;
   vertical-align: -2px;
-  color: #2563eb;
+  color: hsl(var(--primary));
 }
 
 #tesistab-qa-actions .tesistab-qa-icon svg {
   width: 100%;
   height: 100%;
-}
-
-#tesistab-qa-actions[data-theme='dark'] .tesistab-qa-title,
-#tesistab-qa-actions[data-theme='dark'] .tesistab-qa-count-row,
-#tesistab-qa-actions[data-theme='dark'] .tesistab-qa-advanced {
-  color: #f8fafc;
-}
-
-#tesistab-qa-actions[data-theme='dark'] .tesistab-qa-icon {
-  color: #60a5fa;
 }
 
 #tesistab-qa-actions .tesistab-qa-header {
@@ -243,8 +255,8 @@
 }
 
 #tesistab-qa-backend-status.is-offline {
-  background: #ef4444;
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
+  background: hsl(var(--danger));
+  box-shadow: 0 0 0 2px hsl(var(--danger) / 0.18);
 }
 
 #tesistab-qa-backend-status.is-checking {
@@ -258,9 +270,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  color: #334155;
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: var(--tt-font);
 }
 
 #tesistab-qa-actions .tesistab-qa-help {
@@ -271,58 +283,46 @@
   height: 14px;
   margin-left: 4px;
   border-radius: 999px;
-  background: #cbd5e1;
-  color: #0f172a;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
   font-size: 10px;
   font-weight: 700;
   cursor: help;
 }
 
-#tesistab-qa-actions[data-theme='dark'] .tesistab-qa-help {
-  background: #475569;
-  color: #f8fafc;
+#tesistab-qa-actions .tesistab-qa-count-row input,
+#tesistab-qa-actions .tesistab-qa-count-row select {
+  border: 1px solid hsl(var(--input));
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-family: var(--tt-font);
+  font-size: 12px;
 }
 
 #tesistab-qa-actions .tesistab-qa-count-row input {
   width: 64px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  padding: 6px 8px;
-  background: #ffffff;
-  color: #0f172a;
-  font-size: 12px;
-}
-
-#tesistab-qa-actions[data-theme='dark'] .tesistab-qa-count-row input,
-#tesistab-qa-actions[data-theme='dark'] .tesistab-qa-count-row select {
-  border-color: #334155;
-  background: #0b1220;
-  color: #f8fafc;
 }
 
 #tesistab-qa-actions .tesistab-qa-count-row select {
   width: 96px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  padding: 6px 8px;
-  background: #ffffff;
-  color: #0f172a;
-  font-size: 12px;
+}
+
+#tesistab-qa-actions .tesistab-qa-count-row input:focus-visible,
+#tesistab-qa-actions .tesistab-qa-count-row select:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
 }
 
 #tesistab-qa-actions .tesistab-qa-advanced {
-  border: 1px solid #cbd5e1;
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
   padding: 6px 8px;
-  color: #334155;
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background: rgba(255, 255, 255, 0.72);
-}
-
-#tesistab-qa-actions[data-theme='dark'] .tesistab-qa-advanced {
-  border-color: #334155;
-  background: rgba(15, 23, 42, 0.82);
+  font-family: var(--tt-font);
+  background: hsl(var(--muted) / 0.55);
 }
 
 #tesistab-qa-actions .tesistab-qa-advanced summary {
@@ -357,48 +357,39 @@
 #tesistab-qa-actions .tesistab-qa-toggle-row input[type='checkbox'] {
   width: 16px;
   height: 16px;
+  accent-color: hsl(var(--primary));
 }
 
 #tesistab-qa-actions button {
-  border: none;
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   padding: 8px 10px;
-  background: #334155;
-  color: #ecfeff;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
   font-size: 12px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: var(--tt-font);
+  font-weight: 500;
   cursor: pointer;
   text-align: left;
-}
-
-#tesistab-qa-actions[data-theme='dark'] button {
-  background: #1e293b;
-  color: #eff6ff;
+  transition: background-color 160ms ease;
 }
 
 #tesistab-qa-actions button:hover {
-  background: #475569;
-}
-
-#tesistab-qa-actions .tesistab-qa-main-action {
-  background: #1d4ed8;
-  color: #eff6ff;
-  border: none;
-}
-
-#tesistab-qa-actions[data-theme='dark'] .tesistab-qa-main-action {
-  background: #2563eb;
-  color: #eff6ff;
-}
-
-#tesistab-qa-actions .tesistab-qa-main-action:hover {
-  background: #2563eb;
+  background: hsl(var(--accent));
 }
 
 #tesistab-qa-actions .tesistab-qa-main-action {
   position: relative;
   overflow: hidden;
   text-align: center;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border: none;
+  font-weight: 600;
+}
+
+#tesistab-qa-actions .tesistab-qa-main-action:hover {
+  background: hsl(var(--primary) / 0.88);
 }
 
 #tesistab-qa-actions .tesistab-qa-main-action .main-label,
@@ -418,11 +409,12 @@
 }
 
 #tesistab-qa-actions .tesistab-qa-main-action.is-running {
-  background: #1d4ed8;
+  background: hsl(var(--primary));
 }
 
 #tesistab-qa-actions .tesistab-qa-main-action.is-running:hover:not(:disabled) {
-  background: #991b1b;
+  background: hsl(var(--danger));
+  color: hsl(var(--danger-foreground));
 }
 
 #tesistab-qa-actions .tesistab-qa-main-action.is-running:hover:not(:disabled) .main-label {

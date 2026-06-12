@@ -2,48 +2,52 @@
   box-sizing: border-box;
 }
 
+/* Tokens de diseno espejo de frontend/src/index.css (TesisTab): neutros frios
+   con un solo acento azul cobalto. Mantener sincronizados con la web. */
 body {
-  --popup-bg: linear-gradient(145deg, #f8fafc, #eef2ff);
-  --popup-text: #0f172a;
-  --popup-muted: #475569;
-  --popup-card-bg: rgba(255, 255, 255, 0.9);
-  --popup-card-border: #cbd5e1;
-  --popup-input-bg: #ffffff;
-  --popup-input-border: #cbd5e1;
-  --popup-help-bg: #cbd5e1;
-  --popup-help-text: #0f172a;
-  --popup-primary: #1d4ed8;
-  --popup-primary-hover: #2563eb;
-  --popup-secondary: #334155;
-  --popup-secondary-hover: #475569;
-  --popup-status-muted-bg: #e2e8f0;
-  --popup-status-muted-text: #334155;
+  --background: 220 30% 98%;
+  --foreground: 224 25% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 224 25% 12%;
+  --primary: 222 65% 40%;
+  --primary-foreground: 0 0% 98%;
+  --muted: 220 18% 93%;
+  --muted-foreground: 222 12% 40%;
+  --accent: 221 55% 94%;
+  --accent-foreground: 223 50% 20%;
+  --danger: 2 76% 50%;
+  --danger-foreground: 0 0% 100%;
+  --border: 220 16% 85%;
+  --input: 220 16% 85%;
+  --ring: 222 65% 40%;
 }
 
 body[data-theme='dark'] {
-  --popup-bg: linear-gradient(145deg, #0f172a, #111827);
-  --popup-text: #f8fafc;
-  --popup-muted: #cbd5e1;
-  --popup-card-bg: rgba(15, 23, 42, 0.92);
-  --popup-card-border: #334155;
-  --popup-input-bg: #0b1220;
-  --popup-input-border: #334155;
-  --popup-help-bg: #475569;
-  --popup-help-text: #f8fafc;
-  --popup-primary: #2563eb;
-  --popup-primary-hover: #3b82f6;
-  --popup-secondary: #1e293b;
-  --popup-secondary-hover: #334155;
-  --popup-status-muted-bg: #334155;
-  --popup-status-muted-text: #e2e8f0;
+  --background: 224 22% 8%;
+  --foreground: 218 15% 92%;
+  --card: 224 20% 11%;
+  --card-foreground: 218 15% 92%;
+  --primary: 218 80% 68%;
+  --primary-foreground: 224 45% 10%;
+  --muted: 223 15% 17%;
+  --muted-foreground: 218 10% 70%;
+  --accent: 223 16% 21%;
+  --accent-foreground: 218 16% 88%;
+  --danger: 2 72% 58%;
+  --danger-foreground: 0 0% 100%;
+  --border: 223 14% 23%;
+  --input: 223 14% 23%;
+  --ring: 218 80% 68%;
 }
 
 body {
   margin: 0;
   width: 340px;
-  background: var(--popup-bg);
-  color: var(--popup-text);
-  font-family: 'Segoe UI', Tahoma, sans-serif;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: 'Outfit', 'Outfit Variable', 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 220ms ease, color 220ms ease;
 }
 
 main {
@@ -53,11 +57,13 @@ main {
 h1 {
   margin: 0;
   font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .hint {
   margin: 6px 0 14px;
-  color: var(--popup-muted);
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
 }
 
@@ -67,18 +73,18 @@ h1 {
 
 .config-box {
   margin-top: 12px;
-  border: 1px solid var(--popup-card-border);
+  border: 1px solid hsl(var(--border));
   border-radius: 12px;
-  background: var(--popup-card-bg);
-  padding: 10px;
+  background: hsl(var(--card));
+  padding: 12px;
 }
 
 .config-box h2,
 .config-box summary {
   margin: 0 0 6px;
   font-size: 13px;
-  color: var(--popup-text);
-  font-weight: 700;
+  color: hsl(var(--card-foreground));
+  font-weight: 600;
 }
 
 .section-icon {
@@ -88,7 +94,7 @@ h1 {
   width: 16px;
   height: 16px;
   margin-right: 6px;
-  color: var(--popup-primary);
+  color: hsl(var(--primary));
   vertical-align: -2px;
 }
 
@@ -109,7 +115,7 @@ h1 {
   gap: 10px;
   margin-top: 10px;
   font-size: 12px;
-  color: var(--popup-text);
+  color: hsl(var(--foreground));
 }
 
 .status-pill {
@@ -120,27 +126,37 @@ h1 {
   padding: 4px 8px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .status-pill.is-ok {
-  background: #dcfce7;
-  color: #166534;
+  background: hsl(142 70% 94%);
+  color: hsl(143 64% 24%);
 }
 
 .status-pill.is-error {
-  background: #fee2e2;
-  color: #991b1b;
+  background: hsl(var(--danger) / 0.12);
+  color: hsl(var(--danger));
 }
 
 .status-pill.is-warning {
-  background: #fef3c7;
-  color: #92400e;
+  background: hsl(45 93% 90%);
+  color: hsl(29 80% 33%);
 }
 
 .status-pill.is-muted {
-  background: var(--popup-status-muted-bg);
-  color: var(--popup-status-muted-text);
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+body[data-theme='dark'] .status-pill.is-ok {
+  background: hsl(143 60% 20% / 0.45);
+  color: hsl(142 65% 70%);
+}
+
+body[data-theme='dark'] .status-pill.is-warning {
+  background: hsl(35 80% 25% / 0.45);
+  color: hsl(45 90% 70%);
 }
 
 .advanced-box summary {
@@ -164,8 +180,8 @@ label {
   display: block;
   margin: 10px 0 4px;
   font-size: 12px;
-  font-weight: 700;
-  color: var(--popup-text);
+  font-weight: 600;
+  color: hsl(var(--foreground));
 }
 
 .help-tip {
@@ -176,8 +192,8 @@ label {
   height: 14px;
   margin-left: 4px;
   border-radius: 999px;
-  background: var(--popup-help-bg);
-  color: var(--popup-help-text);
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
   font-size: 10px;
   font-weight: 700;
   cursor: help;
@@ -189,11 +205,18 @@ input[type='text'],
 select,
 input[type='number'] {
   width: 100%;
-  border: 1px solid var(--popup-input-border);
+  border: 1px solid hsl(var(--input));
   border-radius: 8px;
   padding: 8px;
-  background: var(--popup-input-bg);
-  color: var(--popup-text);
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-family: inherit;
+}
+
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
 }
 
 .toggle-row {
@@ -222,7 +245,7 @@ input[type='number'] {
 code {
   font-family: Consolas, 'Courier New', monospace;
   font-size: 11px;
-  background: var(--popup-status-muted-bg);
+  background: hsl(var(--muted));
   padding: 1px 4px;
   border-radius: 4px;
 }
@@ -233,13 +256,15 @@ button {
   border: none;
   border-radius: 10px;
   padding: 10px;
-  background: var(--popup-primary);
-  color: #eff6ff;
-  font-weight: 700;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-family: inherit;
+  font-weight: 600;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: background-color 160ms ease;
 }
 
 .actions-row {
@@ -255,37 +280,39 @@ button {
 }
 
 button.secondary {
-  background: var(--popup-secondary);
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border));
 }
 
 button.secondary:hover {
-  background: var(--popup-secondary-hover);
+  background: hsl(var(--accent));
 }
 
 button:hover {
-  background: var(--popup-primary-hover);
+  background: hsl(var(--primary) / 0.88);
 }
 
 #status {
   min-height: 18px;
   margin: 10px 0 0;
   font-size: 12px;
-  color: #1d4ed8;
+  color: hsl(var(--primary));
 }
 
 #status.ok {
-  color: var(--popup-primary);
+  color: hsl(var(--primary));
 }
 
 #status.error {
-  color: #b91c1c;
+  color: hsl(var(--danger));
 }
 
 .diag-box {
   margin-top: 10px;
-  border: 1px solid var(--popup-card-border);
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
-  background: var(--popup-card-bg);
+  background: hsl(var(--card));
   padding: 8px;
 }
 
@@ -293,8 +320,8 @@ button:hover {
   cursor: pointer;
   user-select: none;
   font-size: 12px;
-  font-weight: 700;
-  color: var(--popup-text);
+  font-weight: 600;
+  color: hsl(var(--foreground));
 }
 
 .diag-content {
@@ -303,18 +330,18 @@ button:hover {
 
 .diag-content hr {
   border: 0;
-  border-top: 1px solid var(--popup-card-border);
+  border-top: 1px solid hsl(var(--border));
   margin: 8px 0;
 }
 
 .diag-box h2 {
   margin: 0 0 6px;
   font-size: 12px;
-  color: #334155;
+  color: hsl(var(--muted-foreground));
 }
 
 .diag-line {
   margin: 0 0 4px;
   font-size: 11px;
-  color: var(--popup-muted);
+  color: hsl(var(--muted-foreground));
 }
