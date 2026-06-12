@@ -232,6 +232,13 @@
   height: 100%;
 }
 
+/* Dentro de un boton el icono toma el color del texto del boton, no el
+   acento: evita icono cobalto sobre fondo cobalto. */
+#tesistab-qa-actions button .tesistab-qa-icon,
+#tesistab-qa-confirm-dialog button .tesistab-qa-icon {
+  color: inherit;
+}
+
 #tesistab-qa-actions .tesistab-qa-header {
   display: flex;
   align-items: center;

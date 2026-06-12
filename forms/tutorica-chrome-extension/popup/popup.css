@@ -103,6 +103,12 @@ h1 {
   height: 100%;
 }
 
+/* Dentro de un boton el icono toma el color del texto del boton, no el
+   acento: evita icono cobalto sobre fondo cobalto. */
+button .section-icon {
+  color: inherit;
+}
+
 .with-icon {
   display: flex;
   align-items: center;
