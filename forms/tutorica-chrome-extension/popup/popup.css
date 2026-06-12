@@ -40,6 +40,16 @@ body[data-theme='dark'] {
   --ring: 218 80% 68%;
 }
 
+/* Sin barra de scroll visible; el contenido sigue desplazable con la rueda. */
+html {
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+}
+
 body {
   margin: 0;
   width: 340px;
