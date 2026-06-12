@@ -633,7 +633,13 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (req.method === "POST") {
-        const apiKey = `ttab_${crypto.randomBytes(24).toString("hex")}`;
+        // El admin con ADMIN_API_KEY fija recibe siempre esa clave: si se
+        // regenerara, el proximo reinicio la restauraria desde el entorno y la
+        // clave recien emitida dejaria de validar sin aviso.
+        const isBootstrapAdmin = user.emailLower === normalizeEmail(ADMIN_EMAIL);
+        const hasFixedAdminKey =
+          isBootstrapAdmin && ADMIN_API_KEY.startsWith("ttab_") && ADMIN_API_KEY.length >= 20;
+        const apiKey = hasFixedAdminKey ? ADMIN_API_KEY : `ttab_${crypto.randomBytes(24).toString("hex")}`;
         user.apiKeyHash = hashApiKey(apiKey);
         user.apiKeyLast4 = apiKey.slice(-4);
         user.apiKeyCreatedAt = new Date().toISOString();

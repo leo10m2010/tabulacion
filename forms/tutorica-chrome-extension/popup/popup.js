@@ -5,6 +5,7 @@ const DEFAULT_SETTINGS = {
   enabled: true,
   backendBaseUrl: 'https://tabulacion-api.onrender.com',
   apiKey: '',
+  accountEmail: '',
   themeMode: 'system',
   panelViewMode: 'simple',
   submissionCount: 5,
@@ -38,6 +39,13 @@ const elements = {
   themeMode: document.getElementById('themeMode'),
   backendBaseUrl: document.getElementById('backendBaseUrl'),
   apiKey: document.getElementById('apiKey'),
+  loginForm: document.getElementById('loginForm'),
+  loginEmail: document.getElementById('loginEmail'),
+  loginPassword: document.getElementById('loginPassword'),
+  loginBtn: document.getElementById('loginBtn'),
+  sessionBox: document.getElementById('sessionBox'),
+  sessionEmail: document.getElementById('sessionEmail'),
+  logoutBtn: document.getElementById('logoutBtn'),
   requireConfirmation: document.getElementById('requireConfirmation'),
   multiPageMode: document.getElementById('multiPageMode'),
   backendLive: document.getElementById('backendLive'),
@@ -56,16 +64,29 @@ const elements = {
   diagUpdatedAt: document.getElementById('diagUpdatedAt'),
 };
 
-loadSettings();
-loadDiagnostics();
-loadBackendConfig(false);
+initPopup();
 decoratePopupIcons();
+
+async function initPopup() {
+  // Primero los settings: loadBackendConfig lee la clave desde el campo y sin
+  // esperar mandaba la consulta sin clave (401 -> "No disponible" enganoso).
+  await loadSettings();
+  loadDiagnostics();
+  loadBackendConfig(false);
+}
 
 elements.saveBtn.addEventListener('click', saveSettings);
 elements.testConnectionBtn.addEventListener('click', testConnection);
 elements.refreshDiagBtn.addEventListener('click', async () => {
   await loadDiagnostics();
   showStatus('Estado actualizado.', false);
+});
+elements.loginBtn.addEventListener('click', login);
+elements.logoutBtn.addEventListener('click', logout);
+elements.loginPassword.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    login();
+  }
 });
 
 async function loadSettings() {
@@ -78,19 +99,101 @@ async function loadSettings() {
   elements.apiKey.value = settings.apiKey || '';
   elements.requireConfirmation.checked = Boolean(settings.requireConfirmation);
   elements.multiPageMode.checked = Boolean(settings.multiPageMode);
+  updateSessionView(settings);
   applyPopupTheme(elements.themeMode.value);
+}
+
+function updateSessionView(settings) {
+  const hasSession = Boolean(settings.accountEmail) && Boolean(settings.apiKey);
+  elements.loginForm.hidden = hasSession;
+  elements.sessionBox.hidden = !hasSession;
+  elements.sessionEmail.textContent = hasSession ? settings.accountEmail : '-';
+}
+
+async function login() {
+  const backendBaseUrl = normalizeUrl(elements.backendBaseUrl.value);
+  const email = String(elements.loginEmail.value || '').trim();
+  const password = String(elements.loginPassword.value || '');
+
+  if (!email || !password) {
+    showStatus('Escribe tu correo y contrasena.', true);
+    return;
+  }
+
+  elements.loginBtn.disabled = true;
+  showStatus('Iniciando sesion...', false);
+
+  try {
+    const loginResponse = await fetch(`${backendBaseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = await safeReadJson(loginResponse);
+    if (!loginResponse.ok || !loginBody?.token) {
+      showStatus(loginBody?.error || `No se pudo iniciar sesion (HTTP ${loginResponse.status}).`, true);
+      return;
+    }
+
+    const keyResponse = await fetch(`${backendBaseUrl}/auth/api-key`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${loginBody.token}` },
+    });
+    const keyBody = await safeReadJson(keyResponse);
+    if (!keyResponse.ok || !keyBody?.apiKey) {
+      showStatus(keyBody?.error || `No se pudo obtener tu clave (HTTP ${keyResponse.status}).`, true);
+      return;
+    }
+
+    const accountEmail = loginBody.user?.email || email;
+    const existing = await chrome.storage.local.get([SETTINGS_KEY]);
+    const previous = { ...DEFAULT_SETTINGS, ...(existing[SETTINGS_KEY] || {}) };
+    const updated = {
+      ...previous,
+      backendBaseUrl,
+      apiKey: keyBody.apiKey,
+      accountEmail,
+    };
+    await chrome.storage.local.set({ [SETTINGS_KEY]: updated });
+
+    elements.apiKey.value = keyBody.apiKey;
+    elements.loginPassword.value = '';
+    updateSessionView(updated);
+    showStatus(`Sesion iniciada como ${accountEmail}.`, false);
+    loadBackendConfig(false);
+  } catch (error) {
+    showStatus(`No se pudo conectar: ${error.message || 'Error desconocido'}`, true);
+  } finally {
+    elements.loginBtn.disabled = false;
+  }
+}
+
+async function logout() {
+  const existing = await chrome.storage.local.get([SETTINGS_KEY]);
+  const previous = { ...DEFAULT_SETTINGS, ...(existing[SETTINGS_KEY] || {}) };
+  const updated = { ...previous, apiKey: '', accountEmail: '' };
+  await chrome.storage.local.set({ [SETTINGS_KEY]: updated });
+
+  elements.apiKey.value = '';
+  elements.loginEmail.value = '';
+  elements.loginPassword.value = '';
+  updateSessionView(updated);
+  showStatus('Sesion cerrada en este navegador. Tu clave sigue activa en TesisTab.', false);
 }
 
 async function saveSettings() {
   const existing = await chrome.storage.local.get([SETTINGS_KEY]);
   const previous = { ...DEFAULT_SETTINGS, ...(existing[SETTINGS_KEY] || {}) };
 
+  const manualApiKey = String(elements.apiKey.value || '').trim();
   const sanitized = {
     ...previous,
     enabled: elements.enabled.checked,
     themeMode: normalizeThemeMode(elements.themeMode.value),
     backendBaseUrl: normalizeUrl(elements.backendBaseUrl.value),
-    apiKey: String(elements.apiKey.value || '').trim(),
+    apiKey: manualApiKey,
+    // Una clave pegada a mano ya no corresponde a la sesion iniciada.
+    accountEmail: manualApiKey === previous.apiKey ? previous.accountEmail : '',
     requireConfirmation: elements.requireConfirmation.checked,
     multiPageMode: elements.multiPageMode.checked,
     delayMs: clamp(Number(previous.delayMs) || DEFAULT_SETTINGS.delayMs, 300, 60_000),
@@ -102,6 +205,7 @@ async function saveSettings() {
 
   await chrome.storage.local.set({ [SETTINGS_KEY]: sanitized });
   applyPopupTheme(sanitized.themeMode);
+  updateSessionView(sanitized);
 
   showStatus('Configuracion guardada.', false);
 }
@@ -318,6 +422,8 @@ function decoratePopupIcons() {
   decorateButtonIcon(elements.saveBtn, 'save');
   decorateButtonIcon(elements.testConnectionBtn, 'backend');
   decorateButtonIcon(elements.refreshDiagBtn, 'refresh');
+  decorateButtonIcon(elements.loginBtn, 'login');
+  decorateButtonIcon(elements.logoutBtn, 'logout');
 }
 
 function decorateButtonIcon(button, iconKey) {
@@ -335,6 +441,9 @@ function createPopupIcon(iconKey) {
   span.setAttribute('aria-hidden', 'true');
 
   const paths = {
+    account: '<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-6 8-6s8 2 8 6"/>',
+    login: '<path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 4v16"/>',
+    logout: '<path d="M16 17l5-5-5-5"/><path d="M21 12H9"/><path d="M3 4v16"/>',
     status: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 3"/>',
     backend: '<rect x="4" y="5" width="16" height="6" rx="2"/><rect x="4" y="13" width="16" height="6" rx="2"/><path d="M8 8h.01"/><path d="M8 16h.01"/>',
     diagnostics: '<path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-6"/>',

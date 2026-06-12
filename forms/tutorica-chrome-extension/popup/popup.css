@@ -5,6 +5,9 @@
 /* Tokens de diseno espejo de frontend/src/index.css (TesisTab): neutros frios
    con un solo acento azul cobalto. Mantener sincronizados con la web. */
 body {
+  /* color-scheme alinea los controles nativos (dropdown del select,
+     checkboxes, scroll) con el tema activo. */
+  color-scheme: light;
   --background: 220 30% 98%;
   --foreground: 224 25% 12%;
   --card: 0 0% 100%;
@@ -23,6 +26,7 @@ body {
 }
 
 body[data-theme='dark'] {
+  color-scheme: dark;
   --background: 224 22% 8%;
   --foreground: 218 15% 92%;
   --card: 224 20% 11%;

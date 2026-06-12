@@ -1638,11 +1638,15 @@ export default function App() {
                             Chrome Web Store
                           </a>.
                         </>,
-                        <>Abre la extensión y pega tu clave en el campo <strong className="text-foreground">API key</strong>.</>,
                         <>
-                          En el campo <strong className="text-foreground">Backend</strong> usa{" "}
+                          Abre la extensión e <strong className="text-foreground">inicia sesión</strong> con tu correo y
+                          contraseña de TesisTab: tu clave de API se configura sola. (También puedes pegar una clave
+                          manual en "Avanzado".)
+                        </>,
+                        <>
+                          Verifica que el campo <strong className="text-foreground">Backend</strong> diga{" "}
                           <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{FORMS_BACKEND_URL}</code>{" "}
-                          y pulsa "Probar conexión".
+                          y pulsa "Probar backend".
                         </>,
                         <>Abre tu encuesta de Google Forms y configura el llenado desde el panel de la extensión.</>,
                       ].map((paso, i) => (

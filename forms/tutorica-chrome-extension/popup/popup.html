@@ -39,15 +39,41 @@
     </section>
 
     <section class="config-box">
+      <h2 class="with-icon" data-icon="account">Cuenta TesisTab</h2>
+
+      <div id="loginForm">
+        <label for="loginEmail">Correo</label>
+        <input id="loginEmail" type="email" placeholder="tu@correo.com" autocomplete="username" />
+
+        <label for="loginPassword">Contrase&ntilde;a</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" />
+
+        <button id="loginBtn" type="button">Iniciar sesi&oacute;n</button>
+        <p class="hint tiny">Tu contrase&ntilde;a no se guarda: se usa una sola vez para obtener tu clave de API. La sesi&oacute;n queda activa hasta que la cierres.</p>
+      </div>
+
+      <div id="sessionBox" hidden>
+        <div class="status-line">
+          <span>Sesi&oacute;n activa</span>
+          <span id="sessionEmail" class="status-pill is-ok">-</span>
+        </div>
+        <button id="logoutBtn" class="secondary" type="button">Cerrar sesi&oacute;n</button>
+      </div>
+    </section>
+
+    <section class="config-box">
       <h2 class="with-icon" data-icon="backend">Backend</h2>
 
       <label for="backendBaseUrl">URL del backend</label>
       <input id="backendBaseUrl" type="url" placeholder="https://tabulacion-api.onrender.com" />
       <p class="hint tiny">Dejala como esta salvo que uses tu propio servidor.</p>
 
-      <label for="apiKey">Clave de API de TesisTab</label>
-      <input id="apiKey" type="password" placeholder="ttab_..." autocomplete="off" />
-      <p class="hint tiny">Generala en TesisTab &gt; Integraciones. Sin clave los envios seran rechazados.</p>
+      <details class="advanced-box">
+        <summary>Avanzado: clave de API manual</summary>
+        <label for="apiKey">Clave de API de TesisTab</label>
+        <input id="apiKey" type="password" placeholder="ttab_..." autocomplete="off" />
+        <p class="hint tiny">Normalmente no necesitas tocarla: se completa sola al iniciar sesi&oacute;n.</p>
+      </details>
     </section>
 
     <div class="actions-row">

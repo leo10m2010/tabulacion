@@ -20,7 +20,9 @@ autentica con la clave de API del usuario (`ttab_...`, se genera en TesisTab > I
 
 - Panel en la página: cantidad, perfil (favorable/intermedio/desfavorable/auto),
   distribución por porcentajes, demografía avanzada y herramientas CSV.
-- Popup: URL del backend, clave de API, tema claro/oscuro y diagnóstico.
+- Popup: inicio de sesión con la cuenta TesisTab (obtiene la clave de API
+  automáticamente; la contraseña nunca se guarda), URL del backend, clave
+  manual (avanzado), tema claro/oscuro y diagnóstico.
 - Tokens de texto `{{i}}` y `{{rand}}`, y modo de aleatorización automática.
 - Diálogo de confirmación antes de cada corrida.
 

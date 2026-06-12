@@ -5,6 +5,7 @@
 #tesistab-qa-status,
 #tesistab-qa-actions,
 #tesistab-qa-confirm-overlay {
+  color-scheme: light;
   --background: 220 30% 98%;
   --foreground: 224 25% 12%;
   --card: 0 0% 100%;
@@ -27,6 +28,8 @@
 #tesistab-qa-status[data-theme='dark'],
 #tesistab-qa-actions[data-theme='dark'],
 #tesistab-qa-confirm-overlay[data-theme='dark'] {
+  /* Controles nativos (select, checkbox) oscuros aunque Google Forms este claro. */
+  color-scheme: dark;
   --background: 224 22% 8%;
   --foreground: 218 15% 92%;
   --card: 224 20% 11%;
