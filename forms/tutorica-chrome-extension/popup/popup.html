@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>Tutorica Forms</title>
+</head>
+<body>
+  <main>
+    <h1>Tutorica Forms</h1>
+    <p class="hint">Conexion y estado general de la extension.</p>
+
+    <section class="config-box">
+      <h2 class="with-icon" data-icon="status">Estado</h2>
+
+      <label class="toggle-row" for="enabled">
+        <span>Activar en Google Forms</span>
+        <input id="enabled" type="checkbox" />
+      </label>
+
+      <label for="themeMode">Tema</label>
+      <select id="themeMode">
+        <option value="light">Claro</option>
+        <option value="dark">Oscuro</option>
+        <option value="system">Sistema</option>
+      </select>
+
+      <div class="status-line">
+        <span>Backend</span>
+        <span id="backendLive" class="status-pill is-warning">Verificando</span>
+      </div>
+
+      <div class="status-line">
+        <span>Ultima ejecucion</span>
+        <span id="lastRunState" class="status-pill is-muted">Sin actividad</span>
+      </div>
+    </section>
+
+    <section class="config-box">
+      <h2 class="with-icon" data-icon="backend">Backend</h2>
+
+      <label for="backendBaseUrl">URL del backend</label>
+      <input id="backendBaseUrl" type="url" placeholder="http://localhost:5000" />
+      <p class="hint tiny">Usa solo protocolo + host + puerto. Ejemplo: http://localhost:5000</p>
+
+      <label for="apiKey">API Key (opcional)</label>
+      <input id="apiKey" type="password" placeholder="x-api-key" autocomplete="off" />
+      <p class="hint tiny">Solo se usa si activaste QA_API_KEY en el backend.</p>
+    </section>
+
+    <div class="actions-row">
+      <button id="saveBtn" type="button">Guardar</button>
+      <button id="testConnectionBtn" class="secondary" type="button">Probar backend</button>
+      <button id="refreshDiagBtn" class="secondary" type="button">Actualizar estado</button>
+    </div>
+    <p id="status" role="status"></p>
+
+    <details class="diag-box">
+      <summary class="with-icon" data-icon="diagnostics">Diagnostico tecnico</summary>
+      <div class="diag-content">
+        <p id="backendMax" class="diag-line">Max por corrida: -</p>
+        <p id="backendGender" class="diag-line">Genero (rango): -</p>
+        <p id="backendAge" class="diag-line">Edad (pesos): -</p>
+        <p id="backendFreq" class="diag-line">Frecuencia (pesos): -</p>
+        <hr />
+        <p id="diagJob" class="diag-line">Job: -</p>
+        <p id="diagStatus" class="diag-line">Estado: -</p>
+        <p id="diagError" class="diag-line">Error: -</p>
+        <p id="diagUpdatedAt" class="diag-line">Actualizado: -</p>
+      </div>
+    </details>
+
+    <section class="config-box">
+      <h2 class="with-icon" data-icon="help">Ayuda</h2>
+      <p class="hint tiny no-margin">1. Abre tu Google Form.</p>
+      <p class="hint tiny no-margin">2. Usa el panel de la esquina superior derecha.</p>
+      <p class="hint tiny no-margin">3. Inicia los envios desde ahi.</p>
+    </section>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

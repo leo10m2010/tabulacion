@@ -1,0 +1,17 @@
+{
+  "name": "tutorica-forms",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Servicio de llenado de Google Forms (Tutorica Forms): backend + extension de Chrome, autenticado con las claves de API de TesisTab",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "qa:smoke": "node qa-smoke-test.js",
+    "test": "node --test tests/qa-api.test.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "compression": "^1.7.4",
+    "express": "^4.18.2"
+  }
+}

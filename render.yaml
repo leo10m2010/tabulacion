@@ -52,3 +52,27 @@ services:
         value: "900"
       - key: MAX_BODY_BYTES
         value: "4194304"
+      # Debe coincidir con SERVICE_SHARED_SECRET del servicio tutorica-forms.
+      - key: SERVICE_SHARED_SECRET
+        sync: false
+
+  # Tutorica Forms: backend del rellenador de Google Forms (extension Chrome).
+  # Valida las claves ttab_ contra la API de TesisTab.
+  - type: web
+    name: tutorica-forms
+    runtime: node
+    plan: free
+    rootDir: forms
+    buildCommand: npm ci --omit=dev
+    startCommand: node server.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: TESISTAB_API_URL
+        value: https://tabulacion-api.onrender.com
+      # Mismo valor que en tabulacion-api.
+      - key: SERVICE_SHARED_SECRET
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        value: "*"

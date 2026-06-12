@@ -1,0 +1,2526 @@
+const SETTINGS_KEY = 'borangQaSettings';
+const CSV_ROWS_KEY = 'borangQaCsvRows';
+const DIAGNOSTICS_KEY = 'borangQaDiagnostics';
+const DEFAULT_SETTINGS = {
+  enabled: true,
+  backendBaseUrl: 'http://localhost:5000',
+  apiKey: '',
+  themeMode: 'system',
+  panelViewMode: 'simple',
+  submissionCount: 5,
+  multiPageMode: true,
+  smartProfileMode: true,
+  smartProfileType: 'favorable',
+  specialQuestionKeyword: '',
+  specialQuestionPreferred: '',
+  profileDistributionEnabled: false,
+  profileShareFavorable: 60,
+  profileShareIntermedio: 25,
+  profileShareDesfavorable: 15,
+  advancedMode: false,
+  advancedGender: false,
+  advancedAge: false,
+  advancedFrequency: false,
+  advancedPersonality: false,
+  delayMs: 1000,
+  jitterMs: 100,
+  autoRandomizeText: false,
+  requireConfirmation: true,
+  randomizeBeforeSubmit: false,
+  compatApiMode: false,
+};
+// LIMITE: ajusta este valor para limitar maximo desde la extension.
+const MAX_UI_SUBMISSIONS = 250;
+
+let settings = { ...DEFAULT_SETTINGS };
+let csvRows = [];
+let csvCursor = 0;
+let currentForm = null;
+let boundForm = null;
+let isQaRunStarting = false;
+let lastQaTriggerAt = 0;
+let lastMultiPageHintAt = 0;
+let backendHealthTimer = null;
+let activeJobId = '';
+let activeJobStatus = '';
+let isCancellingJob = false;
+let activeJobProgressLabel = '';
+
+const QA_TRIGGER_DEBOUNCE_MS = 1200;
+const FORM_REBIND_INTERVAL_MS = 1200;
+const MAX_MONITOR_TRANSIENT_ERRORS = 3;
+const BACKEND_HEALTH_INTERVAL_MS = 15000;
+const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+init();
+
+async function init() {
+  settings = await loadSettings();
+  if (!isSupportedFormPage()) {
+    return;
+  }
+
+  recordDiagnostics({
+    lastSeenFormUrl: window.location.href,
+    updatedAt: new Date().toISOString(),
+  });
+
+  injectStatusPill(settings.enabled);
+  injectActionsPanel();
+  applyThemeToInjectedUi();
+
+  const form = await waitForFormElement();
+  currentForm = form;
+  if (!form) {
+    showStatus('Formulario no listo. Recarga e intenta de nuevo.', true);
+    return;
+  }
+
+  await loadCsvRows();
+  subscribeToSettingsChanges();
+  subscribeToSystemThemeChanges();
+  bindFormHandlers(form);
+  document.addEventListener('click', onDocumentClick, true);
+  document.addEventListener('keydown', onDocumentKeyDown, true);
+  startFormRebindWatcher();
+}
+
+function bindFormHandlers(form) {
+  if (!form || boundForm === form) {
+    return;
+  }
+
+  if (boundForm) {
+    boundForm.removeEventListener('submit', onFormSubmit, true);
+  }
+
+  boundForm = form;
+  currentForm = form;
+  boundForm.addEventListener('submit', onFormSubmit, true);
+}
+
+function startFormRebindWatcher() {
+  window.setInterval(() => {
+    if (!isSupportedFormPage()) {
+      return;
+    }
+
+    injectStatusPill(settings.enabled);
+    injectActionsPanel();
+    applyThemeToInjectedUi();
+
+    if (currentForm && document.contains(currentForm)) {
+      return;
+    }
+
+    const form = document.querySelector('form');
+    if (!form) {
+      return;
+    }
+
+    bindFormHandlers(form);
+  }, FORM_REBIND_INTERVAL_MS);
+}
+
+function isSupportedFormPage() {
+  return (
+    window.location.hostname === 'docs.google.com' &&
+    (window.location.pathname.includes('/viewform') ||
+      window.location.pathname.includes('/formResponse'))
+  );
+}
+
+async function waitForFormElement(timeoutMs = 10000) {
+  const initial = document.querySelector('form');
+  if (initial) {
+    return initial;
+  }
+
+  return new Promise((resolve) => {
+    const observer = new MutationObserver(() => {
+      const form = document.querySelector('form');
+      if (form) {
+        observer.disconnect();
+        resolve(form);
+      }
+    });
+
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+
+    window.setTimeout(() => {
+      observer.disconnect();
+      resolve(null);
+    }, timeoutMs);
+  });
+}
+
+async function loadSettings() {
+  const result = await chrome.storage.local.get([SETTINGS_KEY]);
+  return { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) };
+}
+
+async function loadCsvRows() {
+  const result = await chrome.storage.local.get([CSV_ROWS_KEY]);
+  const savedRows = result[CSV_ROWS_KEY];
+  if (!Array.isArray(savedRows)) {
+    csvRows = [];
+    csvCursor = 0;
+    return;
+  }
+
+  csvRows = savedRows;
+  csvCursor = 0;
+}
+
+async function onFormSubmit(event) {
+  await startQaRun(event.currentTarget || currentForm || document.querySelector('form'), event);
+}
+
+async function onDocumentClick(event) {
+  const target = resolveEventElementTarget(event);
+  if (!target) {
+    return;
+  }
+
+  const isSubmit = isGoogleFormsSubmitTrigger(target);
+  if (isSubmit) {
+    const form = target.closest('form') || currentForm || document.querySelector('form');
+    await startQaRun(form, event);
+    return;
+  }
+
+  settings = await loadSettings();
+  if (settings.multiPageMode && isGoogleFormsNextTrigger(target)) {
+      const now = Date.now();
+      if (now - lastMultiPageHintAt > 2500) {
+        lastMultiPageHintAt = now;
+        showStatus('Pagina siguiente detectada. QA se ejecuta en el ultimo paso.', false);
+      }
+  }
+}
+
+async function onDocumentKeyDown(event) {
+  if (event.key !== 'Enter') {
+    return;
+  }
+
+  const target = resolveEventElementTarget(event);
+  if (!target) {
+    return;
+  }
+
+  if (target.closest('#borang-qa-actions')) {
+    return;
+  }
+
+  if (target.matches('textarea')) {
+    return;
+  }
+
+  const form = target.closest('form') || currentForm || document.querySelector('form');
+  if (!form) {
+    return;
+  }
+
+  const isEnterSubmitContext = isGoogleFormsSubmitTrigger(target) || form.contains(target);
+  if (!isEnterSubmitContext) {
+    return;
+  }
+
+  await startQaRun(form, event);
+}
+
+async function startQaRun(form, event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === 'function') {
+      event.stopImmediatePropagation();
+    }
+  }
+
+  settings = await loadSettings();
+  if (!settings.enabled) {
+    return;
+  }
+
+  const now = Date.now();
+  if (now - lastQaTriggerAt < QA_TRIGGER_DEBOUNCE_MS) {
+    return;
+  }
+  lastQaTriggerAt = now;
+
+    if (!form) {
+      showStatus('No se encontro el formulario para ejecutar QA.', true);
+      recordDiagnostics({
+        lastError: 'No se encontro el formulario para ejecutar QA.',
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+  if (isQaRunStarting) {
+    showStatus('La ejecucion QA ya se esta iniciando...', true);
+    return;
+  }
+
+  isQaRunStarting = true;
+  syncJobActionButtons();
+
+  try {
+    const rawCount = Number(settings.submissionCount) || 1;
+    const count = clamp(rawCount, 1, MAX_UI_SUBMISSIONS);
+    const delayMs = clamp(Number(settings.delayMs) || 1000, 300, 60_000);
+    const jitterMs = clamp(Number(settings.jitterMs) || 0, 0, 5_000);
+
+    if (settings.randomizeBeforeSubmit) {
+      randomizeFormInputs(form);
+    }
+
+    const prefill = fillUnansweredFormInputs(form);
+    if (prefill.filled > 0) {
+      showStatus(`Se completaron ${prefill.filled} respuestas faltantes para QA.`);
+    }
+    if (prefill.missingRequired.length) {
+      const firstMissing = prefill.missingRequired[0];
+      const suffix = prefill.missingRequired.length > 1 ? ` (+${prefill.missingRequired.length - 1})` : '';
+      const message = `Faltan respuestas obligatorias no compatibles con QA: ${firstMissing}${suffix}`;
+      showStatus(message, true);
+      recordDiagnostics({
+        lastError: message,
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    if (settings.requireConfirmation) {
+      const accepted = await showQaConfirmDialog({
+        count,
+        delayMs,
+        csvRowsCount: csvRows.length,
+      });
+      if (!accepted) {
+      showStatus('Ejecucion cancelada por el usuario.', true);
+      recordDiagnostics({
+        lastError: 'Ejecucion cancelada por el usuario.',
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+  }
+
+    showStatus('Envio detectado. Creando job QA...');
+    let payload = formDataToPayload(new FormData(form));
+    payload = applyCsvRowIfAvailable(payload);
+    payload = applySmartProfilePayload(payload, form, settings);
+    const specialEntryKey = resolveSpecialEntryKey(form, settings.specialQuestionKeyword);
+    const smartProfile = buildSmartProfileConfig(
+      settings,
+      specialEntryKey,
+      collectEntryOptions(form),
+      collectQuestionTextByEntry(form)
+    );
+    const formUrl = form.action;
+
+    if (!formUrl) {
+      showStatus('No se pudo leer la URL del formulario desde la pagina.', true);
+      recordDiagnostics({
+        lastError: 'No se pudo leer la URL del formulario desde la pagina.',
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    if (settings.compatApiMode) {
+      await submitWithCompatApi(formUrl, payload, count);
+      return;
+    }
+
+    const response = await backendRequest('/api/qa/submit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        formUrl,
+        payload,
+        count,
+        delayMs,
+        jitterMs,
+        autoRandomizeText: Boolean(settings.autoRandomizeText),
+        smartProfile,
+        label: document.title,
+      }),
+    });
+
+    const result = response.data;
+    if (!response.ok) {
+      throw new Error(extractErrorMessage(response));
+    }
+
+    const warning = result.warning ? ` (${result.warning})` : '';
+    activeJobId = result.id;
+    activeJobStatus = result.status || 'queued';
+    activeJobProgressLabel = `0/${count}`;
+    syncJobActionButtons();
+    showStatus(`Job ${result.id.slice(0, 8)} creado${warning}.`);
+    recordDiagnostics({
+      lastJobId: result.id,
+      lastJobStatus: result.status,
+      lastError: '',
+      updatedAt: new Date().toISOString(),
+    });
+    monitorJob(result.id, normalizeBackendUrl(settings.backendBaseUrl));
+  } catch (error) {
+    showStatus(error.message || 'Error desconocido al crear el job.', true);
+    recordDiagnostics({
+      lastError: error.message || 'Unknown error when creating job.',
+      updatedAt: new Date().toISOString(),
+    });
+  } finally {
+    isQaRunStarting = false;
+    syncJobActionButtons();
+  }
+}
+
+function subscribeToSettingsChanges() {
+  if (subscribeToSettingsChanges.initialized) {
+    return;
+  }
+
+  subscribeToSettingsChanges.initialized = true;
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') {
+      return;
+    }
+
+    if (changes[SETTINGS_KEY]?.newValue) {
+      settings = {
+        ...DEFAULT_SETTINGS,
+        ...changes[SETTINGS_KEY].newValue,
+      };
+      injectStatusPill(settings.enabled);
+      injectActionsPanel();
+      applyThemeToInjectedUi();
+      syncJobActionButtons();
+    }
+
+    if (changes[CSV_ROWS_KEY]) {
+      const nextRows = Array.isArray(changes[CSV_ROWS_KEY].newValue) ? changes[CSV_ROWS_KEY].newValue : [];
+      csvRows = nextRows;
+      csvCursor = 0;
+    }
+  });
+}
+
+function isGoogleFormsSubmitTrigger(target) {
+  const trigger = target.closest('button, input[type="submit"], div[role="button"]');
+  if (!trigger) {
+    return false;
+  }
+
+  if (
+    trigger.closest('#borang-qa-actions') ||
+    trigger.closest('#borang-qa-status') ||
+    trigger.closest('#borang-qa-pill')
+  ) {
+    return false;
+  }
+
+  if (trigger.matches('input[type="submit"], button[type="submit"]')) {
+    return true;
+  }
+
+  const text = String(trigger.textContent || '').toLowerCase();
+  const ariaLabel = String(trigger.getAttribute('aria-label') || '').toLowerCase();
+  const tooltip = String(trigger.getAttribute('data-tooltip') || '').toLowerCase();
+  const marker = `${text} ${ariaLabel} ${tooltip}`;
+
+  if (trigger.getAttribute('jsname') === 'M2UYVd') {
+    return true;
+  }
+
+  return /(submit|enviar|send|kirim)/.test(marker);
+}
+
+function isGoogleFormsNextTrigger(target) {
+  const trigger = target.closest('button, input[type="button"], div[role="button"]');
+  if (!trigger) {
+    return false;
+  }
+
+  if (
+    trigger.closest('#borang-qa-status') ||
+    trigger.closest('#borang-qa-pill')
+  ) {
+    return false;
+  }
+
+  const text = String(trigger.textContent || '').toLowerCase();
+  const ariaLabel = String(trigger.getAttribute('aria-label') || '').toLowerCase();
+  const tooltip = String(trigger.getAttribute('data-tooltip') || '').toLowerCase();
+  const marker = `${text} ${ariaLabel} ${tooltip}`;
+
+  return /(next|siguiente|continuar|continue)/.test(marker);
+}
+
+async function monitorJob(jobId, backendBaseUrl) {
+  const pollEveryMs = 1200;
+  const maxPolls = 240;
+  let transientErrors = 0;
+
+  for (let i = 0; i < maxPolls; i++) {
+    await sleep(pollEveryMs);
+
+    try {
+      const response = await backendRequest(`/api/qa/jobs/${jobId}`, {
+        baseUrl: backendBaseUrl,
+      });
+
+      if (!response.ok && [0, 429, 500, 502, 503, 504].includes(response.status)) {
+        transientErrors += 1;
+        if (transientErrors <= MAX_MONITOR_TRANSIENT_ERRORS) {
+          showStatus(
+            `Reintento ${transientErrors}/${MAX_MONITOR_TRANSIENT_ERRORS} para job ${jobId.slice(0, 8)}...`,
+            true
+          );
+          continue;
+        }
+      }
+
+      if (!response.ok) {
+        clearActiveJobState(jobId);
+        showStatus(`Job ${jobId.slice(0, 8)} no encontrado.`, true);
+        recordDiagnostics({
+          lastJobId: jobId,
+          lastJobStatus: 'not_found',
+          lastError: `Job ${jobId.slice(0, 8)} no encontrado.`,
+          updatedAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      transientErrors = 0;
+      const job = response.data?.job || response.data;
+      const progress = `${job.sent + job.failed}/${job.count}`;
+      activeJobProgressLabel = progress;
+
+      if (job.status === 'running' || job.status === 'queued') {
+        activeJobId = job.id;
+        activeJobStatus = job.status;
+        syncJobActionButtons();
+        showStatus(`Job ${job.id.slice(0, 8)} en progreso ${progress}...`);
+        recordDiagnostics({
+          lastJobId: job.id,
+          lastJobStatus: job.status,
+          updatedAt: new Date().toISOString(),
+        });
+        continue;
+      }
+
+      const uncertainty = job.uncertain > 0 ? `, inciertos: ${job.uncertain}` : '';
+      if (job.status === 'completed' || job.status === 'completed_with_errors') {
+        const withErrors = job.failed > 0;
+        const latestMessage = String(job.latestResult?.message || '').trim();
+        const firstError = String(job.errors?.[0]?.message || '').trim();
+        const detail = latestMessage || firstError;
+        if (job.sent === 0 && job.failed > 0) {
+          clearActiveJobState(job.id);
+          showStatus(
+            `Terminado con errores. Enviados: 0, fallidos: ${job.failed}. ${detail || 'Revisa restricciones o inicio de sesion.'}`,
+            true
+          );
+          recordDiagnostics({
+            lastJobId: job.id,
+            lastJobStatus: job.status,
+            lastError: detail || `failed=${job.failed}`,
+            updatedAt: new Date().toISOString(),
+          });
+          return;
+        }
+        clearActiveJobState(job.id);
+        showStatus(
+          `Terminado. Enviados: ${job.sent}/${job.count}, fallidos: ${job.failed}${uncertainty}${detail && withErrors ? `. ${detail}` : ''}.`,
+          withErrors
+        );
+        recordDiagnostics({
+          lastJobId: job.id,
+          lastJobStatus: job.status,
+          lastError: withErrors ? detail || `failed=${job.failed}` : '',
+          updatedAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      if (job.status === 'cancelled') {
+        clearActiveJobState(job.id);
+        showStatus(`Job cancelado en ${progress}.`, true);
+        recordDiagnostics({
+          lastJobId: job.id,
+          lastJobStatus: job.status,
+          lastError: 'Job cancelado',
+          updatedAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      showStatus(`Job finalizado: ${job.status}.`, job.failed > 0);
+      clearActiveJobState(job.id);
+      recordDiagnostics({
+        lastJobId: job.id,
+        lastJobStatus: job.status,
+        lastError: job.failed > 0 ? `failed=${job.failed}` : '',
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    } catch (error) {
+      transientErrors += 1;
+      if (transientErrors <= MAX_MONITOR_TRANSIENT_ERRORS) {
+        showStatus(
+          `Error temporal (${transientErrors}/${MAX_MONITOR_TRANSIENT_ERRORS}): ${error.message}`,
+          true
+        );
+        continue;
+      }
+
+      showStatus(`Error al monitorear: ${error.message}`, true);
+      clearActiveJobState(jobId);
+      recordDiagnostics({
+        lastJobId: jobId,
+        lastJobStatus: 'monitor_error',
+        lastError: error.message,
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+  }
+
+  showStatus('Tiempo agotado al monitorear. Revisa logs del backend.', true);
+  clearActiveJobState(jobId);
+  recordDiagnostics({
+    lastJobId: jobId,
+    lastJobStatus: 'timeout',
+    lastError: 'Tiempo agotado al monitorear. Revisa logs del backend.',
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function normalizeBackendUrl(value) {
+  const input = String(value || DEFAULT_SETTINGS.backendBaseUrl).trim();
+  const candidate = /^https?:\/\//i.test(input) ? input : `http://${input}`;
+
+  try {
+    const parsed = new URL(candidate);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch (error) {
+    return DEFAULT_SETTINGS.backendBaseUrl;
+  }
+}
+
+function formDataToPayload(formData) {
+  const payload = {};
+
+  for (const [key, value] of formData.entries()) {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) {
+      if (!Array.isArray(payload[key])) {
+        payload[key] = [payload[key]];
+      }
+      payload[key].push(value);
+      continue;
+    }
+
+    payload[key] = value;
+  }
+
+  return payload;
+}
+
+function injectStatusPill(enabled) {
+  const existing = document.getElementById('borang-qa-pill');
+  if (existing) {
+    existing.className = enabled ? 'is-on' : 'is-off';
+    existing.textContent = enabled ? 'Tutorica Forms: ON' : 'Tutorica Forms: OFF';
+    existing.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
+    return;
+  }
+
+  const pill = document.createElement('div');
+  pill.id = 'borang-qa-pill';
+  pill.className = enabled ? 'is-on' : 'is-off';
+  pill.textContent = enabled ? 'Tutorica Forms: ON' : 'Tutorica Forms: OFF';
+  pill.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
+  document.documentElement.appendChild(pill);
+}
+
+function injectActionsPanel() {
+  const existing = document.getElementById('borang-qa-actions');
+  if (existing) {
+    const existingCount = existing.querySelector('#borang-qa-count');
+    if (existingCount instanceof HTMLInputElement && document.activeElement !== existingCount) {
+      existingCount.value = String(clamp(Number(settings.submissionCount) || 1, 1, MAX_UI_SUBMISSIONS));
+    }
+    const existingProfile = existing.querySelector('#borang-qa-profile');
+    if (existingProfile instanceof HTMLSelectElement) {
+      existingProfile.value = normalizeInlineProfileType(settings.smartProfileType);
+    }
+    syncInlineDistributionControls(existing);
+    syncInlineAdvancedControls(existing);
+    syncPanelViewMode(existing);
+    return;
+  }
+
+  const panel = document.createElement('div');
+  panel.id = 'borang-qa-actions';
+  panel.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
+
+  const header = document.createElement('div');
+  header.className = 'borang-qa-header';
+
+  const title = document.createElement('div');
+  title.className = 'borang-qa-title';
+  setPanelLabel(title, 'send', 'Envios automaticos');
+
+  const backendStatus = document.createElement('div');
+  backendStatus.id = 'borang-qa-backend-status';
+  backendStatus.className = 'is-checking';
+  backendStatus.title = 'Verificando backend';
+  backendStatus.setAttribute('aria-label', 'Verificando backend');
+
+  header.append(title, backendStatus);
+
+  const viewRow = document.createElement('label');
+  viewRow.className = 'borang-qa-count-row';
+  const viewLabel = document.createElement('span');
+  viewLabel.replaceChildren(createHelpLabel('Vista', 'Simple muestra solo lo esencial. Avanzada muestra controles extra.'));
+  const viewSelect = document.createElement('select');
+  viewSelect.id = 'borang-qa-view-mode';
+  viewSelect.innerHTML = [
+    '<option value="simple">Simple</option>',
+    '<option value="advanced">Avanzada</option>',
+  ].join('');
+  viewSelect.value = normalizePanelViewMode(settings.panelViewMode);
+  viewSelect.addEventListener('change', () => saveInlinePanelViewMode(viewSelect));
+  viewRow.append(viewLabel, viewSelect);
+
+  const countRow = document.createElement('label');
+  countRow.className = 'borang-qa-count-row';
+
+  const countLabel = document.createElement('span');
+  countLabel.replaceChildren(createHelpLabel('Cantidad', 'Numero de respuestas que se enviaran en esta corrida.'));
+
+  const countInput = document.createElement('input');
+  countInput.id = 'borang-qa-count';
+  countInput.type = 'number';
+  countInput.min = '1';
+  countInput.max = String(MAX_UI_SUBMISSIONS);
+  countInput.step = '1';
+  countInput.value = String(clamp(Number(settings.submissionCount) || 1, 1, MAX_UI_SUBMISSIONS));
+  countInput.addEventListener('change', () => saveInlineSubmissionCount(countInput));
+  countInput.addEventListener('blur', () => saveInlineSubmissionCount(countInput));
+
+  countRow.append(countLabel, countInput);
+
+  const profileRow = document.createElement('label');
+  profileRow.className = 'borang-qa-count-row';
+
+  const profileLabel = document.createElement('span');
+  profileLabel.replaceChildren(createHelpLabel('Perfil', 'Define el tono general de las respuestas tipo escala o Likert.'));
+
+  const profileSelect = document.createElement('select');
+  profileSelect.id = 'borang-qa-profile';
+  profileSelect.innerHTML = [
+    '<option value="favorable">Favorable</option>',
+    '<option value="intermedio">Intermedio</option>',
+    '<option value="desfavorable">Desfavorable</option>',
+    '<option value="auto">Automatico</option>',
+  ].join('');
+  profileSelect.value = normalizeInlineProfileType(settings.smartProfileType);
+  profileSelect.addEventListener('change', () => saveInlineProfileType(profileSelect));
+
+  profileRow.append(profileLabel, profileSelect);
+
+  const distributionPanel = document.createElement('details');
+  distributionPanel.className = 'borang-qa-advanced';
+  distributionPanel.dataset.panelSection = 'advanced';
+
+  const distributionSummary = document.createElement('summary');
+  setPanelLabel(distributionSummary, 'chart', 'Distribucion de perfil');
+  distributionPanel.appendChild(distributionSummary);
+
+  const distributionBody = document.createElement('div');
+  distributionBody.className = 'borang-qa-advanced-body';
+
+  const distributionModeRow = createInlineAdvancedToggle(
+    'profileDistributionEnabled',
+    'Usar porcentajes',
+    Boolean(settings.profileDistributionEnabled)
+  );
+
+  const distributionGrid = document.createElement('div');
+  distributionGrid.className = 'borang-qa-distribution-grid';
+  distributionGrid.id = 'borang-qa-distribution-grid';
+  distributionGrid.append(
+    createInlineDistributionField('profileShareFavorable', 'Favorable %', settings.profileShareFavorable, 60),
+    createInlineDistributionField('profileShareIntermedio', 'Intermedio %', settings.profileShareIntermedio, 25),
+    createInlineDistributionField('profileShareDesfavorable', 'Desfavorable %', settings.profileShareDesfavorable, 15)
+  );
+
+  distributionBody.append(distributionModeRow, distributionGrid);
+  distributionPanel.appendChild(distributionBody);
+
+  const advancedPanel = document.createElement('details');
+  advancedPanel.className = 'borang-qa-advanced';
+  advancedPanel.dataset.panelSection = 'advanced';
+
+  const advancedSummary = document.createElement('summary');
+  setPanelLabel(advancedSummary, 'sliders', 'Opciones avanzadas');
+  advancedPanel.appendChild(advancedSummary);
+
+  const advancedBody = document.createElement('div');
+  advancedBody.className = 'borang-qa-advanced-body';
+
+  const advancedModeRow = createInlineAdvancedToggle(
+    'advancedMode',
+    'Activar demografia',
+    Boolean(settings.advancedMode)
+  );
+  const advancedGenderRow = createInlineAdvancedToggle(
+    'advancedGender',
+    'Usar genero',
+    Boolean(settings.advancedGender)
+  );
+  const advancedAgeRow = createInlineAdvancedToggle(
+    'advancedAge',
+    'Usar edad',
+    Boolean(settings.advancedAge)
+  );
+  const advancedFrequencyRow = createInlineAdvancedToggle(
+    'advancedFrequency',
+    'Usar frecuencia',
+    Boolean(settings.advancedFrequency)
+  );
+  const advancedPersonalityRow = createInlineAdvancedToggle(
+    'advancedPersonality',
+    'Usar personalidad',
+    Boolean(settings.advancedPersonality)
+  );
+
+  advancedBody.append(
+    advancedModeRow,
+    advancedGenderRow,
+    advancedAgeRow,
+    advancedFrequencyRow,
+    advancedPersonalityRow
+  );
+  advancedPanel.appendChild(advancedBody);
+
+  const runQaBtn = document.createElement('button');
+  runQaBtn.type = 'button';
+  runQaBtn.id = 'borang-qa-run-btn';
+  runQaBtn.className = 'borang-qa-main-action';
+  const runMainLabel = document.createElement('span');
+  runMainLabel.className = 'main-label';
+  runMainLabel.textContent = 'Iniciar';
+  const runHoverLabel = document.createElement('span');
+  runHoverLabel.className = 'hover-label';
+  runHoverLabel.textContent = 'Detener';
+  runQaBtn.append(runMainLabel, runHoverLabel);
+  runQaBtn.onclick = async () => {
+    const running = Boolean(activeJobId && (activeJobStatus === 'queued' || activeJobStatus === 'running'));
+    if (running) {
+      await stopActiveQaJob();
+      return;
+    }
+
+    const form = currentForm || document.querySelector('form');
+    if (!form) {
+      showStatus('Formulario no disponible para QA.', true);
+      return;
+    }
+
+    await startQaRun(form, null);
+  };
+
+  const randomizeBtn = document.createElement('button');
+  randomizeBtn.type = 'button';
+  randomizeBtn.textContent = 'Completar esta pagina';
+  randomizeBtn.dataset.panelSection = 'advanced';
+  randomizeBtn.onclick = () => {
+    if (!currentForm) {
+      showStatus('El formulario todavia no esta disponible.', true);
+      return;
+    }
+
+    randomizeFormInputs(currentForm);
+    showStatus('Se completaron respuestas en esta pagina.');
+  };
+
+  const importCsvBtn = document.createElement('button');
+  importCsvBtn.type = 'button';
+  importCsvBtn.textContent = 'Importar CSV';
+  importCsvBtn.onclick = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv,text/csv';
+    input.onchange = async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) {
+        return;
+      }
+
+      try {
+        const text = await file.text();
+        const parsed = parseCsvRows(text);
+        if (!parsed.length) {
+          showStatus('El CSV no tiene filas de datos.', true);
+          return;
+        }
+
+        csvRows = parsed;
+        csvCursor = 0;
+        await chrome.storage.local.set({ [CSV_ROWS_KEY]: parsed });
+        showStatus(`CSV cargado: ${parsed.length} filas.`);
+      } catch (error) {
+        showStatus(`Error de CSV: ${error.message}`, true);
+      }
+    };
+
+    input.click();
+  };
+
+  const clearCsvBtn = document.createElement('button');
+  clearCsvBtn.type = 'button';
+  clearCsvBtn.textContent = 'Limpiar CSV';
+  clearCsvBtn.onclick = async () => {
+    csvRows = [];
+    csvCursor = 0;
+    await chrome.storage.local.set({ [CSV_ROWS_KEY]: [] });
+    showStatus('Datos CSV eliminados.');
+  };
+
+  const csvPanel = document.createElement('details');
+  csvPanel.className = 'borang-qa-advanced';
+  csvPanel.dataset.panelSection = 'advanced';
+
+  const csvSummary = document.createElement('summary');
+  setPanelLabel(csvSummary, 'file', 'Herramientas CSV');
+  csvPanel.appendChild(csvSummary);
+
+  const csvBody = document.createElement('div');
+  csvBody.className = 'borang-qa-advanced-body';
+  csvBody.append(importCsvBtn, clearCsvBtn);
+  csvPanel.appendChild(csvBody);
+
+  panel.append(
+    header,
+    viewRow,
+    countRow,
+    profileRow,
+    distributionPanel,
+    csvPanel,
+    advancedPanel,
+    randomizeBtn,
+    runQaBtn
+  );
+  document.documentElement.appendChild(panel);
+  syncInlineDistributionControls(panel);
+  syncInlineAdvancedControls(panel);
+  syncPanelViewMode(panel);
+  syncJobActionButtons();
+  startBackendHealthMonitor();
+}
+
+function createHelpLabel(text, helpText) {
+  const fragment = document.createDocumentFragment();
+  const labelText = document.createElement('span');
+  labelText.textContent = text;
+  const help = document.createElement('span');
+  help.className = 'borang-qa-help';
+  help.textContent = '?';
+  help.title = helpText;
+  help.setAttribute('aria-label', helpText);
+  fragment.append(labelText, help);
+  return fragment;
+}
+
+function setPanelLabel(element, iconKey, text) {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+
+  element.replaceChildren(createPanelIcon(iconKey), document.createTextNode(text));
+}
+
+function createPanelIcon(iconKey) {
+  const span = document.createElement('span');
+  span.className = 'borang-qa-icon';
+  span.setAttribute('aria-hidden', 'true');
+
+  const paths = {
+    send: '<path d="M4 12h11"/><path d="M11 5l7 7-7 7"/><path d="M4 6h5"/><path d="M4 18h5"/>',
+    chart: '<path d="M5 19V9"/><path d="M12 19V5"/><path d="M19 19v-8"/><path d="M3 19h18"/>',
+    sliders: '<path d="M4 7h10"/><path d="M16 7h4"/><circle cx="14" cy="7" r="2"/><path d="M4 17h4"/><path d="M10 17h10"/><circle cx="8" cy="17" r="2"/>',
+    file: '<path d="M8 3h7l4 4v14H8z"/><path d="M15 3v5h5"/><path d="M11 13h5"/><path d="M11 17h5"/>',
+  };
+
+  span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths[iconKey] || paths.send}</svg>`;
+  return span;
+}
+
+async function saveInlineSubmissionCount(input) {
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const raw = String(input.value || '').trim();
+  const value = clamp(Number(raw) || 1, 1, MAX_UI_SUBMISSIONS);
+  input.value = String(value);
+
+  settings = {
+    ...settings,
+    submissionCount: value,
+  };
+
+  const result = await chrome.storage.local.get([SETTINGS_KEY]);
+  const saved = { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) };
+  await chrome.storage.local.set({
+    [SETTINGS_KEY]: {
+      ...saved,
+      submissionCount: value,
+    },
+  });
+}
+
+async function saveInlinePanelViewMode(select) {
+  if (!(select instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const value = normalizePanelViewMode(select.value);
+  select.value = value;
+  settings = {
+    ...settings,
+    panelViewMode: value,
+  };
+
+  const result = await chrome.storage.local.get([SETTINGS_KEY]);
+  const saved = { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) };
+  await chrome.storage.local.set({
+    [SETTINGS_KEY]: {
+      ...saved,
+      panelViewMode: value,
+    },
+  });
+
+  const panel = document.getElementById('borang-qa-actions');
+  if (panel) {
+    syncPanelViewMode(panel);
+  }
+}
+
+function normalizePanelViewMode(value) {
+  return String(value || '').toLowerCase() === 'advanced' ? 'advanced' : 'simple';
+}
+
+function syncPanelViewMode(container) {
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  const viewMode = normalizePanelViewMode(settings.panelViewMode);
+  const select = container.querySelector('#borang-qa-view-mode');
+  if (select instanceof HTMLSelectElement) {
+    select.value = viewMode;
+  }
+
+  container.querySelectorAll('[data-panel-section="advanced"]').forEach((element) => {
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+
+    element.hidden = viewMode !== 'advanced';
+  });
+}
+
+async function saveInlineProfileType(select) {
+  if (!(select instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const value = normalizeInlineProfileType(select.value);
+  select.value = value;
+  settings = {
+    ...settings,
+    smartProfileMode: true,
+    smartProfileType: value,
+  };
+
+  const result = await chrome.storage.local.get([SETTINGS_KEY]);
+  const saved = { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) };
+  await chrome.storage.local.set({
+    [SETTINGS_KEY]: {
+      ...saved,
+      smartProfileMode: true,
+      smartProfileType: value,
+    },
+  });
+}
+
+function normalizeInlineProfileType(value) {
+  const normalized = String(value || '').toLowerCase();
+  if (
+    normalized === 'favorable' ||
+    normalized === 'intermedio' ||
+    normalized === 'desfavorable' ||
+    normalized === 'auto'
+  ) {
+    return normalized;
+  }
+
+  return DEFAULT_SETTINGS.smartProfileType;
+}
+
+function createInlineDistributionField(key, label, rawValue, fallback) {
+  const wrapper = document.createElement('label');
+  wrapper.className = 'borang-qa-count-row';
+  wrapper.dataset.distributionKey = key;
+
+  const text = document.createElement('span');
+  text.textContent = label;
+
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.min = '0';
+  input.max = '100';
+  input.step = '1';
+  input.value = String(clampPercent(rawValue, fallback));
+  input.addEventListener('blur', () => saveInlineDistributionField(key, input));
+
+  wrapper.append(text, input);
+  return wrapper;
+}
+
+function syncInlineDistributionControls(container) {
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  const enabled = Boolean(settings.profileDistributionEnabled);
+  const valueMap = {
+    profileShareFavorable: clampPercent(settings.profileShareFavorable, 60),
+    profileShareIntermedio: clampPercent(settings.profileShareIntermedio, 25),
+    profileShareDesfavorable: clampPercent(settings.profileShareDesfavorable, 15),
+  };
+
+  container.querySelectorAll('[data-distribution-key]').forEach((row) => {
+    if (!(row instanceof HTMLElement)) {
+      return;
+    }
+
+    const key = row.dataset.distributionKey || '';
+    const input = row.querySelector('input[type="number"]');
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+
+    input.value = String(valueMap[key] ?? 0);
+    input.disabled = !enabled;
+    row.classList.toggle('is-disabled', !enabled);
+  });
+
+  const distributionToggle = container.querySelector('[data-setting-key="profileDistributionEnabled"] input[type="checkbox"]');
+  if (distributionToggle instanceof HTMLInputElement) {
+    distributionToggle.checked = enabled;
+  }
+}
+
+async function saveInlineDistributionField(key, input) {
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const fallbacks = {
+    profileShareFavorable: 60,
+    profileShareIntermedio: 25,
+    profileShareDesfavorable: 15,
+  };
+  const value = clampPercent(input.value, fallbacks[key] ?? 0);
+  input.value = String(value);
+  settings = {
+    ...settings,
+    [key]: value,
+  };
+
+  const result = await chrome.storage.local.get([SETTINGS_KEY]);
+  const saved = { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) };
+  await chrome.storage.local.set({
+    [SETTINGS_KEY]: {
+      ...saved,
+      [key]: value,
+    },
+  });
+}
+
+async function stopActiveQaJob() {
+  if (!activeJobId || isCancellingJob) {
+    return;
+  }
+
+  isCancellingJob = true;
+  syncJobActionButtons();
+  showStatus('Deteniendo envios...', true);
+
+  const response = await backendRequest(`/api/qa/jobs/${activeJobId}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    isCancellingJob = false;
+    syncJobActionButtons();
+    showStatus(extractErrorMessage(response) || 'No se pudo detener el job.', true);
+    return;
+  }
+
+  activeJobStatus = 'cancelled';
+  isCancellingJob = false;
+  syncJobActionButtons();
+  showStatus('Solicitud de cancelacion enviada.', true);
+}
+
+function createInlineAdvancedToggle(key, label, checked) {
+  const row = document.createElement('label');
+  row.className = 'borang-qa-toggle-row';
+  row.dataset.settingKey = key;
+
+  const text = document.createElement('span');
+  text.textContent = label;
+
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.checked = Boolean(checked);
+  input.addEventListener('change', () => saveInlineAdvancedOption(key, input.checked));
+
+  row.append(text, input);
+  return row;
+}
+
+function syncInlineAdvancedControls(container) {
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  const modeEnabled = Boolean(settings.advancedMode);
+  container.querySelectorAll('.borang-qa-toggle-row').forEach((row) => {
+    if (!(row instanceof HTMLElement)) {
+      return;
+    }
+
+    const key = row.dataset.settingKey || '';
+    const input = row.querySelector('input[type="checkbox"]');
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+
+    if (!key.startsWith('advanced')) {
+      return;
+    }
+
+    input.checked = Boolean(settings[key]);
+    if (key !== 'advancedMode') {
+      input.disabled = !modeEnabled;
+      row.classList.toggle('is-disabled', !modeEnabled);
+    }
+  });
+}
+
+async function saveInlineAdvancedOption(key, checked) {
+  const allowedKeys = new Set([
+    'profileDistributionEnabled',
+    'advancedMode',
+    'advancedGender',
+    'advancedAge',
+    'advancedFrequency',
+    'advancedPersonality',
+  ]);
+  if (!allowedKeys.has(key)) {
+    return;
+  }
+
+  const nextSettings = {
+    ...settings,
+    [key]: Boolean(checked),
+  };
+
+  if (key === 'profileDistributionEnabled') {
+    if (checked) {
+      nextSettings.smartProfileMode = true;
+    }
+    settings = nextSettings;
+
+    const result = await chrome.storage.local.get([SETTINGS_KEY]);
+    const saved = { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) };
+    await chrome.storage.local.set({
+      [SETTINGS_KEY]: {
+        ...saved,
+        smartProfileMode: checked ? true : Boolean(saved.smartProfileMode),
+        profileDistributionEnabled: Boolean(nextSettings.profileDistributionEnabled),
+      },
+    });
+
+    const panel = document.getElementById('borang-qa-actions');
+    if (panel) {
+      syncInlineDistributionControls(panel);
+    }
+    return;
+  }
+
+  if (key !== 'advancedMode' && checked) {
+    nextSettings.advancedMode = true;
+  }
+
+  if (key === 'advancedMode' && !checked) {
+    nextSettings.advancedGender = false;
+    nextSettings.advancedAge = false;
+    nextSettings.advancedFrequency = false;
+    nextSettings.advancedPersonality = false;
+  }
+
+  settings = nextSettings;
+
+  const result = await chrome.storage.local.get([SETTINGS_KEY]);
+  const saved = { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) };
+  await chrome.storage.local.set({
+    [SETTINGS_KEY]: {
+      ...saved,
+      advancedMode: Boolean(nextSettings.advancedMode),
+      advancedGender: Boolean(nextSettings.advancedGender),
+      advancedAge: Boolean(nextSettings.advancedAge),
+      advancedFrequency: Boolean(nextSettings.advancedFrequency),
+      advancedPersonality: Boolean(nextSettings.advancedPersonality),
+    },
+  });
+
+  const panel = document.getElementById('borang-qa-actions');
+  if (panel) {
+    syncInlineAdvancedControls(panel);
+  }
+}
+
+function startBackendHealthMonitor() {
+  if (backendHealthTimer) {
+    return;
+  }
+
+  updateBackendHealthIndicator('checking', 'Verificando backend');
+  checkBackendHealth();
+  backendHealthTimer = window.setInterval(checkBackendHealth, BACKEND_HEALTH_INTERVAL_MS);
+}
+
+async function checkBackendHealth() {
+  const indicator = document.getElementById('borang-qa-backend-status');
+  if (!indicator) {
+    if (backendHealthTimer) {
+      window.clearInterval(backendHealthTimer);
+      backendHealthTimer = null;
+    }
+    return;
+  }
+
+  updateBackendHealthIndicator('checking', 'Verificando backend');
+  const response = await backendRequest('/api/qa/config', {
+    method: 'GET',
+  });
+
+  if (response.ok) {
+    updateBackendHealthIndicator('online', 'Backend conectado');
+    return;
+  }
+
+  updateBackendHealthIndicator('offline', extractErrorMessage(response) || 'Backend no disponible');
+}
+
+function updateBackendHealthIndicator(state, title) {
+  const indicator = document.getElementById('borang-qa-backend-status');
+  if (!(indicator instanceof HTMLElement)) {
+    return;
+  }
+
+  indicator.className = '';
+  indicator.classList.add(state === 'online' ? 'is-online' : state === 'offline' ? 'is-offline' : 'is-checking');
+  indicator.title = title || 'Estado backend';
+  indicator.setAttribute('aria-label', title || 'Estado backend');
+}
+
+function normalizeThemeMode(value) {
+  const normalized = String(value || '').toLowerCase();
+  return normalized === 'dark' || normalized === 'system' ? normalized : 'light';
+}
+
+function applyThemeToInjectedUi() {
+  const themeMode = resolveEffectiveThemeMode(settings.themeMode);
+  ['borang-qa-pill', 'borang-qa-actions', 'borang-qa-status', 'borang-qa-confirm-overlay'].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element) {
+      element.setAttribute('data-theme', themeMode);
+    }
+  });
+}
+
+function resolveEffectiveThemeMode(themeMode) {
+  const normalized = normalizeThemeMode(themeMode);
+  if (normalized === 'system') {
+    return systemThemeQuery.matches ? 'dark' : 'light';
+  }
+
+  return normalized;
+}
+
+function subscribeToSystemThemeChanges() {
+  if (subscribeToSystemThemeChanges.initialized) {
+    return;
+  }
+
+  subscribeToSystemThemeChanges.initialized = true;
+  systemThemeQuery.addEventListener('change', () => {
+    if (normalizeThemeMode(settings.themeMode) === 'system') {
+      applyThemeToInjectedUi();
+    }
+  });
+}
+
+function showQaConfirmDialog(details) {
+  const existing = document.getElementById('borang-qa-confirm-overlay');
+  if (existing) {
+    existing.remove();
+  }
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.id = 'borang-qa-confirm-overlay';
+    overlay.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
+
+    const dialog = document.createElement('div');
+    dialog.id = 'borang-qa-confirm-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', 'borang-qa-confirm-title');
+
+    const title = document.createElement('h3');
+    title.id = 'borang-qa-confirm-title';
+    title.textContent = 'Confirmar envio automatico';
+
+    const subtitle = document.createElement('p');
+    subtitle.className = 'borang-qa-confirm-subtitle';
+    subtitle.textContent = 'Revisa los datos antes de iniciar la corrida.';
+
+    const detailsBox = document.createElement('div');
+    detailsBox.className = 'borang-qa-confirm-details';
+    detailsBox.append(
+      createQaConfirmRow('Cantidad', String(details?.count || 1)),
+      createQaConfirmRow('Espera', `${Number(details?.delayMs || 0)} ms`)
+    );
+
+    if (Number(details?.csvRowsCount || 0) > 0) {
+      detailsBox.append(createQaConfirmRow('CSV', `${details.csvRowsCount} filas cargadas`));
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'borang-qa-confirm-actions';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'secondary';
+    cancelBtn.textContent = 'Cancelar';
+
+    const acceptBtn = document.createElement('button');
+    acceptBtn.type = 'button';
+    acceptBtn.textContent = 'Iniciar ahora';
+
+    const cleanup = (accepted) => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      overlay.remove();
+      resolve(Boolean(accepted));
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cleanup(false);
+      }
+    };
+
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        cleanup(false);
+      }
+    });
+    cancelBtn.onclick = () => cleanup(false);
+    acceptBtn.onclick = () => cleanup(true);
+    document.addEventListener('keydown', onKeyDown, true);
+
+    actions.append(cancelBtn, acceptBtn);
+    dialog.append(title, subtitle, detailsBox, actions);
+    overlay.appendChild(dialog);
+    document.documentElement.appendChild(overlay);
+    acceptBtn.focus();
+  });
+}
+
+function createQaConfirmRow(label, value) {
+  const row = document.createElement('div');
+  row.className = 'borang-qa-confirm-row';
+
+  const labelNode = document.createElement('span');
+  labelNode.className = 'label';
+  labelNode.textContent = label;
+
+  const valueNode = document.createElement('span');
+  valueNode.className = 'value';
+  valueNode.textContent = value;
+
+  row.append(labelNode, valueNode);
+  return row;
+}
+
+function syncJobActionButtons() {
+  const runBtn = document.getElementById('borang-qa-run-btn');
+  const running = Boolean(activeJobId && (activeJobStatus === 'queued' || activeJobStatus === 'running'));
+
+  if (runBtn instanceof HTMLButtonElement) {
+    runBtn.disabled = isQaRunStarting || isCancellingJob;
+    runBtn.classList.toggle('is-running', running);
+    runBtn.classList.toggle('is-stopping', isCancellingJob);
+    const mainLabel = runBtn.querySelector('.main-label');
+    const hoverLabel = runBtn.querySelector('.hover-label');
+    if (mainLabel instanceof HTMLElement) {
+      if (isCancellingJob) {
+        mainLabel.textContent = 'Deteniendo...';
+      } else if (isQaRunStarting) {
+        mainLabel.textContent = 'Iniciando...';
+      } else if (running) {
+        mainLabel.textContent = activeJobProgressLabel || 'En progreso';
+      } else {
+        mainLabel.textContent = 'Iniciar';
+      }
+    }
+    if (hoverLabel instanceof HTMLElement) {
+      hoverLabel.textContent = running ? 'Detener' : 'Iniciar';
+    }
+  }
+}
+
+function clearActiveJobState(jobId) {
+  if (jobId && activeJobId && jobId !== activeJobId) {
+    return;
+  }
+
+  activeJobId = '';
+  activeJobStatus = '';
+  isCancellingJob = false;
+  activeJobProgressLabel = '';
+  syncJobActionButtons();
+}
+
+function showStatus(message, isError) {
+  const previous = document.getElementById('borang-qa-status');
+  if (previous) {
+    previous.remove();
+  }
+
+  const status = document.createElement('div');
+  status.id = 'borang-qa-status';
+  status.className = isError ? 'is-error' : 'is-ok';
+  status.textContent = message;
+  status.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
+  document.documentElement.appendChild(status);
+
+  window.setTimeout(() => {
+    status.remove();
+  }, 5000);
+}
+
+async function submitWithCompatApi(formUrl, payload, count) {
+  const backend = normalizeBackendUrl(settings.backendBaseUrl);
+  const formId = crypto.randomUUID();
+
+  await backendRequest('/api/forms', {
+    baseUrl: backend,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ formId }),
+  });
+
+  const params = new URLSearchParams();
+  params.append('url', formUrl);
+  params.append('counter', String(count));
+  params.append('fromExtensionBackground', 'true');
+  params.append('formId', formId);
+
+  for (const [name, value] of Object.entries(payload)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        params.append(name, String(item));
+      }
+      continue;
+    }
+
+    params.append(name, String(value));
+  }
+
+  const response = await backendRequest('/api/forms/submit', {
+    baseUrl: backend,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params.toString(),
+  });
+
+  const text = typeof response.data === 'string' ? response.data : JSON.stringify(response.data || {});
+  if (!response.ok) {
+    throw new Error(text || extractErrorMessage(response));
+  }
+
+  const match = text.match(/id=([a-f0-9-]+)/i);
+  if (match?.[1]) {
+    showStatus(`Compat job ${match[1].slice(0, 8)} created.`);
+    monitorJob(match[1], backend);
+  } else {
+    showStatus('Compat submit sent.');
+  }
+}
+
+function applyCsvRowIfAvailable(payload) {
+  if (!csvRows.length) {
+    return payload;
+  }
+
+  const row = csvRows[csvCursor % csvRows.length];
+  csvCursor += 1;
+
+  const merged = { ...payload };
+  for (const [key, value] of Object.entries(row)) {
+    merged[key] = value;
+  }
+
+  return merged;
+}
+
+function applySmartProfilePayload(payload, form, runtimeSettings) {
+  if (!runtimeSettings?.smartProfileMode || !form) {
+    return payload;
+  }
+
+  const output = { ...payload };
+  const optionsByEntry = collectEntryOptions(form);
+  const questionByEntry = collectQuestionTextByEntry(form);
+  const distributionEnabled = Boolean(runtimeSettings?.profileDistributionEnabled);
+  const profile = resolveSmartProfile(runtimeSettings.smartProfileType);
+  const specialKeyword = normalizeText(runtimeSettings.specialQuestionKeyword || '');
+  const specialPreferred = String(runtimeSettings.specialQuestionPreferred || '').trim();
+
+  for (const [key, rawValue] of Object.entries(output)) {
+    if (!/^entry\.\d+$/.test(key) || Array.isArray(rawValue)) {
+      continue;
+    }
+
+    const value = String(rawValue || '');
+    const questionText = questionByEntry.get(key) || '';
+    const options = optionsByEntry.get(key) || [];
+
+    if (specialKeyword && normalizeText(questionText).includes(specialKeyword) && specialPreferred) {
+      output[key] = findBestOptionValue(options, specialPreferred) || specialPreferred;
+      continue;
+    }
+
+    const currentScore = resolveLikertScore(value);
+    const hasLikertOptions = options.some((option) => resolveLikertScore(option.value) > 0);
+    if (!distributionEnabled && (currentScore > 0 || hasLikertOptions)) {
+      const targetScore = pickLikertScore(profile);
+      const pickedLikert = pickLikertValue(options, targetScore, value);
+      if (pickedLikert) {
+        output[key] = pickedLikert;
+      }
+    }
+  }
+
+  return output;
+}
+
+function buildSmartProfileConfig(runtimeSettings, specialEntryKey, optionsByEntry, questionByEntry) {
+  const entryMeta = {};
+  if (optionsByEntry instanceof Map || questionByEntry instanceof Map) {
+    const keys = new Set([
+      ...Array.from(optionsByEntry instanceof Map ? optionsByEntry.keys() : []),
+      ...Array.from(questionByEntry instanceof Map ? questionByEntry.keys() : []),
+    ]);
+
+    for (const entryKey of keys) {
+      if (!/^entry\.\d+$/.test(entryKey || '')) {
+        continue;
+      }
+
+      const question = String(
+        questionByEntry instanceof Map ? questionByEntry.get(entryKey) || '' : ''
+      )
+        .trim()
+        .slice(0, 240);
+      const options = Array.from(
+        new Set(
+          (optionsByEntry instanceof Map ? optionsByEntry.get(entryKey) || [] : [])
+            .map((item) => String(item?.value || '').trim())
+            .filter(Boolean)
+        )
+      ).slice(0, 24);
+
+      if (!question && !options.length) {
+        continue;
+      }
+
+      entryMeta[entryKey] = {
+        question,
+        options,
+      };
+    }
+  }
+
+  return {
+    enabled: Boolean(runtimeSettings?.smartProfileMode),
+    type: resolveSmartProfile(runtimeSettings?.smartProfileType),
+    distribution: {
+      enabled: Boolean(runtimeSettings?.profileDistributionEnabled),
+      shares: {
+        favorable: clampPercent(runtimeSettings?.profileShareFavorable, 60),
+        intermedio: clampPercent(runtimeSettings?.profileShareIntermedio, 25),
+        desfavorable: clampPercent(runtimeSettings?.profileShareDesfavorable, 15),
+      },
+    },
+    specialEntryKey: specialEntryKey || '',
+    specialPreferred: String(runtimeSettings?.specialQuestionPreferred || '').trim(),
+    advanced: {
+      mode: Boolean(runtimeSettings?.advancedMode),
+      gender: Boolean(runtimeSettings?.advancedMode && runtimeSettings?.advancedGender),
+      age: Boolean(runtimeSettings?.advancedMode && runtimeSettings?.advancedAge),
+      frequency: Boolean(runtimeSettings?.advancedMode && runtimeSettings?.advancedFrequency),
+      personality: Boolean(runtimeSettings?.advancedMode && runtimeSettings?.advancedPersonality),
+    },
+    entryMeta,
+  };
+}
+
+function resolveSpecialEntryKey(form, keyword) {
+  const normalizedKeyword = normalizeText(keyword || '');
+  if (!normalizedKeyword || !form) {
+    return '';
+  }
+
+  const questionByEntry = collectQuestionTextByEntry(form);
+  for (const [entry, questionText] of questionByEntry.entries()) {
+    if (normalizeText(questionText).includes(normalizedKeyword)) {
+      return entry;
+    }
+  }
+
+  return '';
+}
+
+function collectEntryOptions(form) {
+  const map = new Map();
+  const put = (name, value) => {
+    if (!/^entry\.\d+$/.test(name || '') || !value) {
+      return;
+    }
+
+    if (!map.has(name)) {
+      map.set(name, []);
+    }
+
+    const list = map.get(name);
+    if (!list.some((item) => item.value === value)) {
+      list.push({ value });
+    }
+  };
+
+  form.querySelectorAll('input[name^="entry."]').forEach((input) => {
+    if (input.type === 'radio' || input.type === 'checkbox') {
+      put(input.name, String(input.value || '').trim());
+    }
+  });
+
+  form.querySelectorAll('select[name^="entry."]').forEach((select) => {
+    Array.from(select.options).forEach((option) => {
+      const value = String(option.value || option.textContent || '').trim();
+      put(select.name, value);
+    });
+  });
+
+  return map;
+}
+
+function collectQuestionTextByEntry(form) {
+  const map = new Map();
+
+  form.querySelectorAll('[name^="entry."]').forEach((element) => {
+    const name = element.getAttribute('name');
+    if (!/^entry\.\d+$/.test(name || '') || map.has(name)) {
+      return;
+    }
+
+    const questionText = extractQuestionText(element);
+    if (questionText) {
+      map.set(name, questionText);
+    }
+  });
+
+  return map;
+}
+
+function extractQuestionText(element) {
+  const container = element.closest('[role="listitem"], .Qr7Oae, .geS5n');
+  if (!container) {
+    return '';
+  }
+
+  const title = container.querySelector('[role="heading"], .M7eMe, .HoXoMd, .zHQkBf');
+  return String(title?.textContent || '').trim();
+}
+
+function resolveSmartProfile(value) {
+  const selected = String(value || '').toLowerCase();
+  if (selected === 'favorable' || selected === 'intermedio' || selected === 'desfavorable') {
+    return selected;
+  }
+
+  if (selected === 'auto') {
+    const roll = Math.random();
+    if (roll < 0.6) {
+      return 'favorable';
+    }
+    if (roll < 0.85) {
+      return 'intermedio';
+    }
+    return 'desfavorable';
+  }
+
+  return 'favorable';
+}
+
+function pickLikertScore(profile) {
+  const dominant = profile === 'desfavorable' ? 2 : profile === 'intermedio' ? 3 : 4;
+
+  if (Math.random() < 0.8) {
+    if (dominant === 4 && Math.random() < 0.35) {
+      return 5;
+    }
+    if (dominant === 2 && Math.random() < 0.35) {
+      return 1;
+    }
+    return dominant;
+  }
+
+  const delta = Math.random() < 0.5 ? -1 : 1;
+  return clamp(dominant + delta, 1, 5);
+}
+
+function pickLikertValue(options, targetScore, fallbackValue) {
+  const scored = (options || [])
+    .map((option) => ({ value: option.value, score: resolveLikertScore(option.value) }))
+    .filter((item) => item.score > 0);
+
+  if (!scored.length) {
+    return fallbackValue;
+  }
+
+  const exact = scored.filter((item) => item.score === targetScore);
+  if (exact.length) {
+    return exact[Math.floor(Math.random() * exact.length)].value;
+  }
+
+  scored.sort((a, b) => Math.abs(a.score - targetScore) - Math.abs(b.score - targetScore));
+  return scored[0].value;
+}
+
+function resolveLikertScore(value) {
+  const text = normalizeText(value);
+  if (!text) {
+    return 0;
+  }
+
+  if (
+    text.includes('totalmente en desacuerdo') ||
+    text.includes('muy en desacuerdo') ||
+    text.includes('strongly disagree')
+  ) {
+    return 1;
+  }
+
+  if (text === 'en desacuerdo' || text.includes('disagree')) {
+    return 2;
+  }
+
+  if (
+    text.includes('ni de acuerdo ni en desacuerdo') ||
+    text.includes('neutral') ||
+    text.includes('ni en desacuerdo ni de acuerdo')
+  ) {
+    return 3;
+  }
+
+  if (text === 'de acuerdo' || text.includes('agree')) {
+    return 4;
+  }
+
+  if (
+    text.includes('totalmente de acuerdo') ||
+    text.includes('muy de acuerdo') ||
+    text.includes('strongly agree')
+  ) {
+    return 5;
+  }
+
+  return 0;
+}
+
+function looksLikeGenderField(questionText, value, options) {
+  const joined = normalizeText(
+    `${questionText || ''} ${value || ''} ${(options || []).map((opt) => opt.value).join(' ')}`
+  );
+
+  return (
+    joined.includes('genero') ||
+    joined.includes('sexo') ||
+    joined.includes('gender') ||
+    joined.includes('sex') ||
+    joined.includes('male') ||
+    joined.includes('female') ||
+    joined.includes('hombre') ||
+    joined.includes('mujer') ||
+    joined.includes('masculino') ||
+    joined.includes('femenino') ||
+    joined.includes('identidad de genero')
+  );
+}
+
+function pickGenderValue(options, fallbackValue) {
+  const values = Array.from(
+    new Set((options || []).map((option) => String(option.value || '').trim()).filter(Boolean))
+  );
+  if (!values.length) {
+    return fallbackValue;
+  }
+
+  const current = normalizeText(fallbackValue);
+  const pool = values.filter((value) => normalizeText(value) !== current);
+  const source = pool.length ? pool : values;
+
+  const categorized = {
+    male: source.filter((value) => /masculino|male|hombre/i.test(value)),
+    female: source.filter((value) => /femenino|female|mujer/i.test(value)),
+    other: source.filter((value) => /otro|other|prefiero no/i.test(value)),
+  };
+
+  const roll = Math.random();
+  if (roll < 0.48 && categorized.male.length) {
+    return categorized.male[Math.floor(Math.random() * categorized.male.length)];
+  }
+  if (roll < 0.96 && categorized.female.length) {
+    return categorized.female[Math.floor(Math.random() * categorized.female.length)];
+  }
+  if (categorized.other.length) {
+    return categorized.other[Math.floor(Math.random() * categorized.other.length)];
+  }
+
+  return source[Math.floor(Math.random() * source.length)] || fallbackValue;
+}
+
+function looksLikeAgeField(questionText, value, options) {
+  const joined = normalizeText(
+    `${questionText || ''} ${value || ''} ${(options || []).map((opt) => opt.value).join(' ')}`
+  );
+
+  return (
+    joined.includes('edad') ||
+    joined.includes('rango de edad') ||
+    joined.includes('grupo de edad') ||
+    joined.includes('age') ||
+    joined.includes('years old') ||
+    joined.includes('anos') ||
+    joined.includes('anios') ||
+    /\b\d{1,2}\s*-\s*\d{1,2}\b/.test(joined) ||
+    /\b\d{1,2}\s*(a|to)\s*\d{1,2}\b/.test(joined) ||
+    /\b(18|20|25|30|35|40|45|50|55|60)\b/.test(joined)
+  );
+}
+
+function looksLikePersonalityField(questionText, value, options) {
+  const joined = normalizeText(
+    `${questionText || ''} ${value || ''} ${(options || []).map((opt) => opt.value).join(' ')}`
+  );
+
+  return (
+    joined.includes('personalidad') ||
+    joined.includes('personality') ||
+    joined.includes('temperamento') ||
+    joined.includes('caracter') ||
+    joined.includes('introvert') ||
+    joined.includes('extrovert') ||
+    joined.includes('mbti') ||
+    joined.includes('eneagrama') ||
+    joined.includes('enneagram') ||
+    joined.includes('big five')
+  );
+}
+
+function pickPersonalityValue(options, fallbackValue) {
+  const values = Array.from(
+    new Set(
+      (options || [])
+        .map((option) => String(option.value || '').trim())
+        .filter((value) => value && !/^seleccione|select/i.test(value))
+    )
+  );
+
+  if (values.length) {
+    const current = normalizeText(fallbackValue);
+    const pool = values.filter((value) => normalizeText(value) !== current);
+    const source = pool.length ? pool : values;
+    return source[Math.floor(Math.random() * source.length)];
+  }
+
+  const fallback = String(fallbackValue || '').trim();
+  if (!fallback) {
+    return fallbackValue;
+  }
+
+  const splitBy = fallback.split(/\s*[,/|]\s*/).map((part) => part.trim()).filter(Boolean);
+  if (splitBy.length > 1) {
+    return splitBy[Math.floor(Math.random() * splitBy.length)];
+  }
+
+  return fallbackValue;
+}
+
+function pickRandomOptionValue(options, fallbackValue) {
+  const values = Array.from(
+    new Set(
+      (options || [])
+        .map((option) => String(option.value || '').trim())
+        .filter((value) => value && !/^seleccione|select/i.test(value))
+    )
+  );
+
+  if (!values.length) {
+    return fallbackValue;
+  }
+
+  const current = normalizeText(fallbackValue);
+  const pool = values.filter((value) => normalizeText(value) !== current);
+  const source = pool.length ? pool : values;
+
+  return source[Math.floor(Math.random() * source.length)];
+}
+
+function findBestOptionValue(options, targetText) {
+  const target = normalizeText(targetText);
+  if (!target) {
+    return '';
+  }
+
+  const values = (options || []).map((option) => String(option.value || '').trim()).filter(Boolean);
+  const exact = values.find((value) => normalizeText(value) === target);
+  if (exact) {
+    return exact;
+  }
+
+  const partial = values.find((value) => normalizeText(value).includes(target));
+  return partial || '';
+}
+
+function normalizeText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function resolveEventElementTarget(event) {
+  const target = event?.target;
+  if (target instanceof Element) {
+    return target;
+  }
+
+  if (target && target.nodeType === Node.TEXT_NODE) {
+    return target.parentElement;
+  }
+
+  return null;
+}
+
+function parseCsvRows(csvText) {
+  const lines = csvText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    return [];
+  }
+
+  const headers = parseCsvLine(lines[0]);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCsvLine(lines[i]);
+    const row = {};
+    for (let j = 0; j < headers.length; j++) {
+      const header = headers[j];
+      if (!header) {
+        continue;
+      }
+      row[header] = values[j] || '';
+    }
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function parseCsvLine(line) {
+  const out = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    const next = line[i + 1];
+
+    if (ch === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (ch === ',' && !inQuotes) {
+      out.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += ch;
+  }
+
+  out.push(current.trim());
+  return out;
+}
+
+function randomizeFormInputs(form) {
+  const textLike = form.querySelectorAll('input[type="text"], input[type="email"], input[type="number"], textarea');
+  textLike.forEach((input) => {
+    if (input.disabled || input.readOnly) {
+      return;
+    }
+
+    if (input.type === 'email') {
+      input.value = `qa_${randomToken(6)}@example.test`;
+    } else if (input.type === 'number') {
+      input.value = String(Math.floor(Math.random() * 10) + 1);
+    } else {
+      input.value = `QA ${randomToken(6)}`;
+    }
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+
+  const radioGroups = new Map();
+  form.querySelectorAll('input[type="radio"]').forEach((radio) => {
+    if (!radio.name || radio.disabled) {
+      return;
+    }
+    if (!radioGroups.has(radio.name)) {
+      radioGroups.set(radio.name, []);
+    }
+    radioGroups.get(radio.name).push(radio);
+  });
+
+  radioGroups.forEach((group) => {
+    const pick = group[Math.floor(Math.random() * group.length)];
+    pick.checked = true;
+    pick.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+
+  form.querySelectorAll('select').forEach((select) => {
+    if (select.disabled || !select.options.length) {
+      return;
+    }
+
+    const option = pickSelectableOption(Array.from(select.options));
+    if (!option) {
+      return;
+    }
+
+    option.selected = true;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+function fillUnansweredFormInputs(form) {
+  const groups = collectEntryGroups(form);
+  let filled = 0;
+  const missingRequired = [];
+
+  for (const group of groups.values()) {
+    if (groupHasAnswer(group)) {
+      continue;
+    }
+
+    const required = isQuestionRequired(group.container);
+    const completed = fillEntryGroup(group);
+    if (completed) {
+      filled += 1;
+      continue;
+    }
+
+    if (required) {
+      missingRequired.push(extractQuestionText(group.container) || group.name || 'Pregunta sin titulo');
+    }
+  }
+
+  return {
+    filled,
+    missingRequired,
+  };
+}
+
+function collectEntryGroups(form) {
+  const groups = new Map();
+
+  form.querySelectorAll('[name^="entry."]').forEach((element) => {
+    if (!(element instanceof HTMLElement) || element.disabled) {
+      return;
+    }
+
+    const name = String(element.getAttribute('name') || '').trim();
+    if (!/^entry\.\d+$/.test(name)) {
+      return;
+    }
+
+    if (!groups.has(name)) {
+      groups.set(name, {
+        name,
+        elements: [],
+        container: element.closest('[role="listitem"], .Qr7Oae, .geS5n'),
+      });
+    }
+
+    groups.get(name).elements.push(element);
+  });
+
+  return groups;
+}
+
+function groupHasAnswer(group) {
+  return group.elements.some((element) => elementHasAnswer(element));
+}
+
+function elementHasAnswer(element) {
+  if (!(element instanceof HTMLElement) || element.disabled) {
+    return false;
+  }
+
+  if (element instanceof HTMLInputElement) {
+    if (element.type === 'radio' || element.type === 'checkbox') {
+      return element.checked;
+    }
+
+    return String(element.value || '').trim() !== '';
+  }
+
+  if (element instanceof HTMLTextAreaElement) {
+    return String(element.value || '').trim() !== '';
+  }
+
+  if (element instanceof HTMLSelectElement) {
+    const selected = element.selectedOptions?.[0];
+    return isSelectableOption(selected || null);
+  }
+
+  return false;
+}
+
+function fillEntryGroup(group) {
+  const visibleElements = group.elements.filter((element) => isElementInteractable(element));
+  if (!visibleElements.length) {
+    return false;
+  }
+
+  const first = visibleElements[0];
+  if (first instanceof HTMLInputElement) {
+    if (first.type === 'radio' || first.type === 'checkbox') {
+      const pick = visibleElements[Math.floor(Math.random() * visibleElements.length)];
+      if (!(pick instanceof HTMLInputElement)) {
+        return false;
+      }
+
+      pick.checked = true;
+      pick.dispatchEvent(new Event('input', { bubbles: true }));
+      pick.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+
+    return fillTextLikeInput(first);
+  }
+
+  if (first instanceof HTMLTextAreaElement) {
+    first.value = `QA ${randomToken(6)}`;
+    first.dispatchEvent(new Event('input', { bubbles: true }));
+    first.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+
+  if (first instanceof HTMLSelectElement) {
+    const option = pickSelectableOption(Array.from(first.options));
+    if (!option) {
+      return false;
+    }
+
+    option.selected = true;
+    first.dispatchEvent(new Event('input', { bubbles: true }));
+    first.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+
+  return false;
+}
+
+function fillTextLikeInput(input) {
+  if (!(input instanceof HTMLInputElement) || input.disabled || input.readOnly) {
+    return false;
+  }
+
+  if (input.type === 'email') {
+    input.value = `qa_${randomToken(6)}@example.test`;
+  } else if (input.type === 'number') {
+    input.value = String(Math.floor(Math.random() * 10) + 1);
+  } else if (input.type === 'date') {
+    input.value = '2026-01-15';
+  } else if (input.type === 'time') {
+    input.value = '10:00';
+  } else {
+    input.value = `QA ${randomToken(6)}`;
+  }
+
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+}
+
+function isElementInteractable(element) {
+  if (!(element instanceof HTMLElement) || element.disabled) {
+    return false;
+  }
+
+  if (element instanceof HTMLInputElement && element.type === 'hidden') {
+    return false;
+  }
+
+  const style = window.getComputedStyle(element);
+  if (style.display === 'none' || style.visibility === 'hidden') {
+    return false;
+  }
+
+  return element.getClientRects().length > 0;
+}
+
+function isQuestionRequired(container) {
+  if (!(container instanceof HTMLElement)) {
+    return false;
+  }
+
+  const text = normalizeText(container.textContent || '');
+  if (/obligatoria|required/.test(text)) {
+    return true;
+  }
+
+  return Boolean(
+    container.querySelector('[aria-label*="Required" i], [aria-label*="Obligatoria" i], [data-required="true"]')
+  );
+}
+
+function pickSelectableOption(options) {
+  const candidates = (options || []).filter((option) => isSelectableOption(option));
+  if (!candidates.length) {
+    return null;
+  }
+
+  return candidates[Math.floor(Math.random() * candidates.length)] || null;
+}
+
+function isSelectableOption(option) {
+  if (!(option instanceof HTMLOptionElement) || option.disabled) {
+    return false;
+  }
+
+  const text = normalizeText(option.textContent || option.value || '');
+  const value = String(option.value || '').trim();
+  if (!text || !value) {
+    return false;
+  }
+
+  return !/^(seleccione|select|choose|elige|escoge)/.test(text);
+}
+
+function randomToken(length) {
+  return Math.random().toString(36).slice(2, 2 + length);
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function clampPercent(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+
+  return clamp(Math.round(numeric), 0, 100);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function backendRequest(path, options = {}) {
+  const baseUrl = normalizeBackendUrl(options.baseUrl || settings.backendBaseUrl);
+  const url = `${baseUrl}${path}`;
+  const headers = {
+    ...options.headers,
+    ...getAuthHeaders(),
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: options.method || 'GET',
+      headers,
+      body: options.body,
+    });
+
+    const data = await readResponseBody(response);
+    return {
+      ok: response.ok,
+      status: response.status,
+      data,
+      error: null,
+    };
+  } catch (error) {
+    const viaBackground = await sendBackgroundHttpRequest({
+      url,
+      method: options.method || 'GET',
+      headers,
+      body: options.body,
+    });
+
+    if (viaBackground) {
+      return viaBackground;
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: null,
+      error: error?.message || 'Network request failed',
+    };
+  }
+}
+
+async function readResponseBody(response) {
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('application/json')) {
+    return response.json();
+  }
+
+  return response.text();
+}
+
+async function sendBackgroundHttpRequest(payload) {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'BORANG_HTTP_REQUEST',
+      payload,
+    });
+
+    if (!response || typeof response !== 'object') {
+      return {
+        ok: false,
+        status: 0,
+        data: null,
+        error: 'Empty response from background request',
+      };
+    }
+
+    return response;
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      data: null,
+      error: error?.message || 'Failed to contact extension background',
+    };
+  }
+}
+
+function getAuthHeaders() {
+  const apiKey = String(settings.apiKey || '').trim();
+  if (!apiKey) {
+    return {};
+  }
+
+  return {
+    'X-API-Key': apiKey,
+  };
+}
+
+function extractErrorMessage(response) {
+  if (!response) {
+    return 'Request failed';
+  }
+
+  if (response.error) {
+    return response.error;
+  }
+
+  const data = response.data;
+  if (data?.error?.message) {
+    return data.error.message;
+  }
+
+  if (data?.message) {
+    return data.message;
+  }
+
+  return 'Request failed';
+}
+
+async function recordDiagnostics(patch) {
+  try {
+    const result = await chrome.storage.local.get([DIAGNOSTICS_KEY]);
+    await chrome.storage.local.set({
+      [DIAGNOSTICS_KEY]: {
+        ...(result[DIAGNOSTICS_KEY] || {}),
+        ...patch,
+      },
+    });
+  } catch (error) {
+    // ignore diagnostics write failures
+  }
+}
