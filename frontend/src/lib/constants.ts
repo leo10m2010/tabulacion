@@ -1,18 +1,16 @@
 import type { TabConfig } from "./types";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-// URL del servicio Tutorica Forms (rellenador de Google Forms); la extension
-// de Chrome se conecta a ese backend con la clave de API del usuario.
-export const FORMS_BACKEND_URL = String(
-  import.meta.env.VITE_FORMS_BACKEND_URL ?? "https://tutorica-forms.onrender.com",
-).replace(/\/$/, "");
-
 // En produccion apunta a la API de Render por defecto; VITE_API_BASE_URL
 // (variable de entorno del proyecto en Vercel) tiene prioridad si se define.
 export const DEFAULT_API_BASE_URL = String(
   import.meta.env.VITE_API_BASE_URL
     ?? (import.meta.env.PROD ? "https://tabulacion-api.onrender.com" : "http://localhost:8080"),
 ).replace(/\/$/, "");
+
+// Tutorica Forms corre en el mismo backend que la API de tabulación; la
+// extensión de Chrome usa esta URL con la clave de API del usuario.
+export const FORMS_BACKEND_URL = DEFAULT_API_BASE_URL;
 
 export const FALLBACK_CONFIG: TabConfig = {
   muestra: "289",

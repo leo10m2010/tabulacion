@@ -1,6 +1,6 @@
-# Borang QA Assistant (Chrome Extension)
+# Borang TESISTAB Assistant (Chrome Extension)
 
-Chrome extension for authorized educational QA runs on your own Google Forms.
+Chrome extension for authorized educational TESISTAB runs on your own Google Forms.
 
 ## Features
 
@@ -12,7 +12,7 @@ Chrome extension for authorized educational QA runs on your own Google Forms.
 - In-page status pill and job progress/result messages.
 - Popup diagnostics for latest job id/status/error and backend connection test.
 - Reliability improvements for Google Forms SPA behavior (form rebinding, Enter key submit interception, monitor retries).
-- Sends jobs to local backend: `POST /api/qa/submit`.
+- Sends jobs to local backend: `POST /api/tesistab/submit`.
 - Optional compatibility mode uses legacy endpoints: `/api/forms` and `/api/forms/submit`.
 
 ## Install (Load unpacked)
@@ -27,7 +27,7 @@ Chrome extension for authorized educational QA runs on your own Google Forms.
 1. Run backend locally (`http://localhost:5000`).
 2. Open a Google Form (`docs.google.com/forms`).
 3. Open extension popup and save your settings.
-4. Click submit in the form and confirm the QA run.
+4. Click submit in the form and confirm the TESISTAB run.
 
 CSV format note:
 

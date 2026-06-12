@@ -1,6 +1,6 @@
 {
   "name": "Tutorica Forms",
-  "description": "Google Forms automation for authorized QA testing",
+  "description": "Google Forms automation for authorized TESISTAB testing",
   "version": "0.2.0",
   "manifest_version": 3,
   "icons": { "128": "icon_128.png" },
@@ -12,7 +12,7 @@
     "storage"
   ],
   "host_permissions": [
-    "https://tutorica-forms.onrender.com/*",
+    "https://tabulacion-api.onrender.com/*",
     "http://localhost:5000/*",
     "https://localhost:5000/*",
     "http://127.0.0.1:5000/*",

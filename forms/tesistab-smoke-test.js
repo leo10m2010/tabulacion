@@ -1,9 +1,9 @@
 /* eslint-disable no-console */
-const BASE_URL = (process.env.QA_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
-const API_KEY = String(process.env.QA_API_KEY || '').trim();
+const BASE_URL = (process.env.TESISTAB_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+const API_KEY = String(process.env.TESISTAB_API_KEY || '').trim();
 
 async function main() {
-  console.log(`Running QA smoke test against ${BASE_URL}`);
+  console.log(`Running TESISTAB smoke test against ${BASE_URL}`);
 
   const authHeaders = API_KEY
     ? {
@@ -11,21 +11,21 @@ async function main() {
       }
     : {};
 
-  await expectJson(`${BASE_URL}/api/qa/config`, {
+  await expectJson(`${BASE_URL}/api/tesistab/config`, {
     method: 'GET',
     headers: authHeaders,
   });
 
-  const jobs = await expectJson(`${BASE_URL}/api/qa/jobs`, {
+  const jobs = await expectJson(`${BASE_URL}/api/tesistab/jobs`, {
     method: 'GET',
     headers: authHeaders,
   });
 
   if (typeof jobs.total !== 'number' || !Array.isArray(jobs.jobs)) {
-    throw new Error('Invalid /api/qa/jobs response shape');
+    throw new Error('Invalid /api/tesistab/jobs response shape');
   }
 
-  const invalidSubmit = await fetchJson(`${BASE_URL}/api/qa/submit`, {
+  const invalidSubmit = await fetchJson(`${BASE_URL}/api/tesistab/submit`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

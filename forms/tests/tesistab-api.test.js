@@ -5,14 +5,14 @@ const { after, before, describe, test } = require('node:test');
 const SERVER_START_TIMEOUT_MS = 15000;
 const SERVER_STOP_TIMEOUT_MS = 7000;
 
-describe('QA API regression (no API key)', () => {
+describe('TESISTAB API regression (no API key)', () => {
   let server;
 
   before(async () => {
     server = await startServer({
       TESISTAB_VALIDATION: 'off',
-      QA_MAX_SUBMISSIONS_PER_JOB: '3',
-      QA_PERSIST_JOBS: 'false',
+      TESISTAB_MAX_SUBMISSIONS_PER_JOB: '3',
+      TESISTAB_PERSIST_JOBS: 'false',
     });
   });
 
@@ -20,8 +20,8 @@ describe('QA API regression (no API key)', () => {
     await stopServer(server);
   });
 
-  test('GET /api/qa/config returns limits and request id', async () => {
-    const response = await fetchJson(`${server.baseUrl}/api/qa/config`);
+  test('GET /api/tesistab/config returns limits and request id', async () => {
+    const response = await fetchJson(`${server.baseUrl}/api/tesistab/config`);
 
     assert.equal(response.status, 200);
     assert.ok(response.body.requestId);
@@ -29,8 +29,8 @@ describe('QA API regression (no API key)', () => {
     assert.ok(Array.isArray(response.body.allowedHosts));
   });
 
-  test('POST /api/qa/submit rejects invalid payload with structured error', async () => {
-    const response = await fetchJson(`${server.baseUrl}/api/qa/submit`, {
+  test('POST /api/tesistab/submit rejects invalid payload with structured error', async () => {
+    const response = await fetchJson(`${server.baseUrl}/api/tesistab/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -44,21 +44,21 @@ describe('QA API regression (no API key)', () => {
     assert.ok(response.body.requestId);
   });
 
-  test('POST /api/qa/submit creates job and job is queryable', async () => {
-    const createResponse = await fetchJson(`${server.baseUrl}/api/qa/submit`, {
+  test('POST /api/tesistab/submit creates job and job is queryable', async () => {
+    const createResponse = await fetchJson(`${server.baseUrl}/api/tesistab/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         formUrl: 'https://docs.google.com/forms/d/e/test-form/formResponse',
         payload: {
-          'entry.1': 'qa regression',
+          'entry.1': 'tesistab regression',
           fvv: '1',
           fbzx: 'test-token',
         },
         count: 1,
         delayMs: 700,
         jitterMs: 0,
-        label: 'qa-api-test',
+        label: 'tesistab-api-test',
       }),
     });
 
@@ -67,15 +67,15 @@ describe('QA API regression (no API key)', () => {
     assert.equal(createResponse.body.applied.count, 1);
 
     const jobId = createResponse.body.id;
-    const getResponse = await fetchJson(`${server.baseUrl}/api/qa/jobs/${jobId}`);
+    const getResponse = await fetchJson(`${server.baseUrl}/api/tesistab/jobs/${jobId}`);
     assert.equal(getResponse.status, 200);
     assert.equal(getResponse.body.id, jobId);
     assert.ok(getResponse.body.requestId);
-    assert.equal(getResponse.body.label, 'qa-api-test');
+    assert.equal(getResponse.body.label, 'tesistab-api-test');
   });
 
-  test('GET /api/qa/jobs exposes totals and filter metadata', async () => {
-    const response = await fetchJson(`${server.baseUrl}/api/qa/jobs?limit=10&status=running`);
+  test('GET /api/tesistab/jobs exposes totals and filter metadata', async () => {
+    const response = await fetchJson(`${server.baseUrl}/api/tesistab/jobs?limit=10&status=running`);
 
     assert.equal(response.status, 200);
     assert.ok(response.body.requestId);
@@ -87,15 +87,15 @@ describe('QA API regression (no API key)', () => {
   });
 });
 
-describe('QA API key protection', () => {
+describe('TESISTAB API key protection', () => {
   let server;
-  const apiKey = 'qa-local-test-key';
+  const apiKey = 'tesistab-local-test-key';
 
   before(async () => {
     server = await startServer({
       TESISTAB_VALIDATION: 'off',
-      QA_API_KEY: apiKey,
-      QA_PERSIST_JOBS: 'false',
+      TESISTAB_API_KEY: apiKey,
+      TESISTAB_PERSIST_JOBS: 'false',
     });
   });
 
@@ -104,7 +104,7 @@ describe('QA API key protection', () => {
   });
 
   test('rejects requests without API key', async () => {
-    const response = await fetchJson(`${server.baseUrl}/api/qa/config`);
+    const response = await fetchJson(`${server.baseUrl}/api/tesistab/config`);
 
     assert.equal(response.status, 401);
     assert.equal(response.body.error.code, 'unauthorized');
@@ -112,7 +112,7 @@ describe('QA API key protection', () => {
   });
 
   test('accepts requests with API key', async () => {
-    const response = await fetchJson(`${server.baseUrl}/api/qa/config`, {
+    const response = await fetchJson(`${server.baseUrl}/api/tesistab/config`, {
       headers: {
         'X-API-Key': apiKey,
       },
@@ -166,7 +166,7 @@ function startServer(extraEnv = {}) {
 
     child.stdout.on('data', (chunk) => {
       const line = chunk.toString();
-      if (line.includes('Server running on port')) {
+      if (line.includes('escuchando en el puerto')) {
         clearTimeout(timeout);
         resolve({
           child,

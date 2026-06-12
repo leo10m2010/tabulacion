@@ -807,17 +807,17 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => { setActiveSection("integraciones"); loadApiKey(); }}
+            onClick={() => { setActiveSection("forms"); loadApiKey(); }}
             className={cn(
               "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
-              activeSection === "integraciones"
+              activeSection === "forms"
                 ? "bg-primary text-primary-foreground shadow-sm"
                 : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
             )}
           >
             <KeyRound className="h-4 w-4 shrink-0" />
-            Integraciones
-            {activeSection === "integraciones" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
+            Forms
+            {activeSection === "forms" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
           </button>
 
           {/* Coming soon items */}
@@ -918,11 +918,11 @@ export default function App() {
             Tabulación
           </button>
           <button
-            onClick={() => { setActiveSection("integraciones"); loadApiKey(); }}
-            className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "integraciones" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
+            onClick={() => { setActiveSection("forms"); loadApiKey(); }}
+            className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "forms" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
           >
             <KeyRound className="h-3.5 w-3.5" />
-            Integraciones
+            Forms
           </button>
           {isAdmin && (
             <button
@@ -1556,10 +1556,10 @@ export default function App() {
           )}
 
           {/* ── Integraciones (clave de API + Tutorica Forms) ── */}
-          {activeSection === "integraciones" && authUser && (
+          {activeSection === "forms" && authUser && (
             <div className="step-enter mx-auto max-w-3xl space-y-6">
               <div>
-                <h2 className="text-2xl font-bold tracking-tight">Integraciones</h2>
+                <h2 className="text-2xl font-bold tracking-tight">Forms</h2>
                 <p className="mt-1 text-sm text-muted-foreground">Servicios incluidos con tu suscripción.</p>
               </div>
 

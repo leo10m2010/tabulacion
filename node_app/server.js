@@ -2,12 +2,23 @@ import crypto from "crypto";
 import fs from "fs";
 import http from "http";
 import path from "path";
+import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import {
   MAX_ITEMS_POR_VARIABLE,
   MAX_MUESTRA,
   generateArtifacts,
 } from "./generator.js";
+
+// Tutorica Forms (rellenador de Google Forms) corre en este mismo proceso: es
+// una app Express a la que se delegan las rutas /api/tesistab y /api/forms.
+const require = createRequire(import.meta.url);
+const formsApp = require("../forms/server.js");
+const FORMS_PATH_PREFIXES = ["/api/tesistab", "/api/forms", "/_submit", "/submit"];
+const isFormsPath = (url) => {
+  const p = String(url || "/").split("?")[0];
+  return FORMS_PATH_PREFIXES.some((prefix) => p === prefix || p.startsWith(`${prefix}/`));
+};
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -505,7 +516,24 @@ readUsers();
 ensureBootstrapAdmin();
 setInterval(cleanupExpired, 60_000).unref();
 
+// Forms valida las claves ttab_ en memoria (mismo proceso): lee la lista de
+// usuarios viva, sin llamadas HTTP ni secreto compartido.
+formsApp.setKeyValidator((apiKey) => {
+  const key = String(apiKey || "").trim();
+  if (!key.startsWith("ttab_") || key.length < 20) return { valid: false, reason: "formato_invalido" };
+  const owner = users.find((item) => item.apiKeyHash === hashApiKey(key));
+  if (!owner) return { valid: false, reason: "clave_desconocida" };
+  if (owner.status !== "active") return { valid: false, reason: "usuario_inactivo" };
+  if (isSubscriptionExpired(owner)) return { valid: false, reason: "suscripcion_vencida" };
+  return { valid: true, email: owner.email, plan: owner.plan, role: owner.role };
+});
+
 const server = http.createServer(async (req, res) => {
+  // Las rutas del servicio Forms las maneja la app Express montada.
+  if (isFormsPath(req.url)) {
+    formsApp(req, res);
+    return;
+  }
   setCorsHeaders(req, res);
   if (req.method === "OPTIONS") {
     res.statusCode = 204;

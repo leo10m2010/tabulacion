@@ -25,11 +25,11 @@ chrome.runtime.onInstalled.addListener(async () => {
     compatApiMode: false,
   };
 
-  const { borangQaSettings } = await chrome.storage.local.get(['borangQaSettings']);
+  const { borangTesistabSettings } = await chrome.storage.local.get(['borangTesistabSettings']);
   await chrome.storage.local.set({
-    borangQaSettings: {
+    borangTesistabSettings: {
       ...defaults,
-      ...(borangQaSettings || {}),
+      ...(borangTesistabSettings || {}),
     },
   });
 });

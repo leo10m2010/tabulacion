@@ -1,9 +1,9 @@
-const SETTINGS_KEY = 'borangQaSettings';
-const DIAGNOSTICS_KEY = 'borangQaDiagnostics';
+const SETTINGS_KEY = 'borangTesistabSettings';
+const DIAGNOSTICS_KEY = 'borangTesistabDiagnostics';
 
 const DEFAULT_SETTINGS = {
   enabled: true,
-  backendBaseUrl: 'https://tutorica-forms.onrender.com',
+  backendBaseUrl: 'https://tabulacion-api.onrender.com',
   apiKey: '',
   themeMode: 'system',
   panelViewMode: 'simple',
@@ -126,7 +126,7 @@ async function testConnection() {
         }
       : {};
 
-    const response = await fetch(`${backendBaseUrl}/api/qa/config`, {
+    const response = await fetch(`${backendBaseUrl}/api/tesistab/config`, {
       method: 'GET',
       headers,
     });
@@ -163,7 +163,7 @@ async function loadBackendConfig(showErrors = false) {
         }
       : {};
 
-    const response = await fetch(`${backendBaseUrl}/api/qa/config`, {
+    const response = await fetch(`${backendBaseUrl}/api/tesistab/config`, {
       method: 'GET',
       headers,
     });

@@ -6,8 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "qa:smoke": "node qa-smoke-test.js",
-    "test": "node --test tests/qa-api.test.js"
+    "tesistab:smoke": "node tesistab-smoke-test.js",
+    "test": "node --test tests/tesistab-api.test.js"
   },
   "license": "MIT",
   "dependencies": {

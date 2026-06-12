@@ -1,6 +1,6 @@
-const SETTINGS_KEY = 'borangQaSettings';
-const CSV_ROWS_KEY = 'borangQaCsvRows';
-const DIAGNOSTICS_KEY = 'borangQaDiagnostics';
+const SETTINGS_KEY = 'borangTesistabSettings';
+const CSV_ROWS_KEY = 'borangTesistabCsvRows';
+const DIAGNOSTICS_KEY = 'borangTesistabDiagnostics';
 const DEFAULT_SETTINGS = {
   enabled: true,
   backendBaseUrl: 'http://localhost:5000',
@@ -37,8 +37,8 @@ let csvRows = [];
 let csvCursor = 0;
 let currentForm = null;
 let boundForm = null;
-let isQaRunStarting = false;
-let lastQaTriggerAt = 0;
+let isTesistabRunStarting = false;
+let lastTesistabTriggerAt = 0;
 let lastMultiPageHintAt = 0;
 let backendHealthTimer = null;
 let activeJobId = '';
@@ -46,7 +46,7 @@ let activeJobStatus = '';
 let isCancellingJob = false;
 let activeJobProgressLabel = '';
 
-const QA_TRIGGER_DEBOUNCE_MS = 1200;
+const TESISTAB_TRIGGER_DEBOUNCE_MS = 1200;
 const FORM_REBIND_INTERVAL_MS = 1200;
 const MAX_MONITOR_TRANSIENT_ERRORS = 3;
 const BACKEND_HEALTH_INTERVAL_MS = 15000;
@@ -176,7 +176,7 @@ async function loadCsvRows() {
 }
 
 async function onFormSubmit(event) {
-  await startQaRun(event.currentTarget || currentForm || document.querySelector('form'), event);
+  await startTesistabRun(event.currentTarget || currentForm || document.querySelector('form'), event);
 }
 
 async function onDocumentClick(event) {
@@ -188,7 +188,7 @@ async function onDocumentClick(event) {
   const isSubmit = isGoogleFormsSubmitTrigger(target);
   if (isSubmit) {
     const form = target.closest('form') || currentForm || document.querySelector('form');
-    await startQaRun(form, event);
+    await startTesistabRun(form, event);
     return;
   }
 
@@ -197,7 +197,7 @@ async function onDocumentClick(event) {
       const now = Date.now();
       if (now - lastMultiPageHintAt > 2500) {
         lastMultiPageHintAt = now;
-        showStatus('Pagina siguiente detectada. QA se ejecuta en el ultimo paso.', false);
+        showStatus('Pagina siguiente detectada. TESISTAB se ejecuta en el ultimo paso.', false);
       }
   }
 }
@@ -212,7 +212,7 @@ async function onDocumentKeyDown(event) {
     return;
   }
 
-  if (target.closest('#borang-qa-actions')) {
+  if (target.closest('#borang-tesistab-actions')) {
     return;
   }
 
@@ -230,10 +230,10 @@ async function onDocumentKeyDown(event) {
     return;
   }
 
-  await startQaRun(form, event);
+  await startTesistabRun(form, event);
 }
 
-async function startQaRun(form, event) {
+async function startTesistabRun(form, event) {
   if (event) {
     event.preventDefault();
     event.stopPropagation();
@@ -248,26 +248,26 @@ async function startQaRun(form, event) {
   }
 
   const now = Date.now();
-  if (now - lastQaTriggerAt < QA_TRIGGER_DEBOUNCE_MS) {
+  if (now - lastTesistabTriggerAt < TESISTAB_TRIGGER_DEBOUNCE_MS) {
     return;
   }
-  lastQaTriggerAt = now;
+  lastTesistabTriggerAt = now;
 
     if (!form) {
-      showStatus('No se encontro el formulario para ejecutar QA.', true);
+      showStatus('No se encontro el formulario para ejecutar TESISTAB.', true);
       recordDiagnostics({
-        lastError: 'No se encontro el formulario para ejecutar QA.',
+        lastError: 'No se encontro el formulario para ejecutar TESISTAB.',
         updatedAt: new Date().toISOString(),
       });
       return;
     }
 
-  if (isQaRunStarting) {
-    showStatus('La ejecucion QA ya se esta iniciando...', true);
+  if (isTesistabRunStarting) {
+    showStatus('La ejecucion TESISTAB ya se esta iniciando...', true);
     return;
   }
 
-  isQaRunStarting = true;
+  isTesistabRunStarting = true;
   syncJobActionButtons();
 
   try {
@@ -282,12 +282,12 @@ async function startQaRun(form, event) {
 
     const prefill = fillUnansweredFormInputs(form);
     if (prefill.filled > 0) {
-      showStatus(`Se completaron ${prefill.filled} respuestas faltantes para QA.`);
+      showStatus(`Se completaron ${prefill.filled} respuestas faltantes para TESISTAB.`);
     }
     if (prefill.missingRequired.length) {
       const firstMissing = prefill.missingRequired[0];
       const suffix = prefill.missingRequired.length > 1 ? ` (+${prefill.missingRequired.length - 1})` : '';
-      const message = `Faltan respuestas obligatorias no compatibles con QA: ${firstMissing}${suffix}`;
+      const message = `Faltan respuestas obligatorias no compatibles con TESISTAB: ${firstMissing}${suffix}`;
       showStatus(message, true);
       recordDiagnostics({
         lastError: message,
@@ -297,7 +297,7 @@ async function startQaRun(form, event) {
     }
 
     if (settings.requireConfirmation) {
-      const accepted = await showQaConfirmDialog({
+      const accepted = await showTesistabConfirmDialog({
         count,
         delayMs,
         csvRowsCount: csvRows.length,
@@ -312,7 +312,7 @@ async function startQaRun(form, event) {
     }
   }
 
-    showStatus('Envio detectado. Creando job QA...');
+    showStatus('Envio detectado. Creando job TESISTAB...');
     let payload = formDataToPayload(new FormData(form));
     payload = applyCsvRowIfAvailable(payload);
     payload = applySmartProfilePayload(payload, form, settings);
@@ -339,7 +339,7 @@ async function startQaRun(form, event) {
       return;
     }
 
-    const response = await backendRequest('/api/qa/submit', {
+    const response = await backendRequest('/api/tesistab/submit', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -381,7 +381,7 @@ async function startQaRun(form, event) {
       updatedAt: new Date().toISOString(),
     });
   } finally {
-    isQaRunStarting = false;
+    isTesistabRunStarting = false;
     syncJobActionButtons();
   }
 }
@@ -423,9 +423,9 @@ function isGoogleFormsSubmitTrigger(target) {
   }
 
   if (
-    trigger.closest('#borang-qa-actions') ||
-    trigger.closest('#borang-qa-status') ||
-    trigger.closest('#borang-qa-pill')
+    trigger.closest('#borang-tesistab-actions') ||
+    trigger.closest('#borang-tesistab-status') ||
+    trigger.closest('#borang-tesistab-pill')
   ) {
     return false;
   }
@@ -453,8 +453,8 @@ function isGoogleFormsNextTrigger(target) {
   }
 
   if (
-    trigger.closest('#borang-qa-status') ||
-    trigger.closest('#borang-qa-pill')
+    trigger.closest('#borang-tesistab-status') ||
+    trigger.closest('#borang-tesistab-pill')
   ) {
     return false;
   }
@@ -476,7 +476,7 @@ async function monitorJob(jobId, backendBaseUrl) {
     await sleep(pollEveryMs);
 
     try {
-      const response = await backendRequest(`/api/qa/jobs/${jobId}`, {
+      const response = await backendRequest(`/api/tesistab/jobs/${jobId}`, {
         baseUrl: backendBaseUrl,
       });
 
@@ -639,7 +639,7 @@ function formDataToPayload(formData) {
 }
 
 function injectStatusPill(enabled) {
-  const existing = document.getElementById('borang-qa-pill');
+  const existing = document.getElementById('borang-tesistab-pill');
   if (existing) {
     existing.className = enabled ? 'is-on' : 'is-off';
     existing.textContent = enabled ? 'Tutorica Forms: ON' : 'Tutorica Forms: OFF';
@@ -648,7 +648,7 @@ function injectStatusPill(enabled) {
   }
 
   const pill = document.createElement('div');
-  pill.id = 'borang-qa-pill';
+  pill.id = 'borang-tesistab-pill';
   pill.className = enabled ? 'is-on' : 'is-off';
   pill.textContent = enabled ? 'Tutorica Forms: ON' : 'Tutorica Forms: OFF';
   pill.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
@@ -656,13 +656,13 @@ function injectStatusPill(enabled) {
 }
 
 function injectActionsPanel() {
-  const existing = document.getElementById('borang-qa-actions');
+  const existing = document.getElementById('borang-tesistab-actions');
   if (existing) {
-    const existingCount = existing.querySelector('#borang-qa-count');
+    const existingCount = existing.querySelector('#borang-tesistab-count');
     if (existingCount instanceof HTMLInputElement && document.activeElement !== existingCount) {
       existingCount.value = String(clamp(Number(settings.submissionCount) || 1, 1, MAX_UI_SUBMISSIONS));
     }
-    const existingProfile = existing.querySelector('#borang-qa-profile');
+    const existingProfile = existing.querySelector('#borang-tesistab-profile');
     if (existingProfile instanceof HTMLSelectElement) {
       existingProfile.value = normalizeInlineProfileType(settings.smartProfileType);
     }
@@ -673,18 +673,18 @@ function injectActionsPanel() {
   }
 
   const panel = document.createElement('div');
-  panel.id = 'borang-qa-actions';
+  panel.id = 'borang-tesistab-actions';
   panel.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
 
   const header = document.createElement('div');
-  header.className = 'borang-qa-header';
+  header.className = 'borang-tesistab-header';
 
   const title = document.createElement('div');
-  title.className = 'borang-qa-title';
+  title.className = 'borang-tesistab-title';
   setPanelLabel(title, 'send', 'Envios automaticos');
 
   const backendStatus = document.createElement('div');
-  backendStatus.id = 'borang-qa-backend-status';
+  backendStatus.id = 'borang-tesistab-backend-status';
   backendStatus.className = 'is-checking';
   backendStatus.title = 'Verificando backend';
   backendStatus.setAttribute('aria-label', 'Verificando backend');
@@ -692,11 +692,11 @@ function injectActionsPanel() {
   header.append(title, backendStatus);
 
   const viewRow = document.createElement('label');
-  viewRow.className = 'borang-qa-count-row';
+  viewRow.className = 'borang-tesistab-count-row';
   const viewLabel = document.createElement('span');
   viewLabel.replaceChildren(createHelpLabel('Vista', 'Simple muestra solo lo esencial. Avanzada muestra controles extra.'));
   const viewSelect = document.createElement('select');
-  viewSelect.id = 'borang-qa-view-mode';
+  viewSelect.id = 'borang-tesistab-view-mode';
   viewSelect.innerHTML = [
     '<option value="simple">Simple</option>',
     '<option value="advanced">Avanzada</option>',
@@ -706,13 +706,13 @@ function injectActionsPanel() {
   viewRow.append(viewLabel, viewSelect);
 
   const countRow = document.createElement('label');
-  countRow.className = 'borang-qa-count-row';
+  countRow.className = 'borang-tesistab-count-row';
 
   const countLabel = document.createElement('span');
   countLabel.replaceChildren(createHelpLabel('Cantidad', 'Numero de respuestas que se enviaran en esta corrida.'));
 
   const countInput = document.createElement('input');
-  countInput.id = 'borang-qa-count';
+  countInput.id = 'borang-tesistab-count';
   countInput.type = 'number';
   countInput.min = '1';
   countInput.max = String(MAX_UI_SUBMISSIONS);
@@ -724,13 +724,13 @@ function injectActionsPanel() {
   countRow.append(countLabel, countInput);
 
   const profileRow = document.createElement('label');
-  profileRow.className = 'borang-qa-count-row';
+  profileRow.className = 'borang-tesistab-count-row';
 
   const profileLabel = document.createElement('span');
   profileLabel.replaceChildren(createHelpLabel('Perfil', 'Define el tono general de las respuestas tipo escala o Likert.'));
 
   const profileSelect = document.createElement('select');
-  profileSelect.id = 'borang-qa-profile';
+  profileSelect.id = 'borang-tesistab-profile';
   profileSelect.innerHTML = [
     '<option value="favorable">Favorable</option>',
     '<option value="intermedio">Intermedio</option>',
@@ -743,7 +743,7 @@ function injectActionsPanel() {
   profileRow.append(profileLabel, profileSelect);
 
   const distributionPanel = document.createElement('details');
-  distributionPanel.className = 'borang-qa-advanced';
+  distributionPanel.className = 'borang-tesistab-advanced';
   distributionPanel.dataset.panelSection = 'advanced';
 
   const distributionSummary = document.createElement('summary');
@@ -751,7 +751,7 @@ function injectActionsPanel() {
   distributionPanel.appendChild(distributionSummary);
 
   const distributionBody = document.createElement('div');
-  distributionBody.className = 'borang-qa-advanced-body';
+  distributionBody.className = 'borang-tesistab-advanced-body';
 
   const distributionModeRow = createInlineAdvancedToggle(
     'profileDistributionEnabled',
@@ -760,8 +760,8 @@ function injectActionsPanel() {
   );
 
   const distributionGrid = document.createElement('div');
-  distributionGrid.className = 'borang-qa-distribution-grid';
-  distributionGrid.id = 'borang-qa-distribution-grid';
+  distributionGrid.className = 'borang-tesistab-distribution-grid';
+  distributionGrid.id = 'borang-tesistab-distribution-grid';
   distributionGrid.append(
     createInlineDistributionField('profileShareFavorable', 'Favorable %', settings.profileShareFavorable, 60),
     createInlineDistributionField('profileShareIntermedio', 'Intermedio %', settings.profileShareIntermedio, 25),
@@ -772,7 +772,7 @@ function injectActionsPanel() {
   distributionPanel.appendChild(distributionBody);
 
   const advancedPanel = document.createElement('details');
-  advancedPanel.className = 'borang-qa-advanced';
+  advancedPanel.className = 'borang-tesistab-advanced';
   advancedPanel.dataset.panelSection = 'advanced';
 
   const advancedSummary = document.createElement('summary');
@@ -780,7 +780,7 @@ function injectActionsPanel() {
   advancedPanel.appendChild(advancedSummary);
 
   const advancedBody = document.createElement('div');
-  advancedBody.className = 'borang-qa-advanced-body';
+  advancedBody.className = 'borang-tesistab-advanced-body';
 
   const advancedModeRow = createInlineAdvancedToggle(
     'advancedMode',
@@ -817,31 +817,31 @@ function injectActionsPanel() {
   );
   advancedPanel.appendChild(advancedBody);
 
-  const runQaBtn = document.createElement('button');
-  runQaBtn.type = 'button';
-  runQaBtn.id = 'borang-qa-run-btn';
-  runQaBtn.className = 'borang-qa-main-action';
+  const runTesistabBtn = document.createElement('button');
+  runTesistabBtn.type = 'button';
+  runTesistabBtn.id = 'borang-tesistab-run-btn';
+  runTesistabBtn.className = 'borang-tesistab-main-action';
   const runMainLabel = document.createElement('span');
   runMainLabel.className = 'main-label';
   runMainLabel.textContent = 'Iniciar';
   const runHoverLabel = document.createElement('span');
   runHoverLabel.className = 'hover-label';
   runHoverLabel.textContent = 'Detener';
-  runQaBtn.append(runMainLabel, runHoverLabel);
-  runQaBtn.onclick = async () => {
+  runTesistabBtn.append(runMainLabel, runHoverLabel);
+  runTesistabBtn.onclick = async () => {
     const running = Boolean(activeJobId && (activeJobStatus === 'queued' || activeJobStatus === 'running'));
     if (running) {
-      await stopActiveQaJob();
+      await stopActiveTesistabJob();
       return;
     }
 
     const form = currentForm || document.querySelector('form');
     if (!form) {
-      showStatus('Formulario no disponible para QA.', true);
+      showStatus('Formulario no disponible para TESISTAB.', true);
       return;
     }
 
-    await startQaRun(form, null);
+    await startTesistabRun(form, null);
   };
 
   const randomizeBtn = document.createElement('button');
@@ -902,7 +902,7 @@ function injectActionsPanel() {
   };
 
   const csvPanel = document.createElement('details');
-  csvPanel.className = 'borang-qa-advanced';
+  csvPanel.className = 'borang-tesistab-advanced';
   csvPanel.dataset.panelSection = 'advanced';
 
   const csvSummary = document.createElement('summary');
@@ -910,7 +910,7 @@ function injectActionsPanel() {
   csvPanel.appendChild(csvSummary);
 
   const csvBody = document.createElement('div');
-  csvBody.className = 'borang-qa-advanced-body';
+  csvBody.className = 'borang-tesistab-advanced-body';
   csvBody.append(importCsvBtn, clearCsvBtn);
   csvPanel.appendChild(csvBody);
 
@@ -923,7 +923,7 @@ function injectActionsPanel() {
     csvPanel,
     advancedPanel,
     randomizeBtn,
-    runQaBtn
+    runTesistabBtn
   );
   document.documentElement.appendChild(panel);
   syncInlineDistributionControls(panel);
@@ -938,7 +938,7 @@ function createHelpLabel(text, helpText) {
   const labelText = document.createElement('span');
   labelText.textContent = text;
   const help = document.createElement('span');
-  help.className = 'borang-qa-help';
+  help.className = 'borang-tesistab-help';
   help.textContent = '?';
   help.title = helpText;
   help.setAttribute('aria-label', helpText);
@@ -956,7 +956,7 @@ function setPanelLabel(element, iconKey, text) {
 
 function createPanelIcon(iconKey) {
   const span = document.createElement('span');
-  span.className = 'borang-qa-icon';
+  span.className = 'borang-tesistab-icon';
   span.setAttribute('aria-hidden', 'true');
 
   const paths = {
@@ -1015,7 +1015,7 @@ async function saveInlinePanelViewMode(select) {
     },
   });
 
-  const panel = document.getElementById('borang-qa-actions');
+  const panel = document.getElementById('borang-tesistab-actions');
   if (panel) {
     syncPanelViewMode(panel);
   }
@@ -1031,7 +1031,7 @@ function syncPanelViewMode(container) {
   }
 
   const viewMode = normalizePanelViewMode(settings.panelViewMode);
-  const select = container.querySelector('#borang-qa-view-mode');
+  const select = container.querySelector('#borang-tesistab-view-mode');
   if (select instanceof HTMLSelectElement) {
     select.value = viewMode;
   }
@@ -1085,7 +1085,7 @@ function normalizeInlineProfileType(value) {
 
 function createInlineDistributionField(key, label, rawValue, fallback) {
   const wrapper = document.createElement('label');
-  wrapper.className = 'borang-qa-count-row';
+  wrapper.className = 'borang-tesistab-count-row';
   wrapper.dataset.distributionKey = key;
 
   const text = document.createElement('span');
@@ -1164,7 +1164,7 @@ async function saveInlineDistributionField(key, input) {
   });
 }
 
-async function stopActiveQaJob() {
+async function stopActiveTesistabJob() {
   if (!activeJobId || isCancellingJob) {
     return;
   }
@@ -1173,7 +1173,7 @@ async function stopActiveQaJob() {
   syncJobActionButtons();
   showStatus('Deteniendo envios...', true);
 
-  const response = await backendRequest(`/api/qa/jobs/${activeJobId}`, {
+  const response = await backendRequest(`/api/tesistab/jobs/${activeJobId}`, {
     method: 'DELETE',
   });
 
@@ -1192,7 +1192,7 @@ async function stopActiveQaJob() {
 
 function createInlineAdvancedToggle(key, label, checked) {
   const row = document.createElement('label');
-  row.className = 'borang-qa-toggle-row';
+  row.className = 'borang-tesistab-toggle-row';
   row.dataset.settingKey = key;
 
   const text = document.createElement('span');
@@ -1213,7 +1213,7 @@ function syncInlineAdvancedControls(container) {
   }
 
   const modeEnabled = Boolean(settings.advancedMode);
-  container.querySelectorAll('.borang-qa-toggle-row').forEach((row) => {
+  container.querySelectorAll('.borang-tesistab-toggle-row').forEach((row) => {
     if (!(row instanceof HTMLElement)) {
       return;
     }
@@ -1270,7 +1270,7 @@ async function saveInlineAdvancedOption(key, checked) {
       },
     });
 
-    const panel = document.getElementById('borang-qa-actions');
+    const panel = document.getElementById('borang-tesistab-actions');
     if (panel) {
       syncInlineDistributionControls(panel);
     }
@@ -1303,7 +1303,7 @@ async function saveInlineAdvancedOption(key, checked) {
     },
   });
 
-  const panel = document.getElementById('borang-qa-actions');
+  const panel = document.getElementById('borang-tesistab-actions');
   if (panel) {
     syncInlineAdvancedControls(panel);
   }
@@ -1320,7 +1320,7 @@ function startBackendHealthMonitor() {
 }
 
 async function checkBackendHealth() {
-  const indicator = document.getElementById('borang-qa-backend-status');
+  const indicator = document.getElementById('borang-tesistab-backend-status');
   if (!indicator) {
     if (backendHealthTimer) {
       window.clearInterval(backendHealthTimer);
@@ -1330,7 +1330,7 @@ async function checkBackendHealth() {
   }
 
   updateBackendHealthIndicator('checking', 'Verificando backend');
-  const response = await backendRequest('/api/qa/config', {
+  const response = await backendRequest('/api/tesistab/config', {
     method: 'GET',
   });
 
@@ -1343,7 +1343,7 @@ async function checkBackendHealth() {
 }
 
 function updateBackendHealthIndicator(state, title) {
-  const indicator = document.getElementById('borang-qa-backend-status');
+  const indicator = document.getElementById('borang-tesistab-backend-status');
   if (!(indicator instanceof HTMLElement)) {
     return;
   }
@@ -1361,7 +1361,7 @@ function normalizeThemeMode(value) {
 
 function applyThemeToInjectedUi() {
   const themeMode = resolveEffectiveThemeMode(settings.themeMode);
-  ['borang-qa-pill', 'borang-qa-actions', 'borang-qa-status', 'borang-qa-confirm-overlay'].forEach((id) => {
+  ['borang-tesistab-pill', 'borang-tesistab-actions', 'borang-tesistab-status', 'borang-tesistab-confirm-overlay'].forEach((id) => {
     const element = document.getElementById(id);
     if (element) {
       element.setAttribute('data-theme', themeMode);
@@ -1391,44 +1391,44 @@ function subscribeToSystemThemeChanges() {
   });
 }
 
-function showQaConfirmDialog(details) {
-  const existing = document.getElementById('borang-qa-confirm-overlay');
+function showTesistabConfirmDialog(details) {
+  const existing = document.getElementById('borang-tesistab-confirm-overlay');
   if (existing) {
     existing.remove();
   }
 
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.id = 'borang-qa-confirm-overlay';
+    overlay.id = 'borang-tesistab-confirm-overlay';
     overlay.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
 
     const dialog = document.createElement('div');
-    dialog.id = 'borang-qa-confirm-dialog';
+    dialog.id = 'borang-tesistab-confirm-dialog';
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
-    dialog.setAttribute('aria-labelledby', 'borang-qa-confirm-title');
+    dialog.setAttribute('aria-labelledby', 'borang-tesistab-confirm-title');
 
     const title = document.createElement('h3');
-    title.id = 'borang-qa-confirm-title';
+    title.id = 'borang-tesistab-confirm-title';
     title.textContent = 'Confirmar envio automatico';
 
     const subtitle = document.createElement('p');
-    subtitle.className = 'borang-qa-confirm-subtitle';
+    subtitle.className = 'borang-tesistab-confirm-subtitle';
     subtitle.textContent = 'Revisa los datos antes de iniciar la corrida.';
 
     const detailsBox = document.createElement('div');
-    detailsBox.className = 'borang-qa-confirm-details';
+    detailsBox.className = 'borang-tesistab-confirm-details';
     detailsBox.append(
-      createQaConfirmRow('Cantidad', String(details?.count || 1)),
-      createQaConfirmRow('Espera', `${Number(details?.delayMs || 0)} ms`)
+      createTesistabConfirmRow('Cantidad', String(details?.count || 1)),
+      createTesistabConfirmRow('Espera', `${Number(details?.delayMs || 0)} ms`)
     );
 
     if (Number(details?.csvRowsCount || 0) > 0) {
-      detailsBox.append(createQaConfirmRow('CSV', `${details.csvRowsCount} filas cargadas`));
+      detailsBox.append(createTesistabConfirmRow('CSV', `${details.csvRowsCount} filas cargadas`));
     }
 
     const actions = document.createElement('div');
-    actions.className = 'borang-qa-confirm-actions';
+    actions.className = 'borang-tesistab-confirm-actions';
 
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
@@ -1469,9 +1469,9 @@ function showQaConfirmDialog(details) {
   });
 }
 
-function createQaConfirmRow(label, value) {
+function createTesistabConfirmRow(label, value) {
   const row = document.createElement('div');
-  row.className = 'borang-qa-confirm-row';
+  row.className = 'borang-tesistab-confirm-row';
 
   const labelNode = document.createElement('span');
   labelNode.className = 'label';
@@ -1486,11 +1486,11 @@ function createQaConfirmRow(label, value) {
 }
 
 function syncJobActionButtons() {
-  const runBtn = document.getElementById('borang-qa-run-btn');
+  const runBtn = document.getElementById('borang-tesistab-run-btn');
   const running = Boolean(activeJobId && (activeJobStatus === 'queued' || activeJobStatus === 'running'));
 
   if (runBtn instanceof HTMLButtonElement) {
-    runBtn.disabled = isQaRunStarting || isCancellingJob;
+    runBtn.disabled = isTesistabRunStarting || isCancellingJob;
     runBtn.classList.toggle('is-running', running);
     runBtn.classList.toggle('is-stopping', isCancellingJob);
     const mainLabel = runBtn.querySelector('.main-label');
@@ -1498,7 +1498,7 @@ function syncJobActionButtons() {
     if (mainLabel instanceof HTMLElement) {
       if (isCancellingJob) {
         mainLabel.textContent = 'Deteniendo...';
-      } else if (isQaRunStarting) {
+      } else if (isTesistabRunStarting) {
         mainLabel.textContent = 'Iniciando...';
       } else if (running) {
         mainLabel.textContent = activeJobProgressLabel || 'En progreso';
@@ -1525,13 +1525,13 @@ function clearActiveJobState(jobId) {
 }
 
 function showStatus(message, isError) {
-  const previous = document.getElementById('borang-qa-status');
+  const previous = document.getElementById('borang-tesistab-status');
   if (previous) {
     previous.remove();
   }
 
   const status = document.createElement('div');
-  status.id = 'borang-qa-status';
+  status.id = 'borang-tesistab-status';
   status.className = isError ? 'is-error' : 'is-ok';
   status.textContent = message;
   status.setAttribute('data-theme', normalizeThemeMode(settings.themeMode));
@@ -2131,11 +2131,11 @@ function randomizeFormInputs(form) {
     }
 
     if (input.type === 'email') {
-      input.value = `qa_${randomToken(6)}@example.test`;
+      input.value = `tesistab_${randomToken(6)}@example.test`;
     } else if (input.type === 'number') {
       input.value = String(Math.floor(Math.random() * 10) + 1);
     } else {
-      input.value = `QA ${randomToken(6)}`;
+      input.value = `TESISTAB ${randomToken(6)}`;
     }
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -2281,7 +2281,7 @@ function fillEntryGroup(group) {
   }
 
   if (first instanceof HTMLTextAreaElement) {
-    first.value = `QA ${randomToken(6)}`;
+    first.value = `TESISTAB ${randomToken(6)}`;
     first.dispatchEvent(new Event('input', { bubbles: true }));
     first.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
@@ -2308,7 +2308,7 @@ function fillTextLikeInput(input) {
   }
 
   if (input.type === 'email') {
-    input.value = `qa_${randomToken(6)}@example.test`;
+    input.value = `tesistab_${randomToken(6)}@example.test`;
   } else if (input.type === 'number') {
     input.value = String(Math.floor(Math.random() * 10) + 1);
   } else if (input.type === 'date') {
@@ -2316,7 +2316,7 @@ function fillTextLikeInput(input) {
   } else if (input.type === 'time') {
     input.value = '10:00';
   } else {
-    input.value = `QA ${randomToken(6)}`;
+    input.value = `TESISTAB ${randomToken(6)}`;
   }
 
   input.dispatchEvent(new Event('input', { bubbles: true }));

@@ -2,22 +2,32 @@
 
 Servicio de llenado automático de Google Forms para los suscriptores de TesisTab:
 backend Express + extensión de Chrome. Derivado del proyecto MIT "borang" de
-Adib Zaini (ver `LICENSE`), recortado a su núcleo QA y autenticado contra las
-claves de API de TesisTab.
+Adib Zaini (ver `LICENSE`), recortado a su núcleo de llenado y autenticado contra
+las claves de API de TesisTab.
+
+## Cómo corre
+
+En producción **se monta dentro de la API de TesisTab** (`node_app/server.js`):
+ambos comparten proceso y puerto. La API delega las rutas `/api/tesistab/*`,
+`/api/forms/*`, `/submit` y `/_submit` a esta app Express, y le inyecta un
+validador de claves en memoria (sin llamadas HTTP). La extensión usa la misma
+URL que la API: `https://tabulacion-api.onrender.com`.
+
+Standalone (desarrollo/tests) también funciona: `node server.js` levanta su
+propio servidor en `PORT`.
 
 ## Autenticación
 
-Cada request a `/api/qa/*` y `/api/forms/*` exige una clave en `X-API-Key`:
+Cada request a `/api/tesistab/*` y `/api/forms/*` exige una clave en `X-API-Key`:
 
-- **Claves de usuario** (`ttab_...`): se generan en TesisTab → Integraciones y
-  se validan contra `POST /integrations/validate-key` de la API de TesisTab
-  (caché de 5 minutos). Si la suscripción venció, el servicio responde 401 con
-  un mensaje claro.
-- **`QA_API_KEY`** (env, opcional): llave maestra de desarrollo.
-- **`TESISTAB_VALIDATION=off`** (env): modo local/tests, replica el
-  comportamiento original (sin validación remota; `QA_API_KEY` opcional).
+- **Claves de usuario** (`ttab_...`): se generan en TesisTab → Forms. Montado en
+  la API, se validan en memoria contra la lista de usuarios; standalone, contra
+  `POST /integrations/validate-key` (caché de 5 minutos). Si la suscripción
+  venció, responde 401 con un mensaje claro.
+- **`TESISTAB_API_KEY`** (env, opcional): llave maestra de desarrollo.
+- **`TESISTAB_VALIDATION=off`** (env): modo local/tests, sin validación remota.
 
-## Variables de entorno
+## Variables de entorno (modo standalone)
 
 | Variable | Default | Notas |
 |---|---|---|
@@ -25,7 +35,7 @@ Cada request a `/api/qa/*` y `/api/forms/*` exige una clave en `X-API-Key`:
 | `TESISTAB_API_URL` | `https://tabulacion-api.onrender.com` | API de TesisTab |
 | `SERVICE_SHARED_SECRET` | *(vacío)* | Debe coincidir con el de la API de TesisTab |
 | `TESISTAB_VALIDATION` | *(activada)* | `off` para desarrollo/tests |
-| `QA_API_KEY` | *(vacío)* | Llave maestra opcional |
+| `TESISTAB_API_KEY` | *(vacío)* | Llave maestra opcional |
 
 ## Desarrollo
 
@@ -39,4 +49,5 @@ npm test
 
 En `tutorica-chrome-extension/`: cargarla descomprimida desde
 `chrome://extensions` (modo desarrollador) o empaquetarla para la Web Store.
-El usuario pega su clave de TesisTab en el popup.
+El usuario pega su clave de TesisTab en el popup; el backend por defecto ya es
+`https://tabulacion-api.onrender.com`.

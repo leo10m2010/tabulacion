@@ -8,17 +8,17 @@ const compression = require('compression');
 const app = express();
 app.disable('x-powered-by');
 
-const qaStorageFilePath = path.resolve(__dirname, 'temp', 'qa-jobs.json');
+const tesistabStorageFilePath = path.resolve(__dirname, 'temp', 'tesistab-jobs.json');
 
 const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || '*')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
-const QA_API_KEY = String(process.env.QA_API_KEY || '').trim();
+const TESISTAB_API_KEY = String(process.env.TESISTAB_API_KEY || '').trim();
 
 // Integracion con TesisTab: las claves de usuario (ttab_...) se validan
 // contra la API de TesisTab. TESISTAB_VALIDATION=off replica el modo
-// original (desarrollo/tests: sin validacion remota, QA_API_KEY opcional).
+// original (desarrollo/tests: sin validacion remota, TESISTAB_API_KEY opcional).
 const TESISTAB_API_URL = String(process.env.TESISTAB_API_URL || 'https://tabulacion-api.onrender.com')
   .trim()
   .replace(/\/$/, '');
@@ -27,58 +27,58 @@ const TESISTAB_VALIDATION_ENABLED =
   String(process.env.TESISTAB_VALIDATION || 'on').trim().toLowerCase() !== 'off';
 const TESISTAB_KEY_CACHE_TTL_MS = Number(process.env.TESISTAB_KEY_CACHE_TTL_MS || 5 * 60_000);
 const tesistabKeyCache = new Map(); // clave -> { valid, reason, email, plan, expiresAt }
-const QA_RATE_LIMIT_WINDOW_MS = Number(process.env.QA_RATE_LIMIT_WINDOW_MS || 60_000);
-const QA_RATE_LIMIT_MAX_REQUESTS = Number(process.env.QA_RATE_LIMIT_MAX_REQUESTS || 120);
-const QA_PERSIST_JOBS = String(process.env.QA_PERSIST_JOBS || 'true').toLowerCase() !== 'false';
-const QA_MAX_STORED_JOBS = Number(process.env.QA_MAX_STORED_JOBS || 200);
-const QA_STALE_JOB_AFTER_MS = Number(process.env.QA_STALE_JOB_AFTER_MS || 30_000);
-const QA_FINISHED_JOB_TTL_MS = Number(process.env.QA_FINISHED_JOB_TTL_MS || 0);
+const TESISTAB_RATE_LIMIT_WINDOW_MS = Number(process.env.TESISTAB_RATE_LIMIT_WINDOW_MS || 60_000);
+const TESISTAB_RATE_LIMIT_MAX_REQUESTS = Number(process.env.TESISTAB_RATE_LIMIT_MAX_REQUESTS || 120);
+const TESISTAB_PERSIST_JOBS = String(process.env.TESISTAB_PERSIST_JOBS || 'true').toLowerCase() !== 'false';
+const TESISTAB_MAX_STORED_JOBS = Number(process.env.TESISTAB_MAX_STORED_JOBS || 200);
+const TESISTAB_STALE_JOB_AFTER_MS = Number(process.env.TESISTAB_STALE_JOB_AFTER_MS || 30_000);
+const TESISTAB_FINISHED_JOB_TTL_MS = Number(process.env.TESISTAB_FINISHED_JOB_TTL_MS || 0);
 
-const QA_ALLOWED_HOSTS = (process.env.QA_ALLOWED_HOSTS || 'docs.google.com')
+const TESISTAB_ALLOWED_HOSTS = (process.env.TESISTAB_ALLOWED_HOSTS || 'docs.google.com')
   .split(',')
   .map((host) => host.trim())
   .filter(Boolean);
-// LIMIT: ajusta este valor para cambiar el maximo por corrida (extension + API QA)
-const QA_MAX_SUBMISSIONS_PER_JOB = Number(
-  process.env.QA_MAX_SUBMISSIONS_PER_JOB || 250
+// LIMIT: ajusta este valor para cambiar el maximo por corrida (extension + API TESISTAB)
+const TESISTAB_MAX_SUBMISSIONS_PER_JOB = Number(
+  process.env.TESISTAB_MAX_SUBMISSIONS_PER_JOB || 250
 );
-const QA_MIN_DELAY_MS = Number(process.env.QA_MIN_DELAY_MS || 500);
-const QA_MAX_DELAY_MS = Number(process.env.QA_MAX_DELAY_MS || 60_000);
-const QA_MAX_JITTER_MS = Number(process.env.QA_MAX_JITTER_MS || 5_000);
-const QA_REQUEST_TIMEOUT_MS = Number(process.env.QA_REQUEST_TIMEOUT_MS || 20_000);
-const QA_JOBS_LIST_DEFAULT_LIMIT = Number(process.env.QA_JOBS_LIST_DEFAULT_LIMIT || 20);
-const QA_JOBS_LIST_MAX_LIMIT = Number(process.env.QA_JOBS_LIST_MAX_LIMIT || 200);
-const QA_GENDER_SHARE_MIN = Number(process.env.QA_GENDER_SHARE_MIN || 0.4);
-const QA_GENDER_SHARE_MAX = Number(process.env.QA_GENDER_SHARE_MAX || 0.6);
-const QA_AGE_SHARE_18_25 = Number(process.env.QA_AGE_SHARE_18_25 || 0.35);
-const QA_AGE_SHARE_26_35 = Number(process.env.QA_AGE_SHARE_26_35 || 0.4);
-const QA_AGE_SHARE_36_45 = Number(process.env.QA_AGE_SHARE_36_45 || 0.2);
-const QA_AGE_SHARE_46_PLUS = Number(process.env.QA_AGE_SHARE_46_PLUS || 0.05);
-const QA_FREQ_SHARE_WEEKLY = Number(process.env.QA_FREQ_SHARE_WEEKLY || 0.15);
-const QA_FREQ_SHARE_BIWEEKLY = Number(process.env.QA_FREQ_SHARE_BIWEEKLY || 0.35);
-const QA_FREQ_SHARE_MONTHLY = Number(process.env.QA_FREQ_SHARE_MONTHLY || 0.35);
-const QA_FREQ_SHARE_OCCASIONAL = Number(process.env.QA_FREQ_SHARE_OCCASIONAL || 0.15);
-const QA_DISTRIBUTION_CONFIG = resolveQaDistributionConfig();
+const TESISTAB_MIN_DELAY_MS = Number(process.env.TESISTAB_MIN_DELAY_MS || 500);
+const TESISTAB_MAX_DELAY_MS = Number(process.env.TESISTAB_MAX_DELAY_MS || 60_000);
+const TESISTAB_MAX_JITTER_MS = Number(process.env.TESISTAB_MAX_JITTER_MS || 5_000);
+const TESISTAB_REQUEST_TIMEOUT_MS = Number(process.env.TESISTAB_REQUEST_TIMEOUT_MS || 20_000);
+const TESISTAB_JOBS_LIST_DEFAULT_LIMIT = Number(process.env.TESISTAB_JOBS_LIST_DEFAULT_LIMIT || 20);
+const TESISTAB_JOBS_LIST_MAX_LIMIT = Number(process.env.TESISTAB_JOBS_LIST_MAX_LIMIT || 200);
+const TESISTAB_GENDER_SHARE_MIN = Number(process.env.TESISTAB_GENDER_SHARE_MIN || 0.4);
+const TESISTAB_GENDER_SHARE_MAX = Number(process.env.TESISTAB_GENDER_SHARE_MAX || 0.6);
+const TESISTAB_AGE_SHARE_18_25 = Number(process.env.TESISTAB_AGE_SHARE_18_25 || 0.35);
+const TESISTAB_AGE_SHARE_26_35 = Number(process.env.TESISTAB_AGE_SHARE_26_35 || 0.4);
+const TESISTAB_AGE_SHARE_36_45 = Number(process.env.TESISTAB_AGE_SHARE_36_45 || 0.2);
+const TESISTAB_AGE_SHARE_46_PLUS = Number(process.env.TESISTAB_AGE_SHARE_46_PLUS || 0.05);
+const TESISTAB_FREQ_SHARE_WEEKLY = Number(process.env.TESISTAB_FREQ_SHARE_WEEKLY || 0.15);
+const TESISTAB_FREQ_SHARE_BIWEEKLY = Number(process.env.TESISTAB_FREQ_SHARE_BIWEEKLY || 0.35);
+const TESISTAB_FREQ_SHARE_MONTHLY = Number(process.env.TESISTAB_FREQ_SHARE_MONTHLY || 0.35);
+const TESISTAB_FREQ_SHARE_OCCASIONAL = Number(process.env.TESISTAB_FREQ_SHARE_OCCASIONAL || 0.15);
+const TESISTAB_DISTRIBUTION_CONFIG = resolveTesistabDistributionConfig();
 
 const formDataStore = {};
-const qaJobStore = {};
+const tesistabJobStore = {};
 const compatStoredForms = {};
-const qaSmartRuntimeStore = new Map();
+const tesistabSmartRuntimeStore = new Map();
 const requestLimitStore = new Map();
-const qaCleanupTimers = new Map();
+const tesistabCleanupTimers = new Map();
 
-let saveQaJobsTimer = null;
+let saveTesistabJobsTimer = null;
 
-bootstrapQaStore();
+bootstrapTesistabStore();
 registerShutdownHooks();
-startQaWatchdog();
+startTesistabWatchdog();
 
 if (TESISTAB_VALIDATION_ENABLED) {
-  console.log(`Validacion de claves TesisTab activa (${TESISTAB_API_URL}) para /api/qa y /api/forms`);
-} else if (QA_API_KEY) {
-  console.log('QA API key protection enabled for /api/qa and /api/forms routes');
+  console.log(`Validacion de claves TesisTab activa (${TESISTAB_API_URL}) para /api/tesistab y /api/forms`);
+} else if (TESISTAB_API_KEY) {
+  console.log('TESISTAB API key protection enabled for /api/tesistab and /api/forms routes');
 } else {
-  console.warn('[AVISO] Sin validacion de claves (TESISTAB_VALIDATION=off y sin QA_API_KEY): solo para desarrollo.');
+  console.warn('[AVISO] Sin validacion de claves (TESISTAB_VALIDATION=off y sin TESISTAB_API_KEY): solo para desarrollo.');
 }
 
 // Middlewares
@@ -132,53 +132,53 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(['/api/qa', '/api/forms'], requireQaApiKey);
-app.use(['/api/qa', '/api/forms'], qaRateLimiter);
+app.use(['/api/tesistab', '/api/forms'], requireTesistabApiKey);
+app.use(['/api/tesistab', '/api/forms'], tesistabRateLimiter);
 
 // Estado del servicio (sin clave: lo usa el healthcheck del hosting).
 app.get('/health', (req, res) => {
   res.json({ ok: true, service: 'tutorica-forms', now: new Date().toISOString() });
 });
 
-app.get('/api/qa/config', (req, res) => {
+app.get('/api/tesistab/config', (req, res) => {
   res.json({
     requestId: req.requestId,
     service: {
-      name: 'Tutorica QA Backend',
-      staleJobAfterMs: QA_STALE_JOB_AFTER_MS,
-      finishedJobTtlMs: QA_FINISHED_JOB_TTL_MS,
+      name: 'Tutorica Forms Backend',
+      staleJobAfterMs: TESISTAB_STALE_JOB_AFTER_MS,
+      finishedJobTtlMs: TESISTAB_FINISHED_JOB_TTL_MS,
     },
-    allowedHosts: QA_ALLOWED_HOSTS,
+    allowedHosts: TESISTAB_ALLOWED_HOSTS,
     protection: {
-      apiKeyRequired: TESISTAB_VALIDATION_ENABLED || Boolean(QA_API_KEY),
+      apiKeyRequired: TESISTAB_VALIDATION_ENABLED || Boolean(TESISTAB_API_KEY),
       tesistabValidation: TESISTAB_VALIDATION_ENABLED,
       corsAllowedOrigins: CORS_ALLOWED_ORIGINS,
-      rateLimitWindowMs: QA_RATE_LIMIT_WINDOW_MS,
-      rateLimitMaxRequests: QA_RATE_LIMIT_MAX_REQUESTS,
+      rateLimitWindowMs: TESISTAB_RATE_LIMIT_WINDOW_MS,
+      rateLimitMaxRequests: TESISTAB_RATE_LIMIT_MAX_REQUESTS,
     },
     limits: {
-      maxSubmissionsPerJob: QA_MAX_SUBMISSIONS_PER_JOB,
-      defaultJobsListLimit: clamp(Math.floor(QA_JOBS_LIST_DEFAULT_LIMIT), 1, QA_JOBS_LIST_MAX_LIMIT),
-      maxJobsListLimit: QA_JOBS_LIST_MAX_LIMIT,
-      minDelayMs: QA_MIN_DELAY_MS,
-      maxDelayMs: QA_MAX_DELAY_MS,
-      maxJitterMs: QA_MAX_JITTER_MS,
-      requestTimeoutMs: QA_REQUEST_TIMEOUT_MS,
+      maxSubmissionsPerJob: TESISTAB_MAX_SUBMISSIONS_PER_JOB,
+      defaultJobsListLimit: clamp(Math.floor(TESISTAB_JOBS_LIST_DEFAULT_LIMIT), 1, TESISTAB_JOBS_LIST_MAX_LIMIT),
+      maxJobsListLimit: TESISTAB_JOBS_LIST_MAX_LIMIT,
+      minDelayMs: TESISTAB_MIN_DELAY_MS,
+      maxDelayMs: TESISTAB_MAX_DELAY_MS,
+      maxJitterMs: TESISTAB_MAX_JITTER_MS,
+      requestTimeoutMs: TESISTAB_REQUEST_TIMEOUT_MS,
     },
     distribution: {
       genderShareRange: {
-        min: QA_DISTRIBUTION_CONFIG.gender.min,
-        max: QA_DISTRIBUTION_CONFIG.gender.max,
+        min: TESISTAB_DISTRIBUTION_CONFIG.gender.min,
+        max: TESISTAB_DISTRIBUTION_CONFIG.gender.max,
       },
-      ageShares: QA_DISTRIBUTION_CONFIG.age,
-      purchaseFrequencyShares: QA_DISTRIBUTION_CONFIG.frequency,
-      maxSubmissionsPerJob: QA_MAX_SUBMISSIONS_PER_JOB,
+      ageShares: TESISTAB_DISTRIBUTION_CONFIG.age,
+      purchaseFrequencyShares: TESISTAB_DISTRIBUTION_CONFIG.frequency,
+      maxSubmissionsPerJob: TESISTAB_MAX_SUBMISSIONS_PER_JOB,
     },
   });
 });
 
-app.get('/api/qa/jobs/:id', (req, res) => {
-  const job = qaJobStore[req.params.id];
+app.get('/api/tesistab/jobs/:id', (req, res) => {
+  const job = tesistabJobStore[req.params.id];
   if (!job) {
     sendApiError(res, 404, 'job_not_found', 'Job not found', req.requestId);
     return;
@@ -190,11 +190,11 @@ app.get('/api/qa/jobs/:id', (req, res) => {
   });
 });
 
-app.get('/api/qa/jobs', (req, res) => {
+app.get('/api/tesistab/jobs', (req, res) => {
   const requestedLimit = Number(req.query.limit);
   const safeLimit = Number.isFinite(requestedLimit)
-    ? clamp(Math.floor(requestedLimit), 1, QA_JOBS_LIST_MAX_LIMIT)
-    : clamp(Math.floor(QA_JOBS_LIST_DEFAULT_LIMIT), 1, QA_JOBS_LIST_MAX_LIMIT);
+    ? clamp(Math.floor(requestedLimit), 1, TESISTAB_JOBS_LIST_MAX_LIMIT)
+    : clamp(Math.floor(TESISTAB_JOBS_LIST_DEFAULT_LIMIT), 1, TESISTAB_JOBS_LIST_MAX_LIMIT);
   const statusFilter =
     typeof req.query.status === 'string' && req.query.status.trim()
       ? req.query.status.trim()
@@ -202,7 +202,7 @@ app.get('/api/qa/jobs', (req, res) => {
   const sinceTimestamp =
     typeof req.query.since === 'string' ? Date.parse(req.query.since) : Number.NaN;
 
-  const jobs = Object.values(qaJobStore)
+  const jobs = Object.values(tesistabJobStore)
     .filter((job) => {
       if (statusFilter && job.status !== statusFilter) {
         return false;
@@ -217,7 +217,7 @@ app.get('/api/qa/jobs', (req, res) => {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, safeLimit);
 
-  const totals = Object.values(qaJobStore).reduce(
+  const totals = Object.values(tesistabJobStore).reduce(
     (acc, job) => {
       acc[job.status] = (acc[job.status] || 0) + 1;
       return acc;
@@ -227,7 +227,7 @@ app.get('/api/qa/jobs', (req, res) => {
 
   res.json({
     requestId: req.requestId,
-    totalStored: Object.keys(qaJobStore).length,
+    totalStored: Object.keys(tesistabJobStore).length,
     total: jobs.length,
     totals,
     appliedFilters: {
@@ -239,27 +239,27 @@ app.get('/api/qa/jobs', (req, res) => {
   });
 });
 
-app.delete('/api/qa/jobs', (req, res) => {
-  const removed = Object.keys(qaJobStore).length;
+app.delete('/api/tesistab/jobs', (req, res) => {
+  const removed = Object.keys(tesistabJobStore).length;
 
-  qaCleanupTimers.forEach((timer) => clearTimeout(timer));
-  qaCleanupTimers.clear();
-  qaSmartRuntimeStore.clear();
+  tesistabCleanupTimers.forEach((timer) => clearTimeout(timer));
+  tesistabCleanupTimers.clear();
+  tesistabSmartRuntimeStore.clear();
 
-  Object.keys(qaJobStore).forEach((id) => {
-    delete qaJobStore[id];
+  Object.keys(tesistabJobStore).forEach((id) => {
+    delete tesistabJobStore[id];
   });
 
-  persistQaJobsSoon();
+  persistTesistabJobsSoon();
   res.json({
     requestId: req.requestId,
-    message: 'Cleared QA jobs history',
+    message: 'Cleared TESISTAB jobs history',
     removed,
   });
 });
 
-app.delete('/api/qa/jobs/:id', (req, res) => {
-  const job = qaJobStore[req.params.id];
+app.delete('/api/tesistab/jobs/:id', (req, res) => {
+  const job = tesistabJobStore[req.params.id];
   if (!job) {
     sendApiError(res, 404, 'job_not_found', 'Job not found', req.requestId);
     return;
@@ -268,16 +268,16 @@ app.delete('/api/qa/jobs/:id', (req, res) => {
   job.status = 'cancelled';
   job.cancelRequested = true;
   job.updatedAt = new Date().toISOString();
-  qaSmartRuntimeStore.delete(req.params.id);
-  scheduleQaJobCleanup(req.params.id);
-  persistQaJobsSoon();
+  tesistabSmartRuntimeStore.delete(req.params.id);
+  scheduleTesistabJobCleanup(req.params.id);
+  persistTesistabJobsSoon();
   res.json({
     requestId: req.requestId,
     message: `Cancelled ${req.params.id}`,
   });
 });
 
-app.post('/api/qa/submit', async (req, res) => {
+app.post('/api/tesistab/submit', async (req, res) => {
   try {
     const {
       formUrl,
@@ -300,7 +300,7 @@ app.post('/api/qa/submit', async (req, res) => {
       return;
     }
 
-    const validation = validateQaFormUrl(formUrl);
+    const validation = validateTesistabFormUrl(formUrl);
     if (!validation.ok) {
       sendApiError(res, 400, 'invalid_form_url', validation.message, req.requestId);
       return;
@@ -311,17 +311,17 @@ app.post('/api/qa/submit', async (req, res) => {
     const requestedDelayMs = Number(delayMs);
     const requestedJitterMs = Number(jitterMs);
 
-    const safeCount = clamp(requestedCount, 1, QA_MAX_SUBMISSIONS_PER_JOB);
+    const safeCount = clamp(requestedCount, 1, TESISTAB_MAX_SUBMISSIONS_PER_JOB);
     const safeDelayMs = Number.isFinite(requestedDelayMs)
-      ? clamp(requestedDelayMs, QA_MIN_DELAY_MS, QA_MAX_DELAY_MS)
-      : QA_MIN_DELAY_MS;
+      ? clamp(requestedDelayMs, TESISTAB_MIN_DELAY_MS, TESISTAB_MAX_DELAY_MS)
+      : TESISTAB_MIN_DELAY_MS;
     const safeJitterMs = Number.isFinite(requestedJitterMs)
-      ? clamp(requestedJitterMs, 0, QA_MAX_JITTER_MS)
+      ? clamp(requestedJitterMs, 0, TESISTAB_MAX_JITTER_MS)
       : 0;
 
     const sanitizedSmartProfile = sanitizeSmartProfile(smartProfile);
     const jobId = randomUUID();
-    qaJobStore[jobId] = {
+    tesistabJobStore[jobId] = {
       id: jobId,
       requestId: req.requestId,
       label: typeof label === 'string' ? label.slice(0, 160) : 'Manual run',
@@ -346,18 +346,18 @@ app.post('/api/qa/submit', async (req, res) => {
       finishedAt: null,
     };
 
-    trimQaStoreIfNeeded();
+    trimTesistabStoreIfNeeded();
     const smartRuntime = buildSmartProfileRuntime(sanitizedSmartProfile, safeCount);
-    qaSmartRuntimeStore.set(jobId, smartRuntime);
-    qaJobStore[jobId].distributionPlan = summarizeSmartRuntimePlan(smartRuntime);
-    persistQaJobsSoon();
+    tesistabSmartRuntimeStore.set(jobId, smartRuntime);
+    tesistabJobStore[jobId].distributionPlan = summarizeSmartRuntimePlan(smartRuntime);
+    persistTesistabJobsSoon();
 
-    runQaJob(jobId, payload);
+    runTesistabJob(jobId, payload);
 
     res.status(202).json({
       requestId: req.requestId,
       id: jobId,
-      status: qaJobStore[jobId].status,
+      status: tesistabJobStore[jobId].status,
       applied: {
         count: safeCount,
         delayMs: safeDelayMs,
@@ -370,7 +370,7 @@ app.post('/api/qa/submit', async (req, res) => {
           : null,
     });
   } catch (error) {
-    console.error(`[${req.requestId}] Error creating QA job`, error);
+    console.error(`[${req.requestId}] Error creating TESISTAB job`, error);
     sendApiError(res, 500, 'job_create_failed', 'Failed to create job', req.requestId);
   }
 });
@@ -394,14 +394,14 @@ app.post('/api/forms/submit', async (req, res) => {
     const formUrl = body.url;
     const formId = body.formId;
     const requestedCount = Number(body.counter) || 1;
-    const safeCount = clamp(requestedCount, 1, QA_MAX_SUBMISSIONS_PER_JOB);
+    const safeCount = clamp(requestedCount, 1, TESISTAB_MAX_SUBMISSIONS_PER_JOB);
 
     if (!formUrl || typeof formUrl !== 'string') {
       res.status(400).type('text/plain').send('Missing form url');
       return;
     }
 
-    const validation = validateQaFormUrl(formUrl);
+    const validation = validateTesistabFormUrl(formUrl);
     if (!validation.ok) {
       res.status(400).type('text/plain').send(validation.message);
       return;
@@ -424,14 +424,14 @@ app.post('/api/forms/submit', async (req, res) => {
     }
 
     const jobId = randomUUID();
-    qaJobStore[jobId] = {
+    tesistabJobStore[jobId] = {
       id: jobId,
       requestId: req.requestId,
       label: `Compat ${formId || 'manual'}`,
       formUrl: normalizedFormUrl,
       requestedCount,
       count: safeCount,
-      delayMs: QA_MIN_DELAY_MS,
+      delayMs: TESISTAB_MIN_DELAY_MS,
       jitterMs: 0,
       autoRandomizeText: false,
       distributionPlan: null,
@@ -448,13 +448,13 @@ app.post('/api/forms/submit', async (req, res) => {
       finishedAt: null,
     };
 
-    trimQaStoreIfNeeded();
+    trimTesistabStoreIfNeeded();
     const smartRuntime = buildSmartProfileRuntime(null, safeCount);
-    qaSmartRuntimeStore.set(jobId, smartRuntime);
-    qaJobStore[jobId].distributionPlan = summarizeSmartRuntimePlan(smartRuntime);
-    persistQaJobsSoon();
+    tesistabSmartRuntimeStore.set(jobId, smartRuntime);
+    tesistabJobStore[jobId].distributionPlan = summarizeSmartRuntimePlan(smartRuntime);
+    persistTesistabJobsSoon();
 
-    runQaJob(jobId, payload);
+    runTesistabJob(jobId, payload);
     res.type('text/plain').send(`/_submit?id=${jobId}`);
   } catch (error) {
     console.error(`[${req.requestId}] Compat submit error`, error);
@@ -605,14 +605,14 @@ app.delete('/api/forms/:id', (req, res) => {
 
 async function postData(formUrl, body) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), QA_REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), TESISTAB_REQUEST_TIMEOUT_MS);
 
   try {
     const response = await fetch(formUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'TutoricaFormsQA/1.0',
+        'User-Agent': 'TutoricaForms/1.0',
       },
       body,
       redirect: 'follow',
@@ -629,21 +629,21 @@ async function postData(formUrl, body) {
   }
 }
 
-async function runQaJob(jobId, payload) {
-  const job = qaJobStore[jobId];
+async function runTesistabJob(jobId, payload) {
+  const job = tesistabJobStore[jobId];
   if (!job) {
     return;
   }
-  const smartRuntime = qaSmartRuntimeStore.get(jobId) || null;
+  const smartRuntime = tesistabSmartRuntimeStore.get(jobId) || null;
 
   job.status = 'running';
   job.updatedAt = new Date().toISOString();
-  persistQaJobsSoon();
+  persistTesistabJobsSoon();
 
   for (let i = 0; i < job.count; i++) {
     if (job.cancelRequested) {
       job.status = 'cancelled';
-      persistQaJobsSoon();
+      persistTesistabJobsSoon();
       break;
     }
 
@@ -671,11 +671,11 @@ async function runQaJob(jobId, payload) {
         preview: null,
       };
       job.updatedAt = new Date().toISOString();
-      persistQaJobsSoon();
+      persistTesistabJobsSoon();
 
       const response = await withTimeout(
         postData(job.formUrl, encodedPayload),
-        QA_REQUEST_TIMEOUT_MS,
+        TESISTAB_REQUEST_TIMEOUT_MS,
         'Google request timeout'
       );
       const inspection = inspectGoogleResponse(response);
@@ -721,7 +721,7 @@ async function runQaJob(jobId, payload) {
     }
 
     job.updatedAt = new Date().toISOString();
-    persistQaJobsSoon();
+    persistTesistabJobsSoon();
     await wait(job.delayMs + randomJitter(job.jitterMs));
   }
 
@@ -730,22 +730,22 @@ async function runQaJob(jobId, payload) {
   }
   job.finishedAt = new Date().toISOString();
   job.updatedAt = new Date().toISOString();
-  scheduleQaJobCleanup(jobId);
-  qaSmartRuntimeStore.delete(jobId);
-  persistQaJobsSoon();
+  scheduleTesistabJobCleanup(jobId);
+  tesistabSmartRuntimeStore.delete(jobId);
+  persistTesistabJobsSoon();
 }
 
-function validateQaFormUrl(formUrl) {
+function validateTesistabFormUrl(formUrl) {
   try {
     const parsed = new URL(formUrl);
     if (parsed.protocol !== 'https:') {
       return { ok: false, message: 'Only https form URLs are allowed' };
     }
 
-    if (!QA_ALLOWED_HOSTS.includes(parsed.hostname)) {
+    if (!TESISTAB_ALLOWED_HOSTS.includes(parsed.hostname)) {
       return {
         ok: false,
-        message: `Host not allowed. Allowed hosts: ${QA_ALLOWED_HOSTS.join(', ')}`,
+        message: `Host not allowed. Allowed hosts: ${TESISTAB_ALLOWED_HOSTS.join(', ')}`,
       };
     }
 
@@ -1018,18 +1018,18 @@ function sanitizeSmartEntryMeta(raw) {
   return output;
 }
 
-function resolveQaDistributionConfig() {
-  const genderMin = clampFraction(QA_GENDER_SHARE_MIN, 0.4);
-  const genderMax = clampFraction(QA_GENDER_SHARE_MAX, 0.6);
+function resolveTesistabDistributionConfig() {
+  const genderMin = clampFraction(TESISTAB_GENDER_SHARE_MIN, 0.4);
+  const genderMax = clampFraction(TESISTAB_GENDER_SHARE_MAX, 0.6);
   const minShare = Math.min(genderMin, genderMax);
   const maxShare = Math.max(genderMin, genderMax);
 
   const age = normalizeShares(
     {
-      age_18_25: QA_AGE_SHARE_18_25,
-      age_26_35: QA_AGE_SHARE_26_35,
-      age_36_45: QA_AGE_SHARE_36_45,
-      age_46_plus: QA_AGE_SHARE_46_PLUS,
+      age_18_25: TESISTAB_AGE_SHARE_18_25,
+      age_26_35: TESISTAB_AGE_SHARE_26_35,
+      age_36_45: TESISTAB_AGE_SHARE_36_45,
+      age_46_plus: TESISTAB_AGE_SHARE_46_PLUS,
     },
     {
       age_18_25: 0.35,
@@ -1041,10 +1041,10 @@ function resolveQaDistributionConfig() {
 
   const frequency = normalizeShares(
     {
-      weekly: QA_FREQ_SHARE_WEEKLY,
-      biweekly: QA_FREQ_SHARE_BIWEEKLY,
-      monthly: QA_FREQ_SHARE_MONTHLY,
-      occasional: QA_FREQ_SHARE_OCCASIONAL,
+      weekly: TESISTAB_FREQ_SHARE_WEEKLY,
+      biweekly: TESISTAB_FREQ_SHARE_BIWEEKLY,
+      monthly: TESISTAB_FREQ_SHARE_MONTHLY,
+      occasional: TESISTAB_FREQ_SHARE_OCCASIONAL,
     },
     {
       weekly: 0.15,
@@ -1230,8 +1230,8 @@ function buildEntryRuntimeConfig(meta, totalAttempts, smartProfile) {
     const genderGroups = buildGenderGroups(options, normalizedOptions, normalizedQuestion);
     if (genderGroups) {
       const femaleShare =
-        QA_DISTRIBUTION_CONFIG.gender.min +
-        Math.random() * (QA_DISTRIBUTION_CONFIG.gender.max - QA_DISTRIBUTION_CONFIG.gender.min);
+        TESISTAB_DISTRIBUTION_CONFIG.gender.min +
+        Math.random() * (TESISTAB_DISTRIBUTION_CONFIG.gender.max - TESISTAB_DISTRIBUTION_CONFIG.gender.min);
       const maleShare = 1 - femaleShare;
       const genderWeights = selectWeightsForPresentGroups(
         {
@@ -1253,7 +1253,7 @@ function buildEntryRuntimeConfig(meta, totalAttempts, smartProfile) {
   if (advanced.age) {
     const ageGroups = buildAgeGroups(options, normalizedOptions, normalizedQuestion);
     if (ageGroups) {
-      const ageWeights = selectWeightsForPresentGroups(QA_DISTRIBUTION_CONFIG.age, ageGroups);
+      const ageWeights = selectWeightsForPresentGroups(TESISTAB_DISTRIBUTION_CONFIG.age, ageGroups);
       return {
         category: 'age',
         groups: ageGroups,
@@ -1267,7 +1267,7 @@ function buildEntryRuntimeConfig(meta, totalAttempts, smartProfile) {
     const frequencyGroups = buildFrequencyGroups(options, normalizedOptions, normalizedQuestion);
     if (frequencyGroups) {
       const frequencyWeights = selectWeightsForPresentGroups(
-        QA_DISTRIBUTION_CONFIG.frequency,
+        TESISTAB_DISTRIBUTION_CONFIG.frequency,
         frequencyGroups
       );
       return {
@@ -1914,20 +1914,20 @@ function withTimeout(promise, timeoutMs, message) {
   });
 }
 
-function scheduleQaJobCleanup(jobId) {
-  if (!jobId || QA_FINISHED_JOB_TTL_MS <= 0) {
+function scheduleTesistabJobCleanup(jobId) {
+  if (!jobId || TESISTAB_FINISHED_JOB_TTL_MS <= 0) {
     return;
   }
 
-  const existing = qaCleanupTimers.get(jobId);
+  const existing = tesistabCleanupTimers.get(jobId);
   if (existing) {
     clearTimeout(existing);
   }
 
   const timer = setTimeout(() => {
-    qaCleanupTimers.delete(jobId);
+    tesistabCleanupTimers.delete(jobId);
 
-    const job = qaJobStore[jobId];
+    const job = tesistabJobStore[jobId];
     if (!job) {
       return;
     }
@@ -1936,12 +1936,12 @@ function scheduleQaJobCleanup(jobId) {
       return;
     }
 
-    delete qaJobStore[jobId];
-    qaSmartRuntimeStore.delete(jobId);
-    persistQaJobsSoon();
-  }, QA_FINISHED_JOB_TTL_MS);
+    delete tesistabJobStore[jobId];
+    tesistabSmartRuntimeStore.delete(jobId);
+    persistTesistabJobsSoon();
+  }, TESISTAB_FINISHED_JOB_TTL_MS);
 
-  qaCleanupTimers.set(jobId, timer);
+  tesistabCleanupTimers.set(jobId, timer);
 }
 
 function sendApiError(res, status, code, message, requestId, details = null) {
@@ -1955,7 +1955,18 @@ function sendApiError(res, status, code, message, requestId, details = null) {
   });
 }
 
+// Validador inyectado por el proceso anfitrion (cuando forms se monta dentro
+// de la API de TesisTab corren en el mismo proceso y se valida en memoria, sin
+// HTTP ni cache). app.setKeyValidator(fn) lo configura.
+let inProcessKeyValidator = null;
+app.setKeyValidator = (fn) => {
+  inProcessKeyValidator = typeof fn === 'function' ? fn : null;
+};
+
 async function validateTesistabKey(apiKey) {
+  if (inProcessKeyValidator) {
+    return inProcessKeyValidator(apiKey);
+  }
   const cached = tesistabKeyCache.get(apiKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached;
@@ -1994,7 +2005,7 @@ async function validateTesistabKey(apiKey) {
   return entry;
 }
 
-function requireQaApiKey(req, res, next) {
+function requireTesistabApiKey(req, res, next) {
   const apiKey =
     String(req.headers['x-api-key'] || '').trim() ||
     String(req.headers.authorization || '')
@@ -2002,14 +2013,14 @@ function requireQaApiKey(req, res, next) {
       .trim();
 
   // Llave maestra de desarrollo (opcional).
-  if (QA_API_KEY && apiKey === QA_API_KEY) {
+  if (TESISTAB_API_KEY && apiKey === TESISTAB_API_KEY) {
     next();
     return;
   }
 
   // Modo legado (desarrollo/tests): comportamiento original del proyecto.
   if (!TESISTAB_VALIDATION_ENABLED) {
-    if (!QA_API_KEY) {
+    if (!TESISTAB_API_KEY) {
       next();
       return;
     }
@@ -2047,13 +2058,13 @@ function requireQaApiKey(req, res, next) {
     });
 }
 
-function qaRateLimiter(req, res, next) {
+function tesistabRateLimiter(req, res, next) {
   const now = Date.now();
   const routeKey = req.path.split('/').slice(0, 3).join('/');
   const clientKey = `${req.ip || req.socket?.remoteAddress || 'unknown'}:${routeKey}`;
   const bucket = requestLimitStore.get(clientKey) || { startAt: now, count: 0 };
 
-  if (now - bucket.startAt > QA_RATE_LIMIT_WINDOW_MS) {
+  if (now - bucket.startAt > TESISTAB_RATE_LIMIT_WINDOW_MS) {
     bucket.startAt = now;
     bucket.count = 0;
   }
@@ -2061,10 +2072,10 @@ function qaRateLimiter(req, res, next) {
   bucket.count += 1;
   requestLimitStore.set(clientKey, bucket);
 
-  if (bucket.count > QA_RATE_LIMIT_MAX_REQUESTS) {
+  if (bucket.count > TESISTAB_RATE_LIMIT_MAX_REQUESTS) {
     sendApiError(res, 429, 'rate_limited', 'Too many requests', req.requestId, {
-      windowMs: QA_RATE_LIMIT_WINDOW_MS,
-      maxRequests: QA_RATE_LIMIT_MAX_REQUESTS,
+      windowMs: TESISTAB_RATE_LIMIT_WINDOW_MS,
+      maxRequests: TESISTAB_RATE_LIMIT_MAX_REQUESTS,
     });
     return;
   }
@@ -2072,20 +2083,20 @@ function qaRateLimiter(req, res, next) {
   next();
 }
 
-function bootstrapQaStore() {
-  if (!QA_PERSIST_JOBS) {
+function bootstrapTesistabStore() {
+  if (!TESISTAB_PERSIST_JOBS) {
     return;
   }
 
   try {
-    const parentDir = path.dirname(qaStorageFilePath);
+    const parentDir = path.dirname(tesistabStorageFilePath);
     fs.mkdirSync(parentDir, { recursive: true });
 
-    if (!fs.existsSync(qaStorageFilePath)) {
+    if (!fs.existsSync(tesistabStorageFilePath)) {
       return;
     }
 
-    const raw = fs.readFileSync(qaStorageFilePath, 'utf8');
+    const raw = fs.readFileSync(tesistabStorageFilePath, 'utf8');
     if (!raw.trim()) {
       return;
     }
@@ -2113,24 +2124,24 @@ function bootstrapQaStore() {
         };
       }
 
-      qaJobStore[job.id] = job;
+      tesistabJobStore[job.id] = job;
       if (job.status !== 'running' && job.status !== 'queued') {
-        scheduleQaJobCleanup(job.id);
+        scheduleTesistabJobCleanup(job.id);
       }
     });
 
-    trimQaStoreIfNeeded();
-    console.log(`Loaded ${Object.keys(qaJobStore).length} persisted QA jobs`);
+    trimTesistabStoreIfNeeded();
+    console.log(`Loaded ${Object.keys(tesistabJobStore).length} persisted TESISTAB jobs`);
   } catch (error) {
-    console.warn(`Failed to load persisted QA jobs: ${error.message}`);
+    console.warn(`Failed to load persisted TESISTAB jobs: ${error.message}`);
   }
 }
 
-function startQaWatchdog() {
+function startTesistabWatchdog() {
   setInterval(() => {
     const now = Date.now();
 
-    Object.values(qaJobStore).forEach((job) => {
+    Object.values(tesistabJobStore).forEach((job) => {
       if (!job || job.status !== 'running') {
         return;
       }
@@ -2140,7 +2151,7 @@ function startQaWatchdog() {
         return;
       }
 
-      if (now - updatedAtMs < QA_STALE_JOB_AFTER_MS) {
+      if (now - updatedAtMs < TESISTAB_STALE_JOB_AFTER_MS) {
         return;
       }
 
@@ -2164,67 +2175,67 @@ function startQaWatchdog() {
         job.errors.shift();
       }
 
-      scheduleQaJobCleanup(job.id);
-      persistQaJobsSoon();
+      scheduleTesistabJobCleanup(job.id);
+      persistTesistabJobsSoon();
     });
   }, 5000);
 }
 
 function registerShutdownHooks() {
   const flushAndExit = (exitCode) => {
-    persistQaJobsNow();
+    persistTesistabJobsNow();
     process.exit(exitCode);
   };
 
   process.once('SIGINT', () => flushAndExit(0));
   process.once('SIGTERM', () => flushAndExit(0));
   process.once('beforeExit', () => {
-    persistQaJobsNow();
+    persistTesistabJobsNow();
   });
 }
 
-function trimQaStoreIfNeeded() {
-  const keys = Object.keys(qaJobStore);
-  if (keys.length <= QA_MAX_STORED_JOBS) {
+function trimTesistabStoreIfNeeded() {
+  const keys = Object.keys(tesistabJobStore);
+  if (keys.length <= TESISTAB_MAX_STORED_JOBS) {
     return;
   }
 
-  const jobsSorted = Object.values(qaJobStore).sort(
+  const jobsSorted = Object.values(tesistabJobStore).sort(
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
   );
-  const toKeep = new Set(jobsSorted.slice(0, QA_MAX_STORED_JOBS).map((job) => job.id));
+  const toKeep = new Set(jobsSorted.slice(0, TESISTAB_MAX_STORED_JOBS).map((job) => job.id));
 
   keys.forEach((id) => {
     if (!toKeep.has(id)) {
-      delete qaJobStore[id];
+      delete tesistabJobStore[id];
     }
   });
 }
 
-function persistQaJobsSoon() {
-  if (!QA_PERSIST_JOBS) {
+function persistTesistabJobsSoon() {
+  if (!TESISTAB_PERSIST_JOBS) {
     return;
   }
 
-  if (saveQaJobsTimer) {
-    clearTimeout(saveQaJobsTimer);
+  if (saveTesistabJobsTimer) {
+    clearTimeout(saveTesistabJobsTimer);
   }
 
-  saveQaJobsTimer = setTimeout(() => {
-    saveQaJobsTimer = null;
-    persistQaJobsNow();
+  saveTesistabJobsTimer = setTimeout(() => {
+    saveTesistabJobsTimer = null;
+    persistTesistabJobsNow();
   }, 250);
 }
 
-function persistQaJobsNow() {
+function persistTesistabJobsNow() {
   try {
-    const jobs = Object.values(qaJobStore)
+    const jobs = Object.values(tesistabJobStore)
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .slice(0, QA_MAX_STORED_JOBS);
+      .slice(0, TESISTAB_MAX_STORED_JOBS);
 
-    fs.writeFileSync(qaStorageFilePath, JSON.stringify(jobs, null, 2), 'utf8');
+    fs.writeFileSync(tesistabStorageFilePath, JSON.stringify(jobs, null, 2), 'utf8');
   } catch (error) {
-    console.warn(`Failed to persist QA jobs: ${error.message}`);
+    console.warn(`Failed to persist TESISTAB jobs: ${error.message}`);
   }
 }
 
@@ -2241,7 +2252,7 @@ app.get('/_submit', (req, res) => {
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Borang QA Result</title>
+        <title>Borang TESISTAB Result</title>
         <style>
           body { font-family: Segoe UI, sans-serif; padding: 24px; color: #0f172a; }
           .card { max-width: 720px; border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; }
@@ -2250,7 +2261,7 @@ app.get('/_submit', (req, res) => {
       </head>
       <body>
         <div class="card">
-          <h2>Borang QA Run</h2>
+          <h2>Borang TESISTAB Run</h2>
           <p class="muted" id="line">Checking status...</p>
           <pre id="raw"></pre>
         </div>
@@ -2258,7 +2269,7 @@ app.get('/_submit', (req, res) => {
           const id = ${JSON.stringify(String(id))};
           async function tick() {
             try {
-              const res = await fetch('/api/qa/jobs/' + id);
+              const res = await fetch('/api/tesistab/jobs/' + id);
               if (!res.ok) {
                 document.getElementById('line').textContent = 'Job not found';
                 return;
@@ -2298,7 +2309,13 @@ app.use((err, req, res, next) => {
   sendApiError(res, 500, 'internal_error', 'Unexpected server error', req.requestId);
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log('Server running on port', PORT);
-});
+// Cuando se ejecuta directamente (standalone/dev/tests) levanta su propio
+// servidor; cuando se importa (montado en la API de TesisTab) solo exporta app.
+if (require.main === module) {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log('Tutorica Forms escuchando en el puerto', PORT);
+  });
+}
+
+module.exports = app;
