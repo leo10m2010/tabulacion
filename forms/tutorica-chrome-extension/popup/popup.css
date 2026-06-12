@@ -84,7 +84,7 @@ h1 {
 .config-box {
   margin-top: 12px;
   border: 1px solid hsl(var(--border));
-  border-radius: 12px;
+  border-radius: 16px;
   background: hsl(var(--card));
   padding: 12px;
 }
@@ -222,7 +222,7 @@ select,
 input[type='number'] {
   width: 100%;
   border: 1px solid hsl(var(--input));
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 8px;
   background: hsl(var(--card));
   color: hsl(var(--foreground));
@@ -270,7 +270,7 @@ button {
   width: 100%;
   margin-top: 14px;
   border: none;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 10px;
   background: hsl(var(--primary));
   color: hsl(var(--primary-foreground));
@@ -327,7 +327,7 @@ button:hover {
 .diag-box {
   margin-top: 10px;
   border: 1px solid hsl(var(--border));
-  border-radius: 10px;
+  border-radius: 14px;
   background: hsl(var(--card));
   padding: 8px;
 }

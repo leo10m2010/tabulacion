@@ -1,7 +1,7 @@
 {
   "name": "Tutorica Forms",
   "description": "Herramienta de pruebas y QA: genera respuestas de prueba en tus propios Google Forms para validar lógica, baremos y tabulación.",
-  "version": "1.1.2",
+  "version": "1.0.0",
   "manifest_version": 3,
   "icons": {
     "16": "icons/icon16.png",
