@@ -13,6 +13,8 @@ import {
   ChevronRight,
   Clock3,
   Download,
+  Eye,
+  EyeOff,
   FileSpreadsheet,
   HelpCircle,
   KeyRound,
@@ -58,7 +60,7 @@ import type {
   ThemeMode,
   WizardStep,
 } from "./lib/types";
-import { DEFAULT_API_BASE_URL, FALLBACK_CONFIG, FORMS_BACKEND_URL, LIST_GROUPS } from "./lib/constants";
+import { DEFAULT_API_BASE_URL, FALLBACK_CONFIG, LIST_GROUPS } from "./lib/constants";
 import {
   base64ToUint8Array,
   eid,
@@ -120,6 +122,7 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [loginEmail, setLoginEmail] = useState<string>(() => localStorage.getItem("loginEmail") ?? "");
   const [loginPassword, setLoginPassword] = useState<string>("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   const [managedUsers, setManagedUsers] = useState<AuthUser[]>([]);
   const [usersStatusMessage, setUsersStatusMessage] = useState<string>("Sincroniza usuarios para ver el estado.");
@@ -726,14 +729,25 @@ export default function App() {
                 <span className="text-sm font-medium">Contraseña</span>
                 {/* AUTOCOMPLETE: permite que el navegador guarde la contraseña.
                     TODO producción: cambiar a autoComplete="new-password" para desactivarlo */}
-                <Input
-                  type="password"
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-                />
+                <div className="relative">
+                  <Input
+                    type={showLoginPassword ? "text" : "password"}
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={showLoginPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  >
+                    {showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </label>
               <Button className="h-11 w-full" onClick={handleLogin} disabled={authLoading}>
                 {authLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -1644,9 +1658,8 @@ export default function App() {
                           manual en "Avanzado".)
                         </>,
                         <>
-                          Verifica que el campo <strong className="text-foreground">Backend</strong> diga{" "}
-                          <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{FORMS_BACKEND_URL}</code>{" "}
-                          y pulsa "Probar backend".
+                          Verifica que la tarjeta de conexión del popup diga{" "}
+                          <strong className="text-foreground">Conectado</strong>.
                         </>,
                         <>Abre tu encuesta de Google Forms y configura el llenado desde el panel de la extensión.</>,
                       ].map((paso, i) => (

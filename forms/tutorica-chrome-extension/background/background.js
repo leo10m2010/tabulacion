@@ -20,6 +20,8 @@ chrome.runtime.onInstalled.addListener(async () => {
     backendBaseUrl: PRODUCTION_BACKEND_URL,
     apiKey: '',
     accountEmail: '',
+    sessionLockMinutes: 1440,
+    sessionExpiresAt: 0,
     themeMode: 'system',
     panelViewMode: 'simple',
     submissionCount: 5,

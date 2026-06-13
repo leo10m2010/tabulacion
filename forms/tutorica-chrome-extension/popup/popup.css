@@ -222,6 +222,7 @@ label {
 input[type='url'],
 input[type='password'],
 input[type='text'],
+input[type='email'],
 select,
 input[type='number'] {
   width: 100%;
@@ -291,6 +292,11 @@ button {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+}
+
+.actions-row.two {
+  grid-template-columns: repeat(2, 1fr);
+  margin-top: 4px;
 }
 
 .actions-row button {
@@ -364,4 +370,262 @@ button:hover {
   margin: 0 0 4px;
   font-size: 11px;
   color: hsl(var(--muted-foreground));
+}
+
+/* ── Encabezado de marca ───────────────────────────────────────────────── */
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid hsl(var(--border));
+  margin-bottom: 12px;
+}
+
+.brand img {
+  border-radius: 6px;
+}
+
+.brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.avatar-chip {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* ── Heroe (login / sesion bloqueada) ──────────────────────────────────── */
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 18px 8px 6px;
+}
+
+.hero-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  background: hsl(var(--accent));
+  color: hsl(var(--primary));
+  margin-bottom: 14px;
+}
+
+.hero-icon svg {
+  width: 34px;
+  height: 34px;
+}
+
+.hero-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.hero-sub {
+  margin: 6px 0 4px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.hero-sub.strong {
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+
+.label-soft {
+  font-weight: 400;
+  color: hsl(var(--muted-foreground));
+}
+
+.center-text {
+  text-align: center;
+}
+
+/* ── Botones grandes (login / desbloquear / cerrar sesion) ─────────────── */
+
+.big-btn {
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 999px;
+  font-size: 14px;
+}
+
+.big-btn.secondary {
+  margin-top: 0;
+}
+
+.divider-o {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.divider-o::before,
+.divider-o::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid hsl(var(--border));
+}
+
+/* ── Tarjeta de conexion ───────────────────────────────────────────────── */
+
+.conn-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+}
+
+.conn-dot {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+}
+
+.conn-card.is-online .conn-dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18);
+  animation: conn-pulse 1.4s ease-in-out infinite;
+}
+
+.conn-card.is-offline .conn-dot {
+  background: hsl(var(--danger));
+  box-shadow: 0 0 0 3px hsl(var(--danger) / 0.18);
+}
+
+.conn-card.is-checking .conn-dot {
+  animation: conn-pulse 0.9s ease-in-out infinite;
+}
+
+.conn-card.is-online {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.conn-card.is-offline {
+  border-color: hsl(var(--danger) / 0.4);
+}
+
+.conn-text {
+  min-width: 0;
+}
+
+.conn-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.conn-sub {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.icon-btn {
+  margin-left: auto;
+  margin-top: 0;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: 999px;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border));
+}
+
+.icon-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.icon-btn:hover {
+  background: hsl(var(--accent));
+}
+
+/* ── Campo de contrasena con ojito ─────────────────────────────────────── */
+
+.password-field {
+  position: relative;
+}
+
+.password-field input {
+  padding-right: 38px;
+}
+
+.eye-btn {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.eye-btn:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.eye-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+@keyframes conn-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(1.25);
+    opacity: 0.7;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }

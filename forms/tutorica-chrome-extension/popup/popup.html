@@ -9,101 +9,136 @@
 </head>
 <body>
   <main>
-    <h1>Tutorica Forms</h1>
-    <p class="hint">Conexion y estado general de la extension.</p>
+    <header class="brand">
+      <img src="../icons/icon32.png" alt="" width="22" height="22" />
+      <span class="brand-name">Tutorica Forms</span>
+      <span id="avatarChip" class="avatar-chip" hidden>-</span>
+    </header>
 
-    <section class="config-box">
-      <h2 class="with-icon" data-icon="status">Estado</h2>
-
-      <label class="toggle-row" for="enabled">
-        <span>Activar en Google Forms</span>
-        <input id="enabled" type="checkbox" />
-      </label>
-
-      <label for="themeMode">Tema</label>
-      <select id="themeMode">
-        <option value="light">Claro</option>
-        <option value="dark">Oscuro</option>
-        <option value="system">Sistema</option>
-      </select>
-
-      <div class="status-line">
-        <span>Backend</span>
-        <span id="backendLive" class="status-pill is-warning">Verificando</span>
+    <!-- Vista: iniciar sesion (sin cuenta recordada) -->
+    <div id="viewLogin" hidden>
+      <div class="hero">
+        <span class="hero-icon" data-hero="account" aria-hidden="true"></span>
+        <h2 class="hero-title">Inicia sesi&oacute;n</h2>
+        <p class="hero-sub">Usa tu cuenta de TesisTab para conectar la extensi&oacute;n.</p>
       </div>
 
-      <div class="status-line">
-        <span>Ultima ejecucion</span>
-        <span id="lastRunState" class="status-pill is-muted">Sin actividad</span>
-      </div>
-    </section>
+      <label for="loginEmail">Correo</label>
+      <input id="loginEmail" type="email" placeholder="tu@correo.com" autocomplete="username" />
 
-    <section class="config-box">
-      <h2 class="with-icon" data-icon="account">Cuenta TesisTab</h2>
-
-      <div id="loginForm">
-        <label for="loginEmail">Correo</label>
-        <input id="loginEmail" type="email" placeholder="tu@correo.com" autocomplete="username" />
-
-        <label for="loginPassword">Contrase&ntilde;a</label>
+      <label for="loginPassword">Contrase&ntilde;a</label>
+      <div class="password-field">
         <input id="loginPassword" type="password" autocomplete="current-password" />
-
-        <button id="loginBtn" type="button">Iniciar sesi&oacute;n</button>
-        <p class="hint tiny">Tu contrase&ntilde;a no se guarda: se usa una sola vez para obtener tu clave de API. La sesi&oacute;n queda activa hasta que la cierres.</p>
+        <button type="button" class="eye-btn" data-toggle-password="loginPassword" aria-label="Mostrar contrase&ntilde;a"></button>
       </div>
 
-      <div id="sessionBox" hidden>
+      <button id="loginBtn" class="big-btn" type="button">Iniciar sesi&oacute;n</button>
+      <p class="hint tiny center-text">Tu contrase&ntilde;a no se guarda: se usa una sola vez para obtener tu clave de API.</p>
+    </div>
+
+    <!-- Vista: sesion bloqueada (estilo caja fuerte) -->
+    <div id="viewLock" hidden>
+      <div class="hero">
+        <span class="hero-icon" data-hero="lock" aria-hidden="true"></span>
+        <h2 class="hero-title">Tu sesi&oacute;n est&aacute; bloqueada</h2>
+        <p id="lockEmail" class="hero-sub strong">-</p>
+      </div>
+
+      <label for="lockPassword">Contrase&ntilde;a <span class="label-soft">(requerido)</span></label>
+      <div class="password-field">
+        <input id="lockPassword" type="password" autocomplete="current-password" />
+        <button type="button" class="eye-btn" data-toggle-password="lockPassword" aria-label="Mostrar contrase&ntilde;a"></button>
+      </div>
+
+      <button id="unlockBtn" class="big-btn" type="button">Desbloquear</button>
+      <div class="divider-o"><span>o</span></div>
+      <button id="lockLogoutBtn" class="big-btn secondary" type="button">Cerrar sesi&oacute;n</button>
+      <p class="hint tiny center-text">Accediendo a TesisTab</p>
+    </div>
+
+    <!-- Vista principal (sesion activa o clave manual) -->
+    <div id="viewMain" hidden>
+      <section id="connCard" class="conn-card is-checking">
+        <span id="connDot" class="conn-dot" aria-hidden="true"></span>
+        <div class="conn-text">
+          <p id="connTitle" class="conn-title">Verificando conexi&oacute;n...</p>
+          <p id="connSub" class="conn-sub">Servicio TesisTab</p>
+        </div>
+        <button id="connRefreshBtn" class="icon-btn" type="button" title="Volver a comprobar" aria-label="Volver a comprobar"></button>
+      </section>
+
+      <section class="config-box">
+        <h2 class="with-icon" data-icon="status">Estado</h2>
+
+        <label class="toggle-row" for="enabled">
+          <span>Activar en Google Forms</span>
+          <input id="enabled" type="checkbox" />
+        </label>
+
+        <label for="themeMode">Tema</label>
+        <select id="themeMode">
+          <option value="light">Claro</option>
+          <option value="dark">Oscuro</option>
+          <option value="system">Sistema</option>
+        </select>
+
         <div class="status-line">
-          <span>Sesi&oacute;n activa</span>
+          <span>Ultima ejecucion</span>
+          <span id="lastRunState" class="status-pill is-muted">Sin actividad</span>
+        </div>
+      </section>
+
+      <section id="sessionSection" class="config-box">
+        <h2 class="with-icon" data-icon="account">Sesi&oacute;n</h2>
+
+        <div class="status-line">
+          <span>Cuenta</span>
           <span id="sessionEmail" class="status-pill is-ok">-</span>
         </div>
-        <button id="logoutBtn" class="secondary" type="button">Cerrar sesi&oacute;n</button>
-      </div>
-    </section>
 
-    <section class="config-box">
-      <h2 class="with-icon" data-icon="backend">Backend</h2>
+        <div id="lockTimeoutRow">
+          <label for="sessionLockMinutes">Bloquear sesi&oacute;n tras</label>
+          <select id="sessionLockMinutes">
+            <option value="15">15 minutos</option>
+            <option value="60">1 hora</option>
+            <option value="240">4 horas</option>
+            <option value="720">12 horas</option>
+            <option value="1440">1 d&iacute;a</option>
+            <option value="10080">7 d&iacute;as</option>
+            <option value="0">Nunca</option>
+          </select>
+        </div>
 
-      <label for="backendBaseUrl">URL del backend</label>
-      <input id="backendBaseUrl" type="url" placeholder="https://tabulacion-api.onrender.com" />
-      <p class="hint tiny">Dejala como esta salvo que uses tu propio servidor.</p>
+        <div class="actions-row two">
+          <button id="lockNowBtn" class="secondary" type="button">Bloquear</button>
+          <button id="logoutBtn" class="secondary" type="button">Cerrar sesi&oacute;n</button>
+        </div>
+      </section>
 
-      <details class="advanced-box">
-        <summary>Avanzado: clave de API manual</summary>
-        <label for="apiKey">Clave de API de TesisTab</label>
-        <input id="apiKey" type="password" placeholder="ttab_..." autocomplete="off" />
-        <p class="hint tiny">Normalmente no necesitas tocarla: se completa sola al iniciar sesi&oacute;n.</p>
+      <details class="diag-box">
+        <summary class="with-icon" data-icon="diagnostics">Diagnostico tecnico</summary>
+        <div class="diag-content">
+          <p id="backendMax" class="diag-line">Max por corrida: -</p>
+          <p id="backendGender" class="diag-line">Genero (rango): -</p>
+          <p id="backendAge" class="diag-line">Edad (pesos): -</p>
+          <p id="backendFreq" class="diag-line">Frecuencia (pesos): -</p>
+          <hr />
+          <p id="diagJob" class="diag-line">Job: -</p>
+          <p id="diagStatus" class="diag-line">Estado: -</p>
+          <p id="diagError" class="diag-line">Error: -</p>
+          <p id="diagUpdatedAt" class="diag-line">Actualizado: -</p>
+        </div>
       </details>
-    </section>
 
-    <div class="actions-row">
-      <button id="saveBtn" type="button">Guardar</button>
-      <button id="testConnectionBtn" class="secondary" type="button">Probar backend</button>
-      <button id="refreshDiagBtn" class="secondary" type="button">Actualizar estado</button>
+      <section class="config-box">
+        <h2 class="with-icon" data-icon="help">Ayuda</h2>
+        <p class="hint tiny no-margin">1. Abre tu Google Form.</p>
+        <p class="hint tiny no-margin">2. Usa el panel de la esquina superior derecha.</p>
+        <p class="hint tiny no-margin">3. Inicia los envios desde ahi.</p>
+      </section>
     </div>
+
     <p id="status" role="status"></p>
-
-    <details class="diag-box">
-      <summary class="with-icon" data-icon="diagnostics">Diagnostico tecnico</summary>
-      <div class="diag-content">
-        <p id="backendMax" class="diag-line">Max por corrida: -</p>
-        <p id="backendGender" class="diag-line">Genero (rango): -</p>
-        <p id="backendAge" class="diag-line">Edad (pesos): -</p>
-        <p id="backendFreq" class="diag-line">Frecuencia (pesos): -</p>
-        <hr />
-        <p id="diagJob" class="diag-line">Job: -</p>
-        <p id="diagStatus" class="diag-line">Estado: -</p>
-        <p id="diagError" class="diag-line">Error: -</p>
-        <p id="diagUpdatedAt" class="diag-line">Actualizado: -</p>
-      </div>
-    </details>
-
-    <section class="config-box">
-      <h2 class="with-icon" data-icon="help">Ayuda</h2>
-      <p class="hint tiny no-margin">1. Abre tu Google Form.</p>
-      <p class="hint tiny no-margin">2. Usa el panel de la esquina superior derecha.</p>
-      <p class="hint tiny no-margin">3. Inicia los envios desde ahi.</p>
-    </section>
   </main>
 
   <script src="popup.js"></script>

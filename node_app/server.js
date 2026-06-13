@@ -101,9 +101,13 @@ const getBaseUrl = (req) => {
 
 const setCorsHeaders = (req, res) => {
   const origin = String(req.headers.origin ?? "").trim();
+  // La extension Tutorica Forms inicia sesion desde su popup
+  // (origen chrome-extension://...); el control de acceso real son las
+  // credenciales, no el origen.
+  const isExtensionOrigin = origin.startsWith("chrome-extension://");
   if (ALLOWED_ORIGINS.includes("*")) {
     res.setHeader("Access-Control-Allow-Origin", "*");
-  } else if (origin && ALLOWED_ORIGINS.includes(origin)) {
+  } else if (origin && (ALLOWED_ORIGINS.includes(origin) || isExtensionOrigin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
   }

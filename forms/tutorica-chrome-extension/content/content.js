@@ -5,6 +5,9 @@ const DEFAULT_SETTINGS = {
   enabled: true,
   backendBaseUrl: 'https://tabulacion-api.onrender.com',
   apiKey: '',
+  accountEmail: '',
+  sessionLockMinutes: 1440,
+  sessionExpiresAt: 0,
   themeMode: 'system',
   panelViewMode: 'simple',
   submissionCount: 5,
@@ -244,6 +247,11 @@ async function startTesistabRun(form, event) {
 
   settings = await loadSettings();
   if (!settings.enabled) {
+    return;
+  }
+
+  if (isSessionLocked(settings)) {
+    showStatus('Sesion bloqueada: abre la extension y desbloqueala con tu contrasena.', true);
     return;
   }
 
@@ -1359,6 +1367,15 @@ function updateBackendHealthIndicator(state, title) {
   indicator.classList.add(state === 'online' ? 'is-online' : state === 'offline' ? 'is-offline' : 'is-checking');
   indicator.title = title || 'Estado backend';
   indicator.setAttribute('aria-label', title || 'Estado backend');
+}
+
+// Sesion bloqueada (auto-bloqueo del popup): hay cuenta y su expiracion paso.
+function isSessionLocked(currentSettings) {
+  if (!currentSettings.accountEmail) {
+    return false;
+  }
+  const expiresAt = Number(currentSettings.sessionExpiresAt) || 0;
+  return expiresAt > 0 && Date.now() >= expiresAt;
 }
 
 function normalizeThemeMode(value) {

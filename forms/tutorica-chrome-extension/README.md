@@ -21,8 +21,11 @@ autentica con la clave de API del usuario (`ttab_...`, se genera en TesisTab > I
 - Panel en la página: cantidad, perfil (favorable/intermedio/desfavorable/auto),
   distribución por porcentajes, demografía avanzada y herramientas CSV.
 - Popup: inicio de sesión con la cuenta TesisTab (obtiene la clave de API
-  automáticamente; la contraseña nunca se guarda), URL del backend, clave
-  manual (avanzado), tema claro/oscuro y diagnóstico.
+  automáticamente; la contraseña nunca se guarda) y pantalla de bloqueo estilo
+  caja fuerte con auto-bloqueo configurable (15 min a 7 días, o nunca).
+  La sesión persiste hasta que expire el auto-bloqueo o se cierre manualmente.
+- Tarjeta visual de conexión (Conectado / Sin conexión); la URL del backend y
+  la clave manual quedan ocultas dentro de "Diagnóstico técnico".
 - Tokens de texto `{{i}}` y `{{rand}}`, y modo de aleatorización automática.
 - Diálogo de confirmación antes de cada corrida.
 

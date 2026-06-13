@@ -6,6 +6,10 @@ const DEFAULT_SETTINGS = {
   backendBaseUrl: 'https://tabulacion-api.onrender.com',
   apiKey: '',
   accountEmail: '',
+  // Auto-bloqueo estilo caja fuerte: minutos hasta pedir la contrasena de
+  // nuevo (0 = nunca). sessionExpiresAt es el instante (ms) en que expira.
+  sessionLockMinutes: 1440,
+  sessionExpiresAt: 0,
   themeMode: 'system',
   panelViewMode: 'simple',
   submissionCount: 5,
@@ -34,25 +38,52 @@ const DEFAULT_SETTINGS = {
 const POPUP_MAX_SUBMISSIONS = 250;
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
+// Declarado antes de las llamadas de arranque: decoratePopupIcons() corre al
+// cargar y un const posterior quedaria en zona muerta temporal (ReferenceError
+// que dejaba el popup sin iconos ni listeners).
+const ICON_PATHS = {
+  account: '<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-6 8-6s8 2 8 6"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  unlock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.7-1.5"/>',
+  login: '<path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 4v16"/>',
+  logout: '<path d="M16 17l5-5-5-5"/><path d="M21 12H9"/><path d="M3 4v16"/>',
+  status: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 3"/>',
+  backend: '<rect x="4" y="5" width="16" height="6" rx="2"/><rect x="4" y="13" width="16" height="6" rx="2"/><path d="M8 8h.01"/><path d="M8 16h.01"/>',
+  diagnostics: '<path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-6"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4.2 1.8c-.9.8-1.7 1.3-1.7 2.7"/><path d="M12 17h.01"/>',
+  save: '<path d="M5 20h14"/><path d="M12 4v10"/><path d="M8 10l4 4 4-4"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0 2 5.3"/><path d="M20 4v7h-7"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff:
+    '<path d="M3 3l18 18"/><path d="M10.6 5.1A11 11 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3 3.9"/><path d="M6.1 6.1A17 17 0 0 0 2 12s3.5 7 10 7a10.7 10.7 0 0 0 5.4-1.4"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+};
+
 const elements = {
-  enabled: document.getElementById('enabled'),
-  themeMode: document.getElementById('themeMode'),
-  backendBaseUrl: document.getElementById('backendBaseUrl'),
-  apiKey: document.getElementById('apiKey'),
-  loginForm: document.getElementById('loginForm'),
+  avatarChip: document.getElementById('avatarChip'),
+  viewLogin: document.getElementById('viewLogin'),
+  viewLock: document.getElementById('viewLock'),
+  viewMain: document.getElementById('viewMain'),
   loginEmail: document.getElementById('loginEmail'),
   loginPassword: document.getElementById('loginPassword'),
   loginBtn: document.getElementById('loginBtn'),
-  sessionBox: document.getElementById('sessionBox'),
-  sessionEmail: document.getElementById('sessionEmail'),
-  logoutBtn: document.getElementById('logoutBtn'),
-  requireConfirmation: document.getElementById('requireConfirmation'),
-  multiPageMode: document.getElementById('multiPageMode'),
-  backendLive: document.getElementById('backendLive'),
+  lockEmail: document.getElementById('lockEmail'),
+  lockPassword: document.getElementById('lockPassword'),
+  unlockBtn: document.getElementById('unlockBtn'),
+  lockLogoutBtn: document.getElementById('lockLogoutBtn'),
+  connCard: document.getElementById('connCard'),
+  connDot: document.getElementById('connDot'),
+  connTitle: document.getElementById('connTitle'),
+  connSub: document.getElementById('connSub'),
+  connRefreshBtn: document.getElementById('connRefreshBtn'),
+  enabled: document.getElementById('enabled'),
+  themeMode: document.getElementById('themeMode'),
   lastRunState: document.getElementById('lastRunState'),
-  saveBtn: document.getElementById('saveBtn'),
-  testConnectionBtn: document.getElementById('testConnectionBtn'),
-  refreshDiagBtn: document.getElementById('refreshDiagBtn'),
+  sessionSection: document.getElementById('sessionSection'),
+  sessionEmail: document.getElementById('sessionEmail'),
+  lockTimeoutRow: document.getElementById('lockTimeoutRow'),
+  sessionLockMinutes: document.getElementById('sessionLockMinutes'),
+  lockNowBtn: document.getElementById('lockNowBtn'),
+  logoutBtn: document.getElementById('logoutBtn'),
   status: document.getElementById('status'),
   backendMax: document.getElementById('backendMax'),
   backendGender: document.getElementById('backendGender'),
@@ -66,229 +97,244 @@ const elements = {
 
 initPopup();
 decoratePopupIcons();
+setupPasswordToggles();
+
+elements.loginBtn.addEventListener('click', () => authenticate('login'));
+elements.unlockBtn.addEventListener('click', () => authenticate('unlock'));
+elements.loginPassword.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') authenticate('login');
+});
+elements.lockPassword.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') authenticate('unlock');
+});
+elements.logoutBtn.addEventListener('click', logout);
+elements.lockLogoutBtn.addEventListener('click', logout);
+elements.lockNowBtn.addEventListener('click', lockNow);
+elements.sessionLockMinutes.addEventListener('change', persistLockMinutes);
+elements.connRefreshBtn.addEventListener('click', () => refreshConnection(true));
+elements.themeMode.addEventListener('change', async () => {
+  const themeMode = normalizeThemeMode(elements.themeMode.value);
+  applyPopupTheme(themeMode);
+  await patchSettings({ themeMode });
+  showStatus('Tema actualizado.', false);
+});
+elements.enabled.addEventListener('change', async () => {
+  await patchSettings({ enabled: elements.enabled.checked });
+});
 
 async function initPopup() {
-  // Primero los settings: loadBackendConfig lee la clave desde el campo y sin
-  // esperar mandaba la consulta sin clave (401 -> "No disponible" enganoso).
-  await loadSettings();
+  const settings = await readSettings();
+  applyPopupTheme(settings.themeMode);
+  fillFields(settings);
+
+  // Ventana deslizante: usar el popup desbloqueado renueva la expiracion.
+  if (computeView(settings) === 'main' && settings.accountEmail && settings.sessionLockMinutes > 0) {
+    await patchSettings({ sessionExpiresAt: Date.now() + settings.sessionLockMinutes * 60_000 });
+  }
+
+  showView(computeView(settings), settings);
   loadDiagnostics();
-  loadBackendConfig(false);
+  if (computeView(settings) === 'main') {
+    refreshConnection(false);
+  }
 }
 
-elements.saveBtn.addEventListener('click', saveSettings);
-elements.testConnectionBtn.addEventListener('click', testConnection);
-elements.refreshDiagBtn.addEventListener('click', async () => {
-  await loadDiagnostics();
-  showStatus('Estado actualizado.', false);
-});
-elements.loginBtn.addEventListener('click', login);
-elements.logoutBtn.addEventListener('click', logout);
-elements.loginPassword.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    login();
-  }
-});
-
-async function loadSettings() {
+async function readSettings() {
   const result = await chrome.storage.local.get([SETTINGS_KEY]);
-  const settings = { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) };
+  return { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) };
+}
 
+async function patchSettings(patch) {
+  const result = await chrome.storage.local.get([SETTINGS_KEY]);
+  const merged = { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}), ...patch };
+  await chrome.storage.local.set({ [SETTINGS_KEY]: merged });
+  return merged;
+}
+
+function fillFields(settings) {
   elements.enabled.checked = Boolean(settings.enabled);
   elements.themeMode.value = normalizeThemeMode(settings.themeMode);
-  elements.backendBaseUrl.value = settings.backendBaseUrl;
-  elements.apiKey.value = settings.apiKey || '';
-  elements.requireConfirmation.checked = Boolean(settings.requireConfirmation);
-  elements.multiPageMode.checked = Boolean(settings.multiPageMode);
-  updateSessionView(settings);
-  applyPopupTheme(elements.themeMode.value);
+  elements.sessionLockMinutes.value = String(normalizeLockMinutes(settings.sessionLockMinutes));
 }
 
-function updateSessionView(settings) {
-  const hasSession = Boolean(settings.accountEmail) && Boolean(settings.apiKey);
-  elements.loginForm.hidden = hasSession;
-  elements.sessionBox.hidden = !hasSession;
-  elements.sessionEmail.textContent = hasSession ? settings.accountEmail : '-';
+// ── Estados de vista ─────────────────────────────────────────────────────────
+
+function computeView(settings) {
+  if (!settings.accountEmail) {
+    return settings.apiKey ? 'main' : 'login';
+  }
+  return isSessionLocked(settings) ? 'lock' : 'main';
 }
 
-async function login() {
-  const backendBaseUrl = normalizeUrl(elements.backendBaseUrl.value);
-  const email = String(elements.loginEmail.value || '').trim();
-  const password = String(elements.loginPassword.value || '');
+function isSessionLocked(settings) {
+  const expiresAt = Number(settings.sessionExpiresAt) || 0;
+  return expiresAt > 0 && Date.now() >= expiresAt;
+}
+
+function showView(view, settings) {
+  elements.viewLogin.hidden = view !== 'login';
+  elements.viewLock.hidden = view !== 'lock';
+  elements.viewMain.hidden = view !== 'main';
+
+  const email = settings.accountEmail || '';
+  elements.avatarChip.hidden = !email;
+  elements.avatarChip.textContent = emailInitials(email);
+  elements.lockEmail.textContent = email || '-';
+
+  if (view === 'main') {
+    const manualMode = !email;
+    elements.sessionEmail.textContent = manualMode ? 'Clave manual' : email;
+    elements.sessionEmail.className = `status-pill ${manualMode ? 'is-muted' : 'is-ok'}`;
+    elements.lockTimeoutRow.hidden = manualMode;
+    elements.lockNowBtn.hidden = manualMode;
+    elements.logoutBtn.textContent = manualMode ? 'Quitar clave' : 'Cerrar sesion';
+    decorateButtonIcon(elements.logoutBtn, 'logout');
+  }
+
+  if (view === 'lock') {
+    elements.lockPassword.value = '';
+    window.setTimeout(() => elements.lockPassword.focus(), 50);
+  }
+}
+
+function emailInitials(email) {
+  const namePart = String(email || '').split('@')[0];
+  if (!namePart) return '-';
+  const pieces = namePart.split(/[._-]+/).filter(Boolean);
+  const initials = pieces.length >= 2 ? pieces[0][0] + pieces[1][0] : namePart.slice(0, 2);
+  return initials.toUpperCase();
+}
+
+// ── Autenticacion ────────────────────────────────────────────────────────────
+
+async function authenticate(mode) {
+  const settings = await readSettings();
+  const backendBaseUrl = normalizeUrl(settings.backendBaseUrl);
+  const email = mode === 'login' ? String(elements.loginEmail.value || '').trim() : settings.accountEmail;
+  const password = mode === 'login' ? String(elements.loginPassword.value || '') : String(elements.lockPassword.value || '');
+  const button = mode === 'login' ? elements.loginBtn : elements.unlockBtn;
 
   if (!email || !password) {
     showStatus('Escribe tu correo y contrasena.', true);
     return;
   }
 
-  elements.loginBtn.disabled = true;
-  showStatus('Iniciando sesion...', false);
+  button.disabled = true;
+  showStatus(mode === 'login' ? 'Iniciando sesion...' : 'Desbloqueando...', false);
 
   try {
-    const loginResponse = await fetch(`${backendBaseUrl}/auth/login`, {
+    const loginResponse = await apiRequest(`${backendBaseUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    const loginBody = await safeReadJson(loginResponse);
+    const loginBody = loginResponse.data;
     if (!loginResponse.ok || !loginBody?.token) {
       showStatus(loginBody?.error || `No se pudo iniciar sesion (HTTP ${loginResponse.status}).`, true);
       return;
     }
 
-    const keyResponse = await fetch(`${backendBaseUrl}/auth/api-key`, {
+    const keyResponse = await apiRequest(`${backendBaseUrl}/auth/api-key`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${loginBody.token}` },
     });
-    const keyBody = await safeReadJson(keyResponse);
+    const keyBody = keyResponse.data;
     if (!keyResponse.ok || !keyBody?.apiKey) {
       showStatus(keyBody?.error || `No se pudo obtener tu clave (HTTP ${keyResponse.status}).`, true);
       return;
     }
 
     const accountEmail = loginBody.user?.email || email;
-    const existing = await chrome.storage.local.get([SETTINGS_KEY]);
-    const previous = { ...DEFAULT_SETTINGS, ...(existing[SETTINGS_KEY] || {}) };
-    const updated = {
-      ...previous,
+    const lockMinutes = normalizeLockMinutes(settings.sessionLockMinutes);
+    const updated = await patchSettings({
       backendBaseUrl,
       apiKey: keyBody.apiKey,
       accountEmail,
-    };
-    await chrome.storage.local.set({ [SETTINGS_KEY]: updated });
+      sessionExpiresAt: lockMinutes > 0 ? Date.now() + lockMinutes * 60_000 : 0,
+    });
 
-    elements.apiKey.value = keyBody.apiKey;
     elements.loginPassword.value = '';
-    updateSessionView(updated);
-    showStatus(`Sesion iniciada como ${accountEmail}.`, false);
-    loadBackendConfig(false);
+    elements.lockPassword.value = '';
+    fillFields(updated);
+    showView('main', updated);
+    showStatus(mode === 'login' ? `Sesion iniciada como ${accountEmail}.` : 'Sesion desbloqueada.', false);
+    refreshConnection(false);
   } catch (error) {
     showStatus(`No se pudo conectar: ${error.message || 'Error desconocido'}`, true);
   } finally {
-    elements.loginBtn.disabled = false;
+    button.disabled = false;
   }
 }
 
 async function logout() {
-  const existing = await chrome.storage.local.get([SETTINGS_KEY]);
-  const previous = { ...DEFAULT_SETTINGS, ...(existing[SETTINGS_KEY] || {}) };
-  const updated = { ...previous, apiKey: '', accountEmail: '' };
-  await chrome.storage.local.set({ [SETTINGS_KEY]: updated });
-
-  elements.apiKey.value = '';
+  const updated = await patchSettings({ apiKey: '', accountEmail: '', sessionExpiresAt: 0 });
   elements.loginEmail.value = '';
   elements.loginPassword.value = '';
-  updateSessionView(updated);
-  showStatus('Sesion cerrada en este navegador. Tu clave sigue activa en TesisTab.', false);
+  elements.lockPassword.value = '';
+  fillFields(updated);
+  showView('login', updated);
+  showStatus('Sesion cerrada en este navegador.', false);
 }
 
-async function saveSettings() {
-  const existing = await chrome.storage.local.get([SETTINGS_KEY]);
-  const previous = { ...DEFAULT_SETTINGS, ...(existing[SETTINGS_KEY] || {}) };
-
-  const manualApiKey = String(elements.apiKey.value || '').trim();
-  const sanitized = {
-    ...previous,
-    enabled: elements.enabled.checked,
-    themeMode: normalizeThemeMode(elements.themeMode.value),
-    backendBaseUrl: normalizeUrl(elements.backendBaseUrl.value),
-    apiKey: manualApiKey,
-    // Una clave pegada a mano ya no corresponde a la sesion iniciada.
-    accountEmail: manualApiKey === previous.apiKey ? previous.accountEmail : '',
-    requireConfirmation: elements.requireConfirmation.checked,
-    multiPageMode: elements.multiPageMode.checked,
-    delayMs: clamp(Number(previous.delayMs) || DEFAULT_SETTINGS.delayMs, 300, 60_000),
-    jitterMs: clamp(Number(previous.jitterMs) || DEFAULT_SETTINGS.jitterMs, 0, 5_000),
-    autoRandomizeText: Boolean(previous.autoRandomizeText),
-    randomizeBeforeSubmit: Boolean(previous.randomizeBeforeSubmit),
-    compatApiMode: Boolean(previous.compatApiMode),
-  };
-
-  await chrome.storage.local.set({ [SETTINGS_KEY]: sanitized });
-  applyPopupTheme(sanitized.themeMode);
-  updateSessionView(sanitized);
-
-  showStatus('Configuracion guardada.', false);
+async function lockNow() {
+  const updated = await patchSettings({ sessionExpiresAt: Date.now() - 1 });
+  showView('lock', updated);
+  showStatus('Sesion bloqueada.', false);
 }
 
-elements.themeMode.addEventListener('change', async () => {
-  const themeMode = normalizeThemeMode(elements.themeMode.value);
-  applyPopupTheme(themeMode);
-  await persistThemeMode(themeMode);
-  showStatus('Tema actualizado.', false);
-});
+async function persistLockMinutes() {
+  const lockMinutes = normalizeLockMinutes(elements.sessionLockMinutes.value);
+  await patchSettings({
+    sessionLockMinutes: lockMinutes,
+    sessionExpiresAt: lockMinutes > 0 ? Date.now() + lockMinutes * 60_000 : 0,
+  });
+  showStatus(lockMinutes > 0 ? 'Auto-bloqueo actualizado.' : 'La sesion ya no se bloquea sola.', false);
+}
 
-async function testConnection() {
-  const backendBaseUrl = normalizeUrl(elements.backendBaseUrl.value);
-  const apiKey = String(elements.apiKey.value || '').trim();
+function normalizeLockMinutes(value) {
+  const allowed = [0, 15, 60, 240, 720, 1440, 10080];
+  const numeric = Number(value);
+  return allowed.includes(numeric) ? numeric : DEFAULT_SETTINGS.sessionLockMinutes;
+}
 
-  showStatus('Probando backend...', false);
+// ── Estado de conexion ───────────────────────────────────────────────────────
+
+function setConnectionState(state, title, sub) {
+  elements.connCard.className = `conn-card is-${state}`;
+  elements.connTitle.textContent = title;
+  elements.connSub.textContent = sub || 'Servicio TesisTab';
+}
+
+async function refreshConnection(announce) {
+  const settings = await readSettings();
+  const backendBaseUrl = normalizeUrl(settings.backendBaseUrl);
+  const apiKey = String(settings.apiKey || '').trim();
+
+  setConnectionState('checking', 'Verificando conexion...', 'Servicio TesisTab');
 
   try {
-    const headers = apiKey
-      ? {
-          'X-API-Key': apiKey,
-        }
-      : {};
+    const headers = apiKey ? { 'X-API-Key': apiKey } : {};
+    const response = await apiRequest(`${backendBaseUrl}/api/tesistab/config`, { method: 'GET', headers });
+    const result = response.data;
 
-    const response = await fetch(`${backendBaseUrl}/api/tesistab/config`, {
-      method: 'GET',
-      headers,
-    });
-
-    const result = await safeReadJson(response);
-    if (!response.ok) {
-      setBackendLiveState(false, 'No disponible');
-      const message = result?.error?.message || result?.message || `HTTP ${response.status}`;
-      showStatus(`Error del backend: ${message}`, true);
-      return;
-    }
-
-    applyBackendConfig(result);
-    setBackendLiveState(true, 'Conectado');
-    const hostCount = Array.isArray(result.allowedHosts) ? result.allowedHosts.length : 0;
-    const keyMode = result?.protection?.apiKeyRequired
-      ? 'API key requerida'
-      : 'API key no requerida';
-    showStatus(`Conectado. Hosts permitidos: ${hostCount}. ${keyMode}.`, false);
-  } catch (error) {
-    setBackendLiveState(false, 'No disponible');
-    showStatus(`No se pudo conectar: ${error.message || 'Error desconocido'}`, true);
-  }
-}
-
-async function loadBackendConfig(showErrors = false) {
-  const backendBaseUrl = normalizeUrl(elements.backendBaseUrl?.value || DEFAULT_SETTINGS.backendBaseUrl);
-  const apiKey = String(elements.apiKey?.value || '').trim();
-
-  try {
-    const headers = apiKey
-      ? {
-          'X-API-Key': apiKey,
-        }
-      : {};
-
-    const response = await fetch(`${backendBaseUrl}/api/tesistab/config`, {
-      method: 'GET',
-      headers,
-    });
-
-    const result = await safeReadJson(response);
     if (!response.ok || !result) {
-      setBackendLiveState(false, 'No disponible');
-      if (showErrors) {
-        const message = result?.error?.message || result?.message || `HTTP ${response.status}`;
-        showStatus(`Error del backend: ${message}`, true);
-      }
+      const message = result?.error?.message || result?.message || `HTTP ${response.status}`;
+      const unauthorized = response.status === 401;
+      setConnectionState(
+        'offline',
+        unauthorized ? 'Clave no valida' : 'Sin conexion',
+        unauthorized ? 'Inicia sesion de nuevo para renovarla' : message,
+      );
+      if (announce) showStatus(`Error del backend: ${message}`, true);
       return;
     }
 
     applyBackendConfig(result);
-    setBackendLiveState(true, 'Conectado');
+    setConnectionState('online', 'Conectado', 'Listo para enviar respuestas');
+    if (announce) showStatus('Conexion verificada.', false);
   } catch (error) {
-    setBackendLiveState(false, 'No disponible');
-    if (showErrors) {
-      showStatus(`No se pudo cargar config: ${error.message || 'Error desconocido'}`, true);
-    }
+    setConnectionState('offline', 'Sin conexion', 'Revisa tu internet o intenta luego');
+    if (announce) showStatus(`No se pudo conectar: ${error.message || 'Error desconocido'}`, true);
   }
 }
 
@@ -322,6 +368,8 @@ function toPct(value) {
   return `${Math.round(numeric * 100)}%`;
 }
 
+// ── Diagnostico ──────────────────────────────────────────────────────────────
+
 async function loadDiagnostics() {
   const result = await chrome.storage.local.get([DIAGNOSTICS_KEY]);
   const diagnostics = result[DIAGNOSTICS_KEY] || {};
@@ -339,6 +387,40 @@ async function safeReadJson(response) {
   } catch (error) {
     return null;
   }
+}
+
+// Las peticiones salen por el service worker: con host_permissions no esta
+// sujeto a CORS, a diferencia del documento del popup (las rutas /auth/* del
+// backend no publican Access-Control-Allow-Origin para extensiones antiguas).
+// Si el mensaje falla se intenta el fetch directo como respaldo.
+async function apiRequest(url, options = {}) {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'tesistab_HTTP_REQUEST',
+      payload: {
+        url,
+        method: options.method || 'GET',
+        headers: options.headers || {},
+        body: options.body,
+      },
+    });
+    if (response && typeof response.status === 'number' && response.status > 0) {
+      const data = typeof response.data === 'object' ? response.data : null;
+      return { ok: Boolean(response.ok), status: response.status, data };
+    }
+    if (response?.error) {
+      throw new Error(response.error);
+    }
+  } catch (error) {
+    // Solo errores de mensajeria caen al fetch directo; los del servidor se
+    // propagan tal cual para mostrarse al usuario.
+    if (error?.message && !/message port|Receiving end|context invalidated/i.test(error.message)) {
+      throw error;
+    }
+  }
+
+  const direct = await fetch(url, options);
+  return { ok: direct.ok, status: direct.status, data: await safeReadJson(direct) };
 }
 
 function formatDateTime(value) {
@@ -370,9 +452,7 @@ function normalizeUrl(value) {
   }
 }
 
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
+// ── Tema ─────────────────────────────────────────────────────────────────────
 
 function normalizeThemeMode(value) {
   const normalized = String(value || '').toLowerCase();
@@ -392,22 +472,13 @@ function resolveEffectiveThemeMode(themeMode) {
   return normalized;
 }
 
-async function persistThemeMode(themeMode) {
-  const existing = await chrome.storage.local.get([SETTINGS_KEY]);
-  const previous = { ...DEFAULT_SETTINGS, ...(existing[SETTINGS_KEY] || {}) };
-  await chrome.storage.local.set({
-    [SETTINGS_KEY]: {
-      ...previous,
-      themeMode: normalizeThemeMode(themeMode),
-    },
-  });
-}
-
 systemThemeQuery.addEventListener('change', () => {
   if (normalizeThemeMode(elements.themeMode.value) === 'system') {
     applyPopupTheme('system');
   }
 });
+
+// ── Iconos ───────────────────────────────────────────────────────────────────
 
 function decoratePopupIcons() {
   document.querySelectorAll('.with-icon[data-icon]').forEach((element) => {
@@ -419,11 +490,18 @@ function decoratePopupIcons() {
     element.replaceChildren(createPopupIcon(element.dataset.icon || ''), document.createTextNode(text));
   });
 
-  decorateButtonIcon(elements.saveBtn, 'save');
-  decorateButtonIcon(elements.testConnectionBtn, 'backend');
-  decorateButtonIcon(elements.refreshDiagBtn, 'refresh');
+  document.querySelectorAll('.hero-icon[data-hero]').forEach((element) => {
+    if (element instanceof HTMLElement) {
+      element.innerHTML = createIconSvg(element.dataset.hero || 'account', 2.2);
+    }
+  });
+
+  elements.connRefreshBtn.innerHTML = createIconSvg('refresh', 1.8);
   decorateButtonIcon(elements.loginBtn, 'login');
+  decorateButtonIcon(elements.unlockBtn, 'unlock');
+  decorateButtonIcon(elements.lockNowBtn, 'lock');
   decorateButtonIcon(elements.logoutBtn, 'logout');
+  decorateButtonIcon(elements.lockLogoutBtn, 'logout');
 }
 
 function decorateButtonIcon(button, iconKey) {
@@ -435,35 +513,45 @@ function decorateButtonIcon(button, iconKey) {
   button.replaceChildren(createPopupIcon(iconKey), document.createTextNode(text));
 }
 
+function createIconSvg(iconKey, strokeWidth) {
+  const path = ICON_PATHS[iconKey] || ICON_PATHS.help;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${strokeWidth || 1.8}" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+}
+
 function createPopupIcon(iconKey) {
   const span = document.createElement('span');
   span.className = 'section-icon';
   span.setAttribute('aria-hidden', 'true');
-
-  const paths = {
-    account: '<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-6 8-6s8 2 8 6"/>',
-    login: '<path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 4v16"/>',
-    logout: '<path d="M16 17l5-5-5-5"/><path d="M21 12H9"/><path d="M3 4v16"/>',
-    status: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 3"/>',
-    backend: '<rect x="4" y="5" width="16" height="6" rx="2"/><rect x="4" y="13" width="16" height="6" rx="2"/><path d="M8 8h.01"/><path d="M8 16h.01"/>',
-    diagnostics: '<path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-6"/>',
-    help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4.2 1.8c-.9.8-1.7 1.3-1.7 2.7"/><path d="M12 17h.01"/>',
-    save: '<path d="M5 20h14"/><path d="M12 4v10"/><path d="M8 10l4 4 4-4"/>',
-    refresh: '<path d="M20 11a8 8 0 1 0 2 5.3"/><path d="M20 4v7h-7"/>',
-  };
-
-  span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths[iconKey] || paths.help}</svg>`;
+  span.innerHTML = createIconSvg(iconKey, 1.8);
   return span;
 }
+
+function setupPasswordToggles() {
+  document.querySelectorAll('button[data-toggle-password]').forEach((button) => {
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+    const input = document.getElementById(button.dataset.togglePassword || '');
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+
+    button.innerHTML = createIconSvg('eye', 1.8);
+    button.addEventListener('click', () => {
+      const reveal = input.type === 'password';
+      input.type = reveal ? 'text' : 'password';
+      button.innerHTML = createIconSvg(reveal ? 'eyeOff' : 'eye', 1.8);
+      button.setAttribute('aria-label', reveal ? 'Ocultar contrasena' : 'Mostrar contrasena');
+      input.focus();
+    });
+  });
+}
+
+// ── Mensajes y pildoras ──────────────────────────────────────────────────────
 
 function showStatus(message, isError) {
   elements.status.textContent = message;
   elements.status.className = isError ? 'error' : 'ok';
-}
-
-function setBackendLiveState(isOnline, label) {
-  elements.backendLive.textContent = label;
-  elements.backendLive.className = `status-pill ${isOnline ? 'is-ok' : 'is-error'}`;
 }
 
 function setLastRunState(status, error) {
