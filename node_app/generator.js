@@ -5,7 +5,8 @@
 // Hojas generadas por variable:
 //   1. "[Variable]"              base de datos + estadisticos + frecuencias por escala
 //   2. "Ítems [Variable]"        tabla frec/% + grafico + Figura + interpretacion por item
-//   3. "Dimensiones [Variable]"  ficha de baremo, niveles, valoracion automatica,
+//   3. "Dimensiones [Variable]"  tabla ancha Suma/Nivel/Codigo por dimension y
+//                                consolidado (sin repetir la base), ficha de baremo,
 //                                frecuencia baremada, grafico e interpretacion por dimension
 //   4. "Conteo [Variable]"       respuestas agregadas por dimension + grafico + interpretacion
 // Mas "Relaciones" (normalidad calculada sobre V1 total, V2 total y las
@@ -132,6 +133,15 @@ const valoracionFormula = (niveles, ref) => {
   let f = `"${niveles[niveles.length - 1].nombre}"`;
   for (let i = niveles.length - 2; i >= 0; i -= 1) {
     f = `IF(${ref}<=${niveles[i].max},"${niveles[i].nombre}",${f})`;
+  }
+  return `IF(${ref}="","",${f})`;
+};
+
+// Codigo numerico del nivel (1, 2, 3, ...) segun la suma alcanzada.
+const codigoFormula = (niveles, ref) => {
+  let f = `${niveles.length}`;
+  for (let i = niveles.length - 2; i >= 0; i -= 1) {
+    f = `IF(${ref}<=${niveles[i].max},${i + 1},${f})`;
   }
   return `IF(${ref}="","",${f})`;
 };
@@ -993,19 +1003,16 @@ const addConteoSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base, var
 // ── Hoja de dimensiones (baremos / valoracion) ───────────────────────────────
 const buildBaremoBlock = (sheet, ctx) => {
   const {
-    cfg, titulo, variableName, dimensionName, items, niveles, baseRef, baseDataStart, startRow,
+    cfg, titulo, variableName, dimensionName, nItems, niveles, nivelRange, startRow,
     tablaN, nivelCounts,
   } = ctx;
   const N = cfg.encuestados;
   const escalaMin = Math.min(...cfg.escala.map((o) => o.valor));
   const escalaMax = Math.max(...cfg.escala.map((o) => o.valor));
-  const nItems = items.length;
   const pMin = nItems * escalaMin;
   const pMax = nItems * escalaMax;
   const C0 = 2; // col B: la A es el marco
-  // El titulo cubre exactamente el ancho de la tabla de datos (ID + items +
-  // Suma + Valoracion), con un minimo para bloques de pocas columnas.
-  const blockCols = Math.max(10, nItems + 3);
+  const blockCols = 10;
   let row = startRow;
 
   sheet.range(row, C0, row, C0 + blockCols - 1).merged(true).style({ ...ST_HEADER, fontSize: 11 });
@@ -1046,39 +1053,9 @@ const buildBaremoBlock = (sheet, ctx) => {
   });
   row = fichaHeaderRow + ficha.length + 2;
 
-  // Base de la dimension: referencia las celdas de la hoja base.
-  const headerRow = row;
-  sheet.cell(headerRow, C0).value("ID").style(ST_HEADER);
-  items.forEach((item, j) => {
-    sheet.cell(headerRow, C0 + 1 + j).value(item.code).style(ST_HEADER);
-  });
-  const sumaCol = C0 + 1 + nItems;
-  const valCol = sumaCol + 1;
-  sheet.cell(headerRow, sumaCol).value("Suma Total").style(ST_HEADER);
-  sheet.cell(headerRow, valCol).value("Valoración").style(ST_HEADER);
-
-  const dStart = headerRow + 1;
-  const dEnd = dStart + N - 1;
-  const sumaL = colLetter(sumaCol);
-  const firstL = colLetter(C0 + 1);
-  const lastL = colLetter(C0 + nItems);
-  for (let i = 0; i < N; i += 1) {
-    const r = dStart + i;
-    const alt = i % 2 === 1 ? { fill: COLOR_ALT_ROW } : {};
-    sheet.cell(r, C0).value(i + 1).style({ ...ST_CELL, ...alt });
-    items.forEach((item, j) => {
-      const src = `${baseRef}!${colLetter(item.col)}${baseDataStart + i}`;
-      sheet.cell(r, C0 + 1 + j).style({ ...ST_CELL, ...alt }).formula(`IF(${src}="","",${src})`);
-    });
-    sheet.cell(r, sumaCol).style({ ...ST_CELL, ...alt, bold: true })
-      .formula(`IF(COUNT(${firstL}${r}:${lastL}${r})=0,"",SUM(${firstL}${r}:${lastL}${r}))`);
-    sheet.cell(r, valCol).style({ ...ST_CELL, ...alt })
-      .formula(valoracionFormula(niveles, `${sumaL}${r}`));
-  }
-
-  // Tabla de frecuencia baremada (Calificacion | Desde | Hasta | f | %).
-  const valL = colLetter(valCol);
-  let r2 = dEnd + 2;
+  // Tabla de frecuencia baremada (Calificacion | Desde | Hasta | f | %):
+  // cuenta la columna Nivel de la tabla resumen (la base no se repite aqui).
+  let r2 = row;
   sheet.cell(r2, C0).value(`Tabla ${tablaN}`).style(ST_LABEL_BOLD);
   sheet.cell(r2 + 1, C0).value(dimensionName).style(FONT);
   r2 += 2;
@@ -1093,7 +1070,7 @@ const buildBaremoBlock = (sheet, ctx) => {
     sheet.cell(r, C0 + 1).value(nivel.min).style(ST_CELL);
     sheet.cell(r, C0 + 2).value(nivel.max).style(ST_CELL);
     sheet.cell(r, C0 + 3).style(ST_CELL)
-      .formula(`COUNTIF(${valL}${dStart}:${valL}${dEnd},"${nivel.nombre}")`);
+      .formula(`COUNTIF(${nivelRange},"${nivel.nombre}")`);
     sheet.cell(r, C0 + 4).style({ ...ST_CELL, numberFormat: FMT_PCT })
       .formula(`${fL}${r}/${N}`);
   });
@@ -1133,11 +1110,7 @@ const buildBaremoBlock = (sheet, ctx) => {
     narrativeDimension(cfg, tablaN, variableName, dimensionName, nivelCounts, niveles),
   );
 
-  return {
-    endRow: r3 + 2,
-    chart,
-    sumaRef: { sheetName: sheet.name(), col: sumaL, start: dStart, end: dEnd },
-  };
+  return { endRow: r3 + 2, chart };
 };
 
 const classifyCounts = (base, varIndex, items, niveles, N) => {
@@ -1157,60 +1130,120 @@ const classifyCounts = (base, varIndex, items, niveles, N) => {
 
 const addDimensionesSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base, varIndex) => {
   const baseRef = quoteSheet(baseSheetName);
+  const N = cfg.encuestados;
   const escalaMin = Math.min(...cfg.escala.map((o) => o.valor));
   const escalaMax = Math.max(...cfg.escala.map((o) => o.valor));
   const charts = [];
-  const dimSumaRefs = [];
-  let row = 2;
-  let tabla = 0;
+  const C0 = 2; // col B: la A es el marco
 
-  baseInfo.dims.forEach((dim, dimIdx) => {
-    tabla += 1;
-    const items = dim.indicadores.flatMap((ind) => ind.items);
-    const niveles = computeNiveles(items.length, escalaMin, escalaMax, variable.niveles);
-    const block = buildBaremoBlock(sheet, {
-      cfg,
-      titulo: `DIMENSIÓN ${dimIdx + 1}: ${dim.nombre}`,
-      variableName: variable.nombre,
-      dimensionName: dim.nombre,
-      items,
-      niveles,
-      baseRef,
-      baseDataStart: baseInfo.dataStart,
-      startRow: row,
-      tablaN: tabla,
-      nivelCounts: classifyCounts(base, varIndex, items, niveles, cfg.encuestados),
-    });
-    charts.push(block.chart);
-    dimSumaRefs.push({ nombre: dim.nombre, ...block.sumaRef });
-    row = block.endRow;
-  });
-
-  // Bloque consolidado de la variable completa (baremo de la variable).
-  tabla += 1;
+  // La base de datos vive solo en la hoja base: aqui una unica tabla ancha con
+  // 3 columnas por dimension (Suma referenciando la hoja base, Nivel y Codigo
+  // 1..n segun el baremo) mas el consolidado de la variable.
   const allItems = baseInfo.dims.flatMap((d) => d.indicadores.flatMap((ind) => ind.items));
   const nivelesVar = variable.baremoVariable
     ?? computeNiveles(allItems.length, escalaMin, escalaMax, variable.niveles);
+  const totalL = colLetter(baseInfo.lastCol + 1);
+  const groups = baseInfo.dims.map((dim) => {
+    const items = dim.indicadores.flatMap((ind) => ind.items);
+    return {
+      nombre: dim.nombre,
+      items,
+      niveles: computeNiveles(items.length, escalaMin, escalaMax, variable.niveles),
+      startCol: dim.startCol,
+      endCol: dim.endCol,
+    };
+  });
+  const gVar = { nombre: `${variable.nombre} (consolidado)`, items: allItems, niveles: nivelesVar, total: true };
+  const groupsAll = [...groups, gVar];
+  const wideCols = 1 + groupsAll.length * 3;
+
+  sheet.range(2, C0, 2, C0 + wideCols - 1).merged(true).style({ ...ST_HEADER, fontSize: 11 });
+  sheet.cell(2, C0).value("SUMA, NIVEL Y CÓDIGO POR DIMENSIÓN");
+  const gHeaderRow = 3;
+  const subHeaderRow = 4;
+  sheet.cell(gHeaderRow, C0).value("").style(ST_HEADER);
+  sheet.cell(subHeaderRow, C0).value("ID").style(ST_HEADER);
+  const dStart = subHeaderRow + 1;
+  const dEnd = dStart + N - 1;
+  groupsAll.forEach((g, j) => {
+    const c = C0 + 1 + j * 3;
+    g.sumaCol = c;
+    g.sumaL = colLetter(c);
+    g.nivelL = colLetter(c + 1);
+    sheet.range(gHeaderRow, c, gHeaderRow, c + 2).merged(true).style(ST_HEADER);
+    sheet.cell(gHeaderRow, c).value(g.nombre);
+    ["Suma", "Nivel", "Código"].forEach((h, k) => {
+      sheet.cell(subHeaderRow, c + k).value(h).style(ST_HEADER);
+    });
+  });
+  for (let i = 0; i < N; i += 1) {
+    const r = dStart + i;
+    const baseRow = baseInfo.dataStart + i;
+    const alt = i % 2 === 1 ? { fill: COLOR_ALT_ROW } : {};
+    sheet.cell(r, C0).value(i + 1).style({ ...ST_CELL, ...alt });
+    groupsAll.forEach((g) => {
+      const sumaRef = `${g.sumaL}${r}`;
+      const f = g.total
+        ? `IF(${baseRef}!${totalL}${baseRow}="","",${baseRef}!${totalL}${baseRow})`
+        : `IF(COUNT(${baseRef}!${colLetter(g.startCol)}${baseRow}:${colLetter(g.endCol)}${baseRow})=0,"",`
+          + `SUM(${baseRef}!${colLetter(g.startCol)}${baseRow}:${colLetter(g.endCol)}${baseRow}))`;
+      sheet.cell(r, g.sumaCol).style({ ...ST_CELL, ...alt, bold: true }).formula(f);
+      sheet.cell(r, g.sumaCol + 1).style({ ...ST_CELL, ...alt })
+        .formula(valoracionFormula(g.niveles, sumaRef));
+      sheet.cell(r, g.sumaCol + 2).style({ ...ST_CELL, ...alt })
+        .formula(codigoFormula(g.niveles, sumaRef));
+    });
+  }
+
+  // Bloques de presentacion: ficha de baremo + tabla baremada por dimension y
+  // el consolidado de la variable, contando la columna Nivel de la tabla ancha.
+  const dimSumaRefs = [];
+  let row = dEnd + 2;
+  let tabla = 0;
+  groups.forEach((g, dimIdx) => {
+    tabla += 1;
+    const block = buildBaremoBlock(sheet, {
+      cfg,
+      titulo: `DIMENSIÓN ${dimIdx + 1}: ${g.nombre}`,
+      variableName: variable.nombre,
+      dimensionName: g.nombre,
+      nItems: g.items.length,
+      niveles: g.niveles,
+      nivelRange: `${g.nivelL}$${dStart}:${g.nivelL}$${dEnd}`,
+      startRow: row,
+      tablaN: tabla,
+      nivelCounts: classifyCounts(base, varIndex, g.items, g.niveles, N),
+    });
+    charts.push(block.chart);
+    dimSumaRefs.push({ nombre: g.nombre, sheetName: sheet.name(), col: g.sumaL, start: dStart, end: dEnd });
+    row = block.endRow;
+  });
+
+  tabla += 1;
   const block = buildBaremoBlock(sheet, {
     cfg,
     titulo: `VARIABLE (CONSOLIDADO): ${variable.nombre}`,
     variableName: variable.nombre,
     dimensionName: "Todas las dimensiones",
-    items: allItems,
+    nItems: allItems.length,
     niveles: nivelesVar,
-    baseRef,
-    baseDataStart: baseInfo.dataStart,
+    nivelRange: `${gVar.nivelL}$${dStart}:${gVar.nivelL}$${dEnd}`,
     startRow: row,
     tablaN: tabla,
-    nivelCounts: classifyCounts(base, varIndex, allItems, nivelesVar, cfg.encuestados),
+    nivelCounts: classifyCounts(base, varIndex, allItems, nivelesVar, N),
   });
   charts.push({ ...block.chart, title: variable.nombre });
   row = block.endRow;
 
   sheet.column("B").width(30);
-  ["C", "D", "E", "F", "G", "H"].forEach((L) => sheet.column(L).width(13));
-  paintFrame(sheet, row, Math.max(15, allItems.length + 5));
-  return { charts, dimSumaRefs, globalSumaRef: block.sumaRef };
+  const lastCol = Math.max(15, C0 + wideCols);
+  for (let c = C0 + 1; c < lastCol; c += 1) sheet.column(colLetter(c)).width(13);
+  paintFrame(sheet, row, lastCol);
+  return {
+    charts,
+    dimSumaRefs,
+    globalSumaRef: { sheetName: sheet.name(), col: gVar.sumaL, start: dStart, end: dEnd },
+  };
 };
 
 // ── Hoja de relaciones (normalidad + correlaciones) ──────────────────────────

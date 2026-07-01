@@ -76,32 +76,52 @@ test("items declarados distintos a la estructura producen aviso", async () => {
   assert.ok(result.warnings.some((w) => w.includes("declara 20 items")));
 });
 
-test("hoja de dimensiones: baremo, valoracion, consolidado y narrativa", async () => {
+test("hoja de dimensiones: tabla ancha Suma/Nivel/Código, baremo y narrativa", async () => {
   const result = await generateArtifacts({ ...baseConfig, muestra: "20" });
   const workbook = await XlsxPopulate.fromDataAsync(result.excelBuffer);
   const sheet = workbook.sheet("Dimensiones Gestion de abasteci");
   assert.ok(sheet, "hoja de dimensiones V1 existe");
 
-  assert.match(String(sheet.cell("B2").value()), /DIMENSIÓN 1/);
-  assert.equal(sheet.cell("B4").value(), "Variable");
-  // 6 items, escala 1-5, 3 niveles => 6-13 / 14-21 / 22-30
-  assert.equal(sheet.cell("F4").value(), 6);
-  assert.equal(sheet.cell("G4").value(), 13);
-  assert.equal(sheet.cell("H6").value(), "Alto");
+  // Tabla ancha unica: 3 columnas (Suma | Nivel | Código) por dimension y por
+  // el consolidado; la base de datos NO se repite, solo se referencia.
+  assert.match(String(sheet.cell("B2").value()), /SUMA, NIVEL Y CÓDIGO/);
+  assert.equal(sheet.cell("C3").value(), "Planificacion");
+  assert.equal(sheet.cell("F3").value(), "Transparencia");
+  assert.match(String(sheet.cell("L3").value()), /consolidado/);
+  assert.equal(sheet.cell("B4").value(), "ID");
+  assert.equal(sheet.cell("C4").value(), "Suma");
+  assert.equal(sheet.cell("D4").value(), "Nivel");
+  assert.equal(sheet.cell("E4").value(), "Código");
 
-  // La base de la dimension referencia la hoja base de la variable
-  assert.match(String(sheet.cell("C17").formula()), /'Gestion de abastecimiento'!B5/);
-  assert.match(String(sheet.cell("I17").formula()), /SUM\(C17:H17\)/);
-  assert.match(String(sheet.cell("J17").formula()), /IF\(I17<=13,"Bajo"/);
+  // Suma por referencia a la hoja base; nivel y codigo derivados de la suma
+  // (6 items, escala 1-5, 3 niveles => 6-13 / 14-21 / 22-30).
+  assert.match(String(sheet.cell("C5").formula()), /SUM\('Gestion de abastecimiento'!B5:G5\)/);
+  assert.match(String(sheet.cell("D5").formula()), /IF\(C5<=13,"Bajo"/);
+  assert.match(String(sheet.cell("E5").formula()), /IF\(C5<=13,1,IF\(C5<=21,2,3\)\)/);
+  assert.match(String(sheet.cell("L5").formula()), /'Gestion de abastecimiento'!T5/);
+  // No hay columnas de items repetidas: tras el consolidado (L:N) no hay datos.
+  assert.equal(sheet.cell(5, 15).value(), undefined);
 
-  // Tabla baremada con Tabla/Figura, fuente y narrativa
+  // Bloque de la dimension 1: ficha de baremo sin base repetida.
+  let dimRow = null;
+  for (let r = 5; r <= 300; r += 1) {
+    if (String(sheet.cell(r, 2).value() ?? "").startsWith("DIMENSIÓN 1")) { dimRow = r; break; }
+  }
+  assert.ok(dimRow, "existe bloque DIMENSIÓN 1");
+  assert.equal(sheet.cell(dimRow + 2, 2).value(), "Variable");
+  assert.equal(sheet.cell(dimRow + 2, 6).value(), 6); // rango minimo nivel 1
+  assert.equal(sheet.cell(dimRow + 2, 7).value(), 13); // rango maximo nivel 1
+  assert.equal(sheet.cell(dimRow + 4, 8).value(), "Alto");
+
+  // Tabla baremada: cuenta la columna Nivel de la tabla ancha.
   let tablaRow = null;
-  for (let r = 17; r <= 200; r += 1) {
+  for (let r = dimRow; r <= dimRow + 40; r += 1) {
     if (String(sheet.cell(r, 2).value() ?? "") === "Tabla 1") { tablaRow = r; break; }
   }
   assert.ok(tablaRow, "existe rotulo Tabla 1");
   assert.equal(sheet.cell(tablaRow + 2, 2).value(), "Calificación");
   assert.equal(sheet.cell(tablaRow + 2, 3).value(), "Desde");
+  assert.match(String(sheet.cell(tablaRow + 3, 5).formula()), /COUNTIF\(D\$5:D\$24,"Bajo"\)/);
   let narrativa = null;
   for (let r = tablaRow; r <= tablaRow + 40; r += 1) {
     const v = String(sheet.cell(r, 2).value() ?? "");
@@ -170,7 +190,7 @@ test("hoja Relaciones: normalidad calculada y correlaciones", async () => {
   const sheet = workbook.sheet("Relaciones");
   assert.ok(sheet, "hoja Relaciones existe");
   assert.equal(sheet.cell("B4").value(), "Encuestado");
-  assert.match(String(sheet.cell("C5").formula()), /'Dimensiones Gestion de abasteci'!I17/);
+  assert.match(String(sheet.cell("C5").formula()), /'Dimensiones Gestion de abasteci'!C5/);
 
   // Tabla unica de normalidad: total V1, total V2 y las 3 dimensiones de V1,
   // con estadisticos y significancias ya calculados.

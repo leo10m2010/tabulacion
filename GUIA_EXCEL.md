@@ -24,11 +24,10 @@ Por cada variable:
    - "Elaboración: Propia" / "Fuente: Encuesta aplicada", gráfico de barras, "Figura N" + caption.
    - **Interpretación narrativa automática** redactada con los porcentajes reales de los datos generados.
 
-3. **`Dimensiones <Variable>`** — un bloque por dimensión más un bloque consolidado de la variable:
-   - Ficha de baremo (11 campos) y tabla de niveles (rangos calculados con amplitud = rango/niveles, o tomados de `desde`/`hasta` para el consolidado).
-   - Base de la dimensión que **referencia la hoja base** (`=IF('Var'!B5="","",'Var'!B5)`): al editar respuestas todo se actualiza.
-   - Suma Total por encuestado y Valoración con `IF` anidado según el baremo.
-   - "Tabla N" + tabla baremada (Calificación | Desde | Hasta | f | %), fuente, gráfico al costado, "Figura N" y narrativa con el nivel predominante.
+3. **`Dimensiones <Variable>`** — la base de datos NO se repite (vive solo en la hoja base):
+   - Una **tabla ancha única** "SUMA, NIVEL Y CÓDIGO POR DIMENSIÓN": 3 columnas por dimensión — Suma (`=SUM('Var'!B5:G5)` referenciando la hoja base; al editar respuestas todo se actualiza), Nivel (`IF` anidado según el baremo) y Código (1, 2, 3… según el nivel) — más un grupo consolidado de la variable cuya Suma referencia la columna Total de la hoja base.
+   - Debajo, un bloque por dimensión más el consolidado: ficha de baremo (11 campos) y tabla de niveles (rangos calculados con amplitud = rango/niveles, o tomados de `desde`/`hasta` para el consolidado).
+   - "Tabla N" + tabla baremada (Calificación | Desde | Hasta | f | %) que cuenta con `COUNTIF` la columna Nivel de la tabla ancha, fuente, gráfico al costado, "Figura N" y narrativa con el nivel predominante.
 
 4. **`Conteo <Variable>`** — un bloque por dimensión: respuestas agregadas de todos los ítems de la dimensión (`COUNTIF` sobre el rango 2D de la hoja base), % sobre N×ítems, gráfico, Figura y narrativa.
 

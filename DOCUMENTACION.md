@@ -39,7 +39,7 @@ Estructura jerárquica (objetos anidados):
 
 ## Resultado
 
-- `Tabulacion_generada.xlsx`: Excel construido por código. Por variable: hoja base (datos, estadísticos, frecuencias y porcentajes), `Ítems <Variable>` (tabla, gráfico, Tabla/Figura, fuente y narrativa por ítem), `Dimensiones <Variable>` (fichas de baremo, valoración automática, tabla baremada con gráfico, narrativa y bloque consolidado) y `Conteo <Variable>` (agregado por dimensión). Más `Relaciones` (normalidad calculada sobre V1 total, V2 total y dimensiones de V1; correlaciones Pearson o Rho de Spearman según los Sig.: general V1-V2 y cada dimensión de V1 contra V2), `Correlación` e `Información` (con 2 variables).
+- `Tabulacion_generada.xlsx`: Excel construido por código. Por variable: hoja base (datos, estadísticos, frecuencias y porcentajes), `Ítems <Variable>` (tabla, gráfico, Tabla/Figura, fuente y narrativa por ítem), `Dimensiones <Variable>` (tabla ancha Suma/Nivel/Código por dimensión y consolidado referenciando la hoja base, fichas de baremo, tabla baremada con gráfico, narrativa y bloque consolidado) y `Conteo <Variable>` (agregado por dimensión). Más `Relaciones` (normalidad calculada sobre V1 total, V2 total y dimensiones de V1; correlaciones Pearson o Rho de Spearman según los Sig.: general V1-V2 y cada dimensión de V1 contra V2), `Correlación` e `Información` (con 2 variables).
 - `Tabulacion_base.csv`: la base generada (columnas `V1_n`/`V2_n`, una fila por encuestado; solo cabecera con `conDatos: "0"`).
 - `correlation`: correlación de Pearson entre las sumas de V1 y V2 (el generador apunta a |r| ≥ 0.9; `null` con una sola variable o sin datos).
 - `warnings`: avisos del generador (p. ej. una sola variable).
