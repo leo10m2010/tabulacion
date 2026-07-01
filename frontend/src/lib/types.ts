@@ -11,12 +11,25 @@ export interface ItemDef { id: string; nombre: string }
 export interface IndicadorDef { id: string; nombre: string; items: ItemDef[] }
 export interface DimensionDef { id: string; nombre: string; indicadores: IndicadorDef[] }
 
+export interface ChartPreview {
+  title: string;
+  categories: string[];
+  values: number[];
+}
+
+export interface SheetChartsPreview {
+  sheet: string;
+  charts: ChartPreview[];
+}
+
 export interface InlineGenerateResponse {
   correlation: number | null;
   warnings?: string[];
   baseCsv: string;
   excelBase64: string;
   excelFileName?: string;
+  chartsPreview?: SheetChartsPreview[];
+  tema?: string;
   error?: string;
 }
 
@@ -38,6 +51,8 @@ export interface GeneratedResult {
   csvRows: TableRows;
   sheetNames: string[];
   sheetData: Record<string, TableRows>;
+  chartsPreview: SheetChartsPreview[];
+  tema: string;
   generatedAt: string;
 }
 

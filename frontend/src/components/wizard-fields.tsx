@@ -59,13 +59,19 @@ export function ListEditorField({
   useEffect(() => {
     const prev = prevValuesRef.current;
     const changed = prev.length !== values.length || values.some((v, i) => v !== prev[i]);
-    if (changed) {
-      prevValuesRef.current = [...values];
-      const newRows = values.length > 0 ? [...values] : [""];
-      setRows(newRows);
-      setRowKeys(newRows.map(() => eid()));
-    }
-  }, [values]);
+    if (!changed) return;
+    prevValuesRef.current = [...values];
+    const newRows = values.length > 0 ? [...values] : [""];
+    // Si el cambio es solo el eco del último cambio local (el padre normaliza
+    // o rellena la lista), no tocar nada: regenerar filas/keys desmonta los
+    // inputs y roba el foco mientras el usuario escribe o borra.
+    const echoOfLocal = newRows.length === rows.length && newRows.every((v, i) => v === rows[i]);
+    if (echoOfLocal) return;
+    setRows(newRows);
+    // Cambio externo real (reset, auto-cálculo, cambio de niveles): conservar
+    // las keys de las filas que sobreviven para no perder el foco.
+    setRowKeys((prevKeys) => newRows.map((_, i) => prevKeys[i] ?? eid()));
+  }, [values, rows]);
 
   const editableSum = isPercentage && rows.length > 1
     ? rows.slice(0, -1).reduce((acc, v) => { const n = parseInt(v.trim(), 10); return Number.isFinite(n) ? acc + n : acc; }, 0)

@@ -48,7 +48,7 @@ npm test
 - `GET /health`
 - `POST /auth/login`, `GET /auth/me`
 - `GET|POST /auth/users`, `PATCH|DELETE /auth/users/:id` (solo admin)
-- `GET /template-info` (límites del generador)
+- `GET /template-info` (límites del generador y temas de gráficos disponibles)
 - `POST /generate` (autenticado)
 - `GET /results/:id`, `GET /results/:id/xlsx`, `GET /results/:id/csv`, `DELETE /results/:id`
 
@@ -59,7 +59,8 @@ Requiere `Authorization: Bearer <token>` (obtenido en `/auth/login`). Puedes env
 Opcional:
 
 - `responseMode: "links"` (default): devuelve links temporales de descarga.
-- `responseMode: "inline"`: devuelve `excelBase64` + `baseCsv` en la misma respuesta.
+- `responseMode: "inline"`: devuelve `excelBase64` + `baseCsv` en la misma respuesta, más `chartsPreview` (datos de cada gráfico por hoja, para renderizar la vista previa) y `tema`.
+- `config.tema`: tema de color de los gráficos del Excel (`clasico`, `powerbi`, `ejecutivo`, `esmeralda`, `atardecer`, `monocromo`; default `clasico`). Los temas disponibles se listan en `GET /template-info`.
 
 Ejemplo:
 

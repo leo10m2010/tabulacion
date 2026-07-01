@@ -233,6 +233,32 @@ test("hoja Relaciones: normalidad calculada y correlaciones", async () => {
   }
 });
 
+test("tema powerbi colorea los puntos y expone chartsPreview", async () => {
+  const result = await generateArtifacts({ ...baseConfig, muestra: "15", tema: "powerbi" });
+  assert.equal(result.tema, "powerbi");
+
+  const zip = await JSZip.loadAsync(result.excelBuffer);
+  const chartXml = await zip.file("xl/charts/chart1.xml").async("string");
+  assert.ok(chartXml.includes("<c:dPt>"), "cada punto lleva color explicito");
+  assert.match(chartXml, /118DFF/);
+
+  // Datos para la vista previa: un registro por grafico inyectado.
+  const totalCharts = result.chartsPreview.reduce((acc, s) => acc + s.charts.length, 0);
+  assert.equal(totalCharts, 37);
+  const first = result.chartsPreview[0].charts[0];
+  assert.equal(first.categories.length, 5);
+  const sum = first.values.reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(sum - 1) < 1e-9, `sum=${sum}`);
+
+  // Tema desconocido: aviso y tema clasico sin dPt.
+  const fallback = await generateArtifacts({ ...baseConfig, muestra: "10", tema: "neon" });
+  assert.equal(fallback.tema, "clasico");
+  assert.ok(fallback.warnings.some((w) => w.includes("tema")));
+  const zipFb = await JSZip.loadAsync(fallback.excelBuffer);
+  const chartFb = await zipFb.file("xl/charts/chart1.xml").async("string");
+  assert.ok(!chartFb.includes("<c:dPt>"), "el tema clasico conserva el XML historico");
+});
+
 test("estructura_v1 agrupa indicadores con celdas combinadas", async () => {
   const result = await generateArtifacts({
     muestra: "10",
@@ -287,6 +313,7 @@ test("conDatos=0 deja la base vacia para ingreso manual", async () => {
   const result = await generateArtifacts({ ...baseConfig, muestra: "25", conDatos: "0" });
   assert.equal(result.correlation, null);
   assert.equal(result.baseCsv.split("\n").length, 1); // solo cabecera
+  assert.deepEqual(result.chartsPreview, []); // sin datos no hay vista previa de graficos
   const workbook = await XlsxPopulate.fromDataAsync(result.excelBuffer);
   const sheet = workbook.sheet("Gestion de abastecimiento");
   assert.equal(sheet.cell("A5").value(), 1);

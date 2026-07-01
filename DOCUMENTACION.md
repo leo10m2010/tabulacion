@@ -7,7 +7,7 @@ Guía del flujo de uso y del contrato del JSON de configuración. Para instalaci
 1. **Login** con email y contraseña. Cualquier usuario activo con suscripción vigente puede generar tabulaciones; la gestión de usuarios es solo para administradores.
 2. **Paso 1 — Tu encuesta**: número de variables (1 o 2), nombre y tamaño de la muestra, opciones por pregunta, preguntas/dimensiones/niveles de baremo por variable, dirección de la relación (directa/inversa).
 3. **Paso 2 — Escalas y estructura**: opciones de respuesta, baremos por variable (los rangos y cantidades se calculan automáticamente; los porcentajes deben sumar 100%), y estructura jerárquica dimensión → indicador → ítem de cada variable.
-4. **Paso 3 — Generar**: resumen, validaciones (incluye los límites del generador obtenidos de `GET /template-info`) y generación. Se muestran la correlación de Pearson (si hay 2 variables), los avisos del generador, la vista previa por hoja, y las descargas de Excel, CSV y JSON.
+4. **Paso 3 — Generar**: resumen, selector de tema de gráficos (paletas estilo Power BI aplicadas al Excel y a la vista previa), validaciones (incluye los límites del generador obtenidos de `GET /template-info`) y generación. Se muestran la correlación de Pearson (si hay 2 variables), los avisos del generador, la vista previa por hoja con sus gráficos (renderizados con ECharts a partir de `chartsPreview`), y las descargas de Excel, CSV y JSON.
 
 ## Contrato del JSON de configuración
 

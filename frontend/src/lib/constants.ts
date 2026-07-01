@@ -45,7 +45,29 @@ export const FALLBACK_CONFIG: TabConfig = {
   numero_dimension: ["1", "2"],
   nombre_indicador: ["Planificacion", "Transparencia", "Cumplimiento normativo", "Satisfaccion del servicio"],
   numero_indicador0: ["3", "1"],
+  tema: "clasico",
 };
+
+// Temas de color para los graficos del Excel y de la vista previa. Deben
+// coincidir con CHART_THEMES de node_app/generator.js (alli sin "#").
+export interface ChartTheme {
+  id: string;
+  nombre: string;
+  descripcion: string;
+  colores: string[];
+}
+
+export const CHART_THEMES: ChartTheme[] = [
+  { id: "clasico", nombre: "Clásico", descripcion: "Azul de tesis, un solo color", colores: ["#2F5597"] },
+  { id: "powerbi", nombre: "Power BI", descripcion: "Paleta vibrante multicolor", colores: ["#118DFF", "#12239E", "#E66C37", "#6B007B", "#E044A7", "#744EC2", "#D9B300", "#D64550"] },
+  { id: "ejecutivo", nombre: "Ejecutivo", descripcion: "Azules sobrios con dorado", colores: ["#1F3864", "#2F5597", "#8EAADB", "#BF9000", "#767171"] },
+  { id: "esmeralda", nombre: "Esmeralda", descripcion: "Verdes frescos", colores: ["#0B5345", "#148F77", "#45B39D", "#82E0AA", "#1E8449"] },
+  { id: "atardecer", nombre: "Atardecer", descripcion: "Rojos y naranjas cálidos", colores: ["#9D0208", "#D00000", "#E85D04", "#F48C06", "#FFBA08"] },
+  { id: "monocromo", nombre: "Monocromo", descripcion: "Escala de grises elegante", colores: ["#212529", "#495057", "#6C757D", "#ADB5BD", "#CED4DA"] },
+];
+
+export const themePalette = (temaId: string): string[] =>
+  CHART_THEMES.find((t) => t.id === temaId)?.colores ?? CHART_THEMES[0].colores;
 
 export const LIST_GROUPS = [
   {

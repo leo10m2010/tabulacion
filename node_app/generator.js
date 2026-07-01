@@ -40,6 +40,19 @@ const COLOR_FRAME = "6AA84F"; // marco verde de las hojas de presentacion
 const COLOR_BLOCK = "FFD966"; // amarillo de los encabezados de bloque
 const CHART_COLOR = "2F5597";
 
+// Temas de color para los graficos (paletas estilo Power BI). "clasico"
+// conserva el azul unico historico; los demas colorean cada barra ciclando su
+// paleta, tanto en el Excel como en la vista previa del frontend (que debe
+// mantener estas mismas paletas en frontend/src/lib/constants.ts).
+export const CHART_THEMES = {
+  clasico: { nombre: "Clásico", colores: [CHART_COLOR] },
+  powerbi: { nombre: "Power BI", colores: ["118DFF", "12239E", "E66C37", "6B007B", "E044A7", "744EC2", "D9B300", "D64550"] },
+  ejecutivo: { nombre: "Ejecutivo", colores: ["1F3864", "2F5597", "8EAADB", "BF9000", "767171"] },
+  esmeralda: { nombre: "Esmeralda", colores: ["0B5345", "148F77", "45B39D", "82E0AA", "1E8449"] },
+  atardecer: { nombre: "Atardecer", colores: ["9D0208", "D00000", "E85D04", "F48C06", "FFBA08"] },
+  monocromo: { nombre: "Monocromo", colores: ["212529", "495057", "6C757D", "ADB5BD", "CED4DA"] },
+};
+
 const FONT = { fontFamily: "Arial", fontSize: 10 };
 const ST_HEADER = {
   ...FONT,
@@ -339,6 +352,10 @@ export const normalizeConfig = (raw) => {
 
   const relacion = String(raw.relacionversa ?? "0").trim().toLowerCase();
   const conDatosRaw = String(raw.conDatos ?? raw.con_datos ?? "1").trim().toLowerCase();
+  const temaRaw = String(raw.tema ?? "clasico").trim().toLowerCase();
+  if (temaRaw && !CHART_THEMES[temaRaw]) {
+    warnings.push(`El tema de graficos "${temaRaw}" no existe; se uso el tema clasico.`);
+  }
 
   return {
     warnings,
@@ -350,6 +367,7 @@ export const normalizeConfig = (raw) => {
     variables,
     relacionInversa: new Set(["1", "si", "sí", "true", "inversa"]).has(relacion),
     conDatos: !new Set(["0", "false", "no", "off"]).has(conDatosRaw),
+    tema: CHART_THEMES[temaRaw] ? temaRaw : "clasico",
   };
 };
 
@@ -885,6 +903,7 @@ const addItemsSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base, varI
     row = writeFuente(sheet, tTotal + 1, C0) + 1;
 
     // Grafico del item (proporciones, como el original).
+    const counts = base ? countByValue(base[`V${varIndex + 1}_${item.indexInVar}`], escala) : null;
     const chartTop = row;
     charts.push({
       title: item.code,
@@ -893,6 +912,10 @@ const addItemsSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base, varI
       valRef: `${sheetRef}!$${colLetter(C0 + 2)}$${tStart}:$${colLetter(C0 + 2)}$${tTotal - 1}`,
       numFmt: FMT_PCT,
       varyColors: false,
+      points: escala.length,
+      preview: counts
+        ? { categories: escala.map((o) => o.etiqueta), values: counts.map((c) => c / N) }
+        : null,
       anchor: {
         fromCol: C0 - 1,
         fromRow: chartTop - 1,
@@ -906,7 +929,6 @@ const addItemsSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base, varI
     sheet.cell(row + 1, C0).value(texto || item.code).style(FONT);
     row += 3;
 
-    const counts = base ? countByValue(base[`V${varIndex + 1}_${item.indexInVar}`], escala) : null;
     row = writeNarrative(sheet, row, C0, 7, 5, narrativeItem(cfg, tabla, item.code, texto, counts)) + 2;
   });
 
@@ -962,6 +984,15 @@ const addConteoSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base, var
       .formula(`SUM(${colLetter(C0 + 2)}${tStart}:${colLetter(C0 + 2)}${tTotal - 1})`);
     row = writeFuente(sheet, tTotal + 1, C0) + 1;
 
+    let counts = null;
+    if (base) {
+      counts = escala.map(() => 0);
+      items.forEach((item) => {
+        countByValue(base[`V${varIndex + 1}_${item.indexInVar}`], escala)
+          .forEach((c, i) => { counts[i] += c; });
+      });
+    }
+
     const chartTop = row;
     charts.push({
       title: dim.nombre,
@@ -970,6 +1001,10 @@ const addConteoSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base, var
       valRef: `${sheetRef}!$${colLetter(C0 + 2)}$${tStart}:$${colLetter(C0 + 2)}$${tTotal - 1}`,
       numFmt: FMT_PCT,
       varyColors: false,
+      points: escala.length,
+      preview: counts
+        ? { categories: escala.map((o) => o.etiqueta), values: counts.map((c) => c / totalResp) }
+        : null,
       anchor: {
         fromCol: C0 - 1,
         fromRow: chartTop - 1,
@@ -983,14 +1018,6 @@ const addConteoSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base, var
     sheet.cell(row + 1, C0).value(dim.nombre).style(FONT);
     row += 3;
 
-    let counts = null;
-    if (base) {
-      counts = escala.map(() => 0);
-      items.forEach((item) => {
-        countByValue(base[`V${varIndex + 1}_${item.indexInVar}`], escala)
-          .forEach((c, i) => { counts[i] += c; });
-      });
-    }
     row = writeNarrative(sheet, row, C0, 7, 5, narrativeConteo(cfg, tabla, dim.nombre, nItems, counts)) + 2;
   });
 
@@ -1093,6 +1120,10 @@ const buildBaremoBlock = (sheet, ctx) => {
     valRef: `${sheetRef}!$${colLetter(C0 + 4)}$${fbHeaderRow + 1}:$${colLetter(C0 + 4)}$${fbTotalRow - 1}`,
     numFmt: FMT_PCT,
     varyColors: true,
+    points: niveles.length,
+    preview: nivelCounts
+      ? { categories: niveles.map((n) => n.nombre), values: nivelCounts.map((c) => c / N) }
+      : null,
     anchor: {
       fromCol: C0 + 5,
       fromRow: fbHeaderRow - 1,
@@ -1619,7 +1650,7 @@ const optimizeStyles = async (zip) => {
 // ── Graficos OOXML ───────────────────────────────────────────────────────────
 let axisIdCounter = 100000000;
 
-const buildChartXml = (chart) => {
+const buildChartXml = (chart, colores = CHART_THEMES.clasico.colores) => {
   const ax1 = (axisIdCounter += 2);
   const ax2 = axisIdCounter + 1;
   const dLbls = '<c:dLbls>'
@@ -1627,6 +1658,14 @@ const buildChartXml = (chart) => {
     + '<c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/>'
     + '<c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/>'
     + '</c:dLbls>';
+  // Con paletas multicolor cada punto lleva su color explicito (c:dPt); con
+  // la paleta de un solo color se conserva el XML historico.
+  const dPts = colores.length > 1 && chart.points
+    ? Array.from({ length: chart.points }, (_, i) => '<c:dPt>'
+      + `<c:idx val="${i}"/><c:invertIfNegative val="0"/><c:bubble3D val="0"/>`
+      + `<c:spPr><a:solidFill><a:srgbClr val="${colores[i % colores.length]}"/></a:solidFill></c:spPr>`
+      + '</c:dPt>').join("")
+    : "";
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     + '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"'
     + ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
@@ -1645,8 +1684,9 @@ const buildChartXml = (chart) => {
     + '<c:ser>'
     + '<c:idx val="0"/><c:order val="0"/>'
     + `<c:tx><c:v>${escXml(chart.seriesName ?? "Serie 1")}</c:v></c:tx>`
-    + `<c:spPr><a:solidFill><a:srgbClr val="${CHART_COLOR}"/></a:solidFill></c:spPr>`
+    + `<c:spPr><a:solidFill><a:srgbClr val="${colores[0]}"/></a:solidFill></c:spPr>`
     + '<c:invertIfNegative val="0"/>'
+    + dPts
     + dLbls
     + `<c:cat><c:strRef><c:f>${escXml(chart.catRef)}</c:f></c:strRef></c:cat>`
     + `<c:val><c:numRef><c:f>${escXml(chart.valRef)}</c:f></c:numRef></c:val>`
@@ -1711,7 +1751,7 @@ const unescapeXml = (value) => String(value)
 
 // Inyecta los graficos en el zip del xlsx: charts/*.xml, drawings/*.xml,
 // rels y content types. sheetCharts: [{ sheetName, charts: [...] }].
-const injectCharts = async (zip, sheetCharts) => {
+const injectCharts = async (zip, sheetCharts, colores) => {
   const plans = sheetCharts.filter((p) => p.charts.length > 0);
   if (plans.length === 0) return;
 
@@ -1754,7 +1794,7 @@ const injectCharts = async (zip, sheetCharts) => {
     for (const chart of plan.charts) {
       chartIndex += 1;
       const chartName = `chart${chartIndex}.xml`;
-      zip.file(`xl/charts/${chartName}`, buildChartXml(chart));
+      zip.file(`xl/charts/${chartName}`, buildChartXml(chart, colores));
       contentTypeOverrides.push(
         `<Override PartName="/xl/charts/${chartName}" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`,
       );
@@ -1817,10 +1857,10 @@ const injectCharts = async (zip, sheetCharts) => {
 };
 
 // Post-procesado del paquete xlsx: deduplicar estilos e inyectar graficos.
-export const postProcessWorkbook = async (xlsxBuffer, sheetCharts) => {
+export const postProcessWorkbook = async (xlsxBuffer, sheetCharts, colores = CHART_THEMES.clasico.colores) => {
   const zip = await JSZip.loadAsync(xlsxBuffer);
   await optimizeStyles(zip);
-  await injectCharts(zip, sheetCharts);
+  await injectCharts(zip, sheetCharts, colores);
   return zip.generateAsync({
     type: "nodebuffer",
     compression: "DEFLATE",
@@ -1901,10 +1941,21 @@ export const generateArtifacts = async (rawConfig) => {
   const { sheetCharts } = built;
   const plainBuffer = await built.workbook.outputAsync({ type: "nodebuffer" });
   built = null;
-  const excelBuffer = await postProcessWorkbook(plainBuffer, sheetCharts);
+  const excelBuffer = await postProcessWorkbook(plainBuffer, sheetCharts, CHART_THEMES[cfg.tema].colores);
   const baseCsv = buildBaseCsv(base, cfg);
 
-  return { correlation, excelBuffer, baseCsv, warnings };
+  // Datos de los graficos para la vista previa del frontend (el xlsx guarda
+  // formulas sin valores cacheados, asi que el navegador no puede derivarlos).
+  const chartsPreview = sheetCharts
+    .map(({ sheetName, charts }) => ({
+      sheet: sheetName,
+      charts: charts
+        .filter((c) => c.preview)
+        .map((c) => ({ title: c.title, categories: c.preview.categories, values: c.preview.values })),
+    }))
+    .filter((s) => s.charts.length > 0);
+
+  return { correlation, excelBuffer, baseCsv, warnings, chartsPreview, tema: cfg.tema };
 };
 
 export const generateAndWriteFiles = async (config, opts = {}) => {

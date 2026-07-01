@@ -22,6 +22,7 @@ import {
   LogOut,
   Mail,
   Moon,
+  Palette,
   Server,
   ShieldCheck,
   Sparkles,
@@ -60,7 +61,7 @@ import type {
   ThemeMode,
   WizardStep,
 } from "./lib/types";
-import { DEFAULT_API_BASE_URL, FALLBACK_CONFIG, LIST_GROUPS } from "./lib/constants";
+import { DEFAULT_API_BASE_URL, FALLBACK_CONFIG, LIST_GROUPS, themePalette } from "./lib/constants";
 import {
   base64ToUint8Array,
   eid,
@@ -82,6 +83,8 @@ import {
 import { springSoft } from "./components/motion-primitives";
 import { FieldHint, HierarchyEditor, ListEditorField, StepTip } from "./components/wizard-fields";
 import { PreviewTable } from "./components/PreviewTable";
+import { PreviewCharts } from "./components/PreviewCharts";
+import { ThemePicker } from "./components/ThemePicker";
 import { WizardProgress } from "./components/WizardProgress";
 import { LandingPage } from "./components/LandingPage";
 
@@ -590,7 +593,16 @@ export default function App() {
         xlsx: URL.createObjectURL(new Blob([excelBytes.buffer as ArrayBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })),
       };
       setDownloadLinks((cur) => { revokeDownloadLinks(cur); return nextLinks; });
-      setResult({ correlation: payload.correlation, warnings: payload.warnings ?? [], csvRows, sheetNames: parsedWorkbook.names, sheetData: parsedWorkbook.data, generatedAt: new Date().toISOString() });
+      setResult({
+        correlation: payload.correlation,
+        warnings: payload.warnings ?? [],
+        csvRows,
+        sheetNames: parsedWorkbook.names,
+        sheetData: parsedWorkbook.data,
+        chartsPreview: payload.chartsPreview ?? [],
+        tema: payload.tema ?? toStringValue(config.tema) ?? "clasico",
+        generatedAt: new Date().toISOString(),
+      });
       setSelectedSheet(parsedWorkbook.names[0] ?? "");
       setStatusMessage("Tabulación generada correctamente.");
     } catch (err) {
@@ -1414,6 +1426,25 @@ export default function App() {
                     </CardContent>
                   </Card>
 
+                  {/* Tema de los gráficos */}
+                  <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Palette className="h-5 w-5 text-primary" />
+                        Tema de los gráficos
+                      </CardTitle>
+                      <CardDescription>
+                        Elige la paleta de colores para los gráficos de tu Excel. La vista previa usará el mismo tema.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <ThemePicker
+                        value={getScalar("tema") || "clasico"}
+                        onChange={(id) => setScalar("tema", id)}
+                      />
+                    </CardContent>
+                  </Card>
+
                   {/* Validations */}
                   {validationMessages.length > 0 && (
                     <Card className="rounded-2xl border-danger/40 bg-danger/5 shadow-sm">
@@ -1545,6 +1576,17 @@ export default function App() {
                             )}
                           </div>
                           <PreviewTable rows={result.sheetData[selectedSheet || (result.sheetNames[0] ?? "")] ?? []} maxRows={10} />
+                          {(() => {
+                            const sheetName = selectedSheet || (result.sheetNames[0] ?? "");
+                            const sheetCharts = result.chartsPreview.find((s) => s.sheet === sheetName)?.charts ?? [];
+                            if (sheetCharts.length === 0) return null;
+                            return (
+                              <div className="mt-4">
+                                <p className="mb-2 text-sm font-medium">Gráficos de esta hoja ({sheetCharts.length})</p>
+                                <PreviewCharts charts={sheetCharts} palette={themePalette(result.tema)} />
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         <Button

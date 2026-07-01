@@ -5,6 +5,7 @@ import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import {
+  CHART_THEMES,
   MAX_ITEMS_POR_VARIABLE,
   MAX_MUESTRA,
   generateArtifacts,
@@ -776,6 +777,7 @@ const server = http.createServer(async (req, res) => {
         maxItemsV1: MAX_ITEMS_POR_VARIABLE,
         maxItemsV2: MAX_ITEMS_POR_VARIABLE,
         baseCapacity: MAX_MUESTRA,
+        temas: Object.entries(CHART_THEMES).map(([id, t]) => ({ id, nombre: t.nombre, colores: t.colores })),
       });
       return;
     }
@@ -803,6 +805,8 @@ const server = http.createServer(async (req, res) => {
           baseCsv: artifacts.baseCsv,
           excelBase64: artifacts.excelBuffer.toString("base64"),
           excelFileName: "Tabulacion_generada.xlsx",
+          chartsPreview: artifacts.chartsPreview ?? [],
+          tema: artifacts.tema ?? "clasico",
         });
         return;
       }
