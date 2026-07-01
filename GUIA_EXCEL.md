@@ -32,7 +32,7 @@ Por cada variable:
 
 4. **`Conteo <Variable>`** — un bloque por dimensión: respuestas agregadas de todos los ítems de la dimensión (`COUNTIF` sobre el rango 2D de la hoja base), % sobre N×ítems, gráfico, Figura y narrativa.
 
-Globales: **`Relaciones`** (tabla de sumas por encuestado referenciando las hojas de dimensiones + por cada par variable/dimensión: tabla de pruebas de normalidad KS/Shapiro-Wilk para completar desde SPSS con su narrativa, y tabla de correlaciones con `CORREL` y Sig. bilateral vía `T.DIST.2T`), **`Correlación`** (r vivo, r², interpretación automática y criterio) e **`Información`** (escala, niveles, instrucciones).
+Globales: **`Relaciones`** (tabla de sumas por encuestado referenciando las hojas de dimensiones + una tabla única de pruebas de normalidad KS-Lilliefors/Shapiro-Wilk sobre V1 total, V2 total y las dimensiones de V1 —calculada por el generador con la base simulada; en blanco para SPSS con `conDatos: "0"`— con narrativa que decide Pearson o Rho de Spearman según los Sig. (todos ≥ 0.05 → Pearson; alguno < 0.05 → Spearman), y tablas de correlación —general V1-V2 y cada dimensión de V1 contra V2— con `CORREL` y Sig. bilateral vía `T.DIST.2T`; con Spearman se agregan columnas de rangos `RANK.AVG`), **`Correlación`** (r o rho vivo, r², interpretación automática y criterio) e **`Información`** (escala, niveles, instrucciones).
 
 Los nombres de hoja se truncan a 31 caracteres y se desambiguan si colisionan.
 

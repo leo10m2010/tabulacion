@@ -8,8 +8,10 @@
 //   3. "Dimensiones [Variable]"  ficha de baremo, niveles, valoracion automatica,
 //                                frecuencia baremada, grafico e interpretacion por dimension
 //   4. "Conteo [Variable]"       respuestas agregadas por dimension + grafico + interpretacion
-// Mas "Relaciones" (normalidad + correlaciones por pares), "Correlación"
-// (r vivo + criterio) e "Información".
+// Mas "Relaciones" (normalidad calculada sobre V1 total, V2 total y las
+// dimensiones de V1; correlaciones Pearson o Rho de Spearman segun los Sig.:
+// general V1-V2 y cada dimension de V1 contra V2), "Correlación" (r/rho vivo
+// + criterio) e "Información".
 //
 // Los graficos se inyectan como XML OOXML (charts + drawings) porque
 // xlsx-populate no los soporta de forma nativa.
@@ -375,6 +377,139 @@ const sumPerRow = (base, varNum, count, rows) => Array.from({ length: rows }, (_
   return sum;
 });
 
+const sumRangePerRow = (base, varNum, from, to, rows) => Array.from({ length: rows }, (_, i) => {
+  let sum = 0;
+  for (let c = from; c <= to; c += 1) sum += base[`V${varNum}_${c}`][i];
+  return sum;
+});
+
+// ── Pruebas de normalidad ────────────────────────────────────────────────────
+const normCdf = (z) => {
+  // Abramowitz & Stegun 26.2.17
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = Math.exp((-z * z) / 2) / Math.sqrt(2 * Math.PI);
+  const p = d * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return z >= 0 ? 1 - p : p;
+};
+
+const normInv = (p) => {
+  // Algoritmo de Acklam para la inversa de la normal estandar.
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const pLow = 0.02425;
+  if (p <= 0 || p >= 1) return Number.NaN;
+  if (p < pLow) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+      / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  if (p <= 1 - pLow) {
+    const q = p - 0.5;
+    const r = q * q;
+    return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q)
+      / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  }
+  const q = Math.sqrt(-2 * Math.log(1 - p));
+  return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+    / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+};
+
+// Kolmogorov-Smirnov con correccion de Lilliefors (p-valor de Dallal-Wilkinson
+// 1986 y polinomios de Stephens, igual que nortest::lillie.test de R).
+export const lillieforsTest = (values) => {
+  const n = values.length;
+  if (n < 4) return null;
+  const x = [...values].sort((p, q) => p - q);
+  const mean = x.reduce((s, v) => s + v, 0) / n;
+  const sd = Math.sqrt(x.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1));
+  if (sd === 0) return null;
+  let dPlus = 0;
+  let dMinus = 0;
+  for (let i = 0; i < n; i += 1) {
+    const F = normCdf((x[i] - mean) / sd);
+    dPlus = Math.max(dPlus, (i + 1) / n - F);
+    dMinus = Math.max(dMinus, F - i / n);
+  }
+  const D = Math.max(dPlus, dMinus);
+  let p = Math.exp(
+    -7.01256 * D * D * (n + 2.78019) + 2.99587 * D * Math.sqrt(n + 2.78019)
+    - 0.122119 + 0.974598 / Math.sqrt(n) + 1.67997 / n,
+  );
+  if (p > 0.1) {
+    const kk = (Math.sqrt(n) - 0.01 + 0.85 / Math.sqrt(n)) * D;
+    if (kk <= 0.302) p = 1;
+    else if (kk <= 0.5) p = 2.76773 - 19.828315 * kk + 80.709644 * kk ** 2 - 138.55152 * kk ** 3 + 81.218052 * kk ** 4;
+    else if (kk <= 0.9) p = -4.901232 + 40.662806 * kk - 97.490286 * kk ** 2 + 94.029866 * kk ** 3 - 32.355711 * kk ** 4;
+    else if (kk <= 1.31) p = 6.198765 - 19.558097 * kk + 23.186922 * kk ** 2 - 12.234627 * kk ** 3 + 2.423045 * kk ** 4;
+    else p = 0;
+  }
+  return { stat: D, p: Math.min(Math.max(p, 0), 1) };
+};
+
+// Shapiro-Wilk segun Royston (1995, algoritmo AS R94).
+export const shapiroWilkTest = (values) => {
+  const n = values.length;
+  if (n < 3 || n > 5000) return null;
+  const x = [...values].sort((p, q) => p - q);
+  if (x[0] === x[n - 1]) return null;
+  const m = x.map((_, i) => normInv((i + 1 - 0.375) / (n + 0.25)));
+  const ssm = m.reduce((s, v) => s + v * v, 0);
+  const rsn = 1 / Math.sqrt(n);
+  const a = new Array(n).fill(0);
+  if (n === 3) {
+    a[0] = -Math.SQRT1_2;
+    a[2] = Math.SQRT1_2;
+  } else if (n <= 5) {
+    const an = -2.706056 * rsn ** 5 + 4.434685 * rsn ** 4 - 2.07119 * rsn ** 3
+      - 0.147981 * rsn ** 2 + 0.221157 * rsn + m[n - 1] / Math.sqrt(ssm);
+    const phi = (ssm - 2 * m[n - 1] ** 2) / (1 - 2 * an ** 2);
+    a[n - 1] = an;
+    a[0] = -an;
+    for (let i = 1; i < n - 1; i += 1) a[i] = m[i] / Math.sqrt(phi);
+  } else {
+    const an = -2.706056 * rsn ** 5 + 4.434685 * rsn ** 4 - 2.07119 * rsn ** 3
+      - 0.147981 * rsn ** 2 + 0.221157 * rsn + m[n - 1] / Math.sqrt(ssm);
+    const an1 = -3.582633 * rsn ** 5 + 5.682633 * rsn ** 4 - 1.752461 * rsn ** 3
+      - 0.293762 * rsn ** 2 + 0.042981 * rsn + m[n - 2] / Math.sqrt(ssm);
+    const phi = (ssm - 2 * m[n - 1] ** 2 - 2 * m[n - 2] ** 2) / (1 - 2 * an ** 2 - 2 * an1 ** 2);
+    a[n - 1] = an;
+    a[0] = -an;
+    a[n - 2] = an1;
+    a[1] = -an1;
+    for (let i = 2; i < n - 2; i += 1) a[i] = m[i] / Math.sqrt(phi);
+  }
+  const mean = x.reduce((s, v) => s + v, 0) / n;
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < n; i += 1) {
+    num += a[i] * x[i];
+    den += (x[i] - mean) ** 2;
+  }
+  if (den === 0) return null;
+  const W = Math.min((num * num) / den, 1);
+  let p;
+  if (W >= 1) {
+    p = 1;
+  } else if (n === 3) {
+    p = (6 / Math.PI) * (Math.asin(Math.sqrt(W)) - Math.asin(Math.sqrt(0.75)));
+  } else if (n <= 11) {
+    const g = -2.273 + 0.459 * n;
+    const mu = 0.544 - 0.39978 * n + 0.025054 * n ** 2 - 0.0006714 * n ** 3;
+    const sigma = Math.exp(1.3822 - 0.77857 * n + 0.062767 * n ** 2 - 0.0020322 * n ** 3);
+    const z = (-Math.log(g - Math.log(1 - W)) - mu) / sigma;
+    p = 1 - normCdf(z);
+  } else {
+    const ln = Math.log(n);
+    const mu = 0.0038915 * ln ** 3 - 0.083751 * ln ** 2 - 0.31082 * ln - 1.5861;
+    const sigma = Math.exp(0.0030302 * ln ** 2 - 0.082676 * ln - 0.4803);
+    const z = (Math.log(1 - W) - mu) / sigma;
+    p = 1 - normCdf(z);
+  }
+  return { stat: W, p: Math.min(Math.max(p, 0), 1) };
+};
+
 export const computeCorrelation = (base, cfg) => {
   const rows = cfg.encuestados;
   if (cfg.variables.length < 2) return null;
@@ -516,10 +651,25 @@ const narrativeConteo = (cfg, tablaN, dimName, nItems, counts) => {
     + `${joinShares(shares, "corresponde a")}. La opción predominante de la dimensión es "${shares[0].label}".`;
 };
 
-const narrativeNormalidad = (tablaA, aLabel, bLabel) => (
-  `En la Tabla ${tablaA}, y basándose en la prueba de Kolmogorov-Smirnov, se puede observar que, con una probabilidad de error de ____% para ${aLabel} `
-  + `y de ____% para ${bLabel}, la distribución de sus valores no es diferente a la distribución normal, es decir, los datos sí se encuentran normalmente `
-  + `distribuidos; por tal motivo se procederá a utilizar la prueba paramétrica de correlación de Pearson. (Complete los valores con los resultados de SPSS.)`
+const narrativeNormalidadAuto = (tablaN, v1Name, v2Name, useSW, method) => {
+  const prueba = useSW
+    ? "Shapiro-Wilk (muestra ≤ 50)"
+    : "Kolmogorov-Smirnov con corrección de Lilliefors (muestra > 50)";
+  if (method === "pearson") {
+    return `En la Tabla ${tablaN}, y basándose en la prueba de ${prueba}, se puede observar que los valores de significancia (Sig.) de la variable ${v1Name}, `
+      + `de la variable ${v2Name} y de las dimensiones de ${v1Name} son todos mayores o iguales a 0.05; es decir, los datos se encuentran normalmente `
+      + `distribuidos. Por tal motivo se procederá a utilizar la prueba paramétrica de correlación de Pearson.`;
+  }
+  return `En la Tabla ${tablaN}, y basándose en la prueba de ${prueba}, se puede observar que al menos uno de los valores de significancia (Sig.) de la variable ${v1Name}, `
+    + `de la variable ${v2Name} y de las dimensiones de ${v1Name} es menor que 0.05; es decir, los datos no se encuentran normalmente distribuidos. `
+    + `Por tal motivo se procederá a utilizar la prueba no paramétrica Rho de Spearman.`;
+};
+
+const narrativeNormalidadManual = (tablaN, v1Name, v2Name) => (
+  `En la Tabla ${tablaN} se presentan las pruebas de normalidad de la variable ${v1Name}, de la variable ${v2Name} y de las dimensiones de ${v1Name} `
+  + `(la normalidad no se aplica a las dimensiones de la variable 2). Complete los valores con los resultados de SPSS y revise las significancias: `
+  + `si todos los Sig. son mayores o iguales a 0.05, utilice la correlación de Pearson; si uno o más son menores que 0.05, utilice Rho de Spearman. `
+  + `Las tablas de correlación de este archivo se generaron con Pearson por defecto.`
 );
 
 // ── Hoja base de variable ────────────────────────────────────────────────────
@@ -1064,7 +1214,7 @@ const addDimensionesSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base
 };
 
 // ── Hoja de relaciones (normalidad + correlaciones) ──────────────────────────
-const addRelacionesSheet = (sheet, cfg, refsV1, refsV2) => {
+const addRelacionesSheet = (sheet, cfg, refsV1, refsV2, base) => {
   const N = cfg.encuestados;
   const C0 = 2;
   const v1 = cfg.variables[0];
@@ -1098,59 +1248,118 @@ const addRelacionesSheet = (sheet, cfg, refsV1, refsV2) => {
   }
   series.forEach((s, j) => { s.localCol = colLetter(C0 + 1 + j); });
 
-  // Pares a analizar: V1-V2, cada dimension de V1 contra V2 y, si coinciden
-  // las cantidades, dimension i de V1 contra dimension i de V2.
-  const totalV1 = series[refsV1.dimSumaRefs.length];
+  const nDimsV1 = refsV1.dimSumaRefs.length;
+  const dimsV1 = series.slice(0, nDimsV1);
+  const totalV1 = series[nDimsV1];
   const totalV2 = series[series.length - 1];
-  const pairs = [{ a: totalV1, b: totalV2 }];
-  refsV1.dimSumaRefs.forEach((_, i) => pairs.push({ a: series[i], b: totalV2 }));
-  if (refsV1.dimSumaRefs.length === refsV2.dimSumaRefs.length && refsV1.dimSumaRefs.length > 1) {
-    refsV1.dimSumaRefs.forEach((_, i) => {
-      pairs.push({ a: series[i], b: series[refsV1.dimSumaRefs.length + 1 + i] });
+
+  // Normalidad solo sobre el total de V1, el total de V2 y las dimensiones de
+  // V1 (las dimensiones de V2 no participan). Con base simulada los valores se
+  // calculan aqui; sin base la tabla queda en blanco para llenarla desde SPSS.
+  const targets = [totalV1, totalV2, ...dimsV1];
+  if (base) {
+    let from = 1;
+    dimsV1.forEach((s, i) => {
+      const count = v1.dimensiones[i].indicadores.reduce((acc, ind) => acc + ind.items, 0);
+      s.values = sumRangePerRow(base, 1, from, from + count - 1, N);
+      from += count;
+    });
+    totalV1.values = sumPerRow(base, 1, v1.totalItems, N);
+    totalV2.values = sumPerRow(base, 2, v2.totalItems, N);
+    targets.forEach((s) => {
+      s.ks = lillieforsTest(s.values);
+      s.sw = shapiroWilkTest(s.values);
     });
   }
 
-  // Bloques de analisis a la derecha de la tabla por persona.
-  const A0 = C0 + series.length + 2;
-  let row = headerRow;
-  let tabla = 0;
-  pairs.forEach((pair) => {
-    const rangeA = `$${pair.a.localCol}$${dStart}:$${pair.a.localCol}$${dEnd}`;
-    const rangeB = `$${pair.b.localCol}$${dStart}:$${pair.b.localCol}$${dEnd}`;
+  // Decision Pearson/Spearman: Shapiro-Wilk si n <= 50, Kolmogorov-Smirnov si
+  // n > 50. Todos los Sig. >= 0.05 -> Pearson; alguno < 0.05 -> Spearman.
+  const useSW = N <= 50;
+  const sigs = targets
+    .map((s) => (useSW ? s.sw?.p : s.ks?.p))
+    .filter((p) => Number.isFinite(p));
+  const method = sigs.length > 0 && sigs.some((p) => p < 0.05) ? "spearman" : "pearson";
+  const methodLabel = method === "spearman" ? "Rho de Spearman" : "Correlación de Pearson";
 
+  // Pares a correlacionar: V1-V2 (general) y cada dimension de V1 contra V2.
+  const pairs = [{ a: totalV1, b: totalV2 }];
+  dimsV1.forEach((s) => pairs.push({ a: s, b: totalV2 }));
+
+  // Para Spearman se agregan columnas de rangos (CORREL sobre rangos = Rho).
+  const A0 = C0 + series.length + 2;
+  const R0 = A0 + 9;
+  const corrSeries = [totalV1, totalV2, ...dimsV1];
+  if (method === "spearman") {
+    sheet.range(2, R0, 2, R0 + corrSeries.length - 1).merged(true).style(ST_HEADER);
+    sheet.cell(2, R0).value("Rangos (Rho de Spearman)");
+    corrSeries.forEach((s, j) => {
+      s.rankCol = colLetter(R0 + j);
+      sheet.cell(headerRow, R0 + j).value(`Rango ${s.label}`).style(ST_HEADER);
+      for (let i = 0; i < N; i += 1) {
+        const r = dStart + i;
+        const alt = i % 2 === 1 ? { fill: COLOR_ALT_ROW } : {};
+        const cellRef = `${s.localCol}${r}`;
+        sheet.cell(r, R0 + j).style({ ...ST_CELL, ...alt }).formula(
+          `IF(${cellRef}="","",_xlfn.RANK.AVG(${cellRef},$${s.localCol}$${dStart}:$${s.localCol}$${dEnd},1))`,
+        );
+      }
+    });
+  }
+  const corrRange = (s) => (method === "spearman"
+    ? `$${s.rankCol}$${dStart}:$${s.rankCol}$${dEnd}`
+    : `$${s.localCol}$${dStart}:$${s.localCol}$${dEnd}`);
+
+  // Bloques de analisis a la derecha de la tabla por persona.
+  let row = headerRow;
+  let tabla = 1;
+
+  // Tabla unica de normalidad.
+  sheet.range(row, A0, row, A0 + 7).merged(true).style(ST_BLOCK);
+  sheet.cell(row, A0).value(`Prueba de normalidad: ${v1.nombre}, ${v2.nombre} y dimensiones de ${v1.nombre}`);
+  row += 1;
+  sheet.cell(row, A0).value(`Tabla ${tabla}`).style(ST_LABEL_BOLD);
+  row += 1;
+  sheet.range(row, A0, row, A0 + 6).merged(true).style(ST_HEADER);
+  sheet.cell(row, A0).value("Pruebas de normalidad");
+  row += 1;
+  sheet.cell(row, A0).value("").style(ST_HEADER);
+  sheet.range(row, A0 + 1, row, A0 + 3).merged(true).style(ST_HEADER);
+  sheet.cell(row, A0 + 1).value("Kolmogorov-Smirnov (a)");
+  sheet.range(row, A0 + 4, row, A0 + 6).merged(true).style(ST_HEADER);
+  sheet.cell(row, A0 + 4).value("Shapiro-Wilk");
+  row += 1;
+  ["", "Estadístico", "gl", "Sig.", "Estadístico", "gl", "Sig."].forEach((h, i) => {
+    sheet.cell(row, A0 + i).value(h).style(ST_HEADER);
+  });
+  row += 1;
+  targets.forEach((s) => {
+    sheet.cell(row, A0).value(s.label).style(ST_CELL_LEFT);
+    [1, 3, 4, 6].forEach((i) => sheet.cell(row, A0 + i).style({ ...ST_CELL, numberFormat: "0.000" }));
+    [2, 5].forEach((i) => sheet.cell(row, A0 + i).style(ST_CELL));
+    sheet.cell(row, A0 + 2).value(N);
+    sheet.cell(row, A0 + 5).value(N);
+    if (s.ks) {
+      sheet.cell(row, A0 + 1).value(s.ks.stat);
+      sheet.cell(row, A0 + 3).value(s.ks.p);
+    }
+    if (s.sw) {
+      sheet.cell(row, A0 + 4).value(s.sw.stat);
+      sheet.cell(row, A0 + 6).value(s.sw.p);
+    }
+    row += 1;
+  });
+  sheet.cell(row, A0).value("a. Corrección de significación de Lilliefors").style(ST_NOTE);
+  row += 1;
+  const narrativa = base
+    ? narrativeNormalidadAuto(tabla, v1.nombre, v2.nombre, useSW, method)
+    : narrativeNormalidadManual(tabla, v1.nombre, v2.nombre);
+  row = writeNarrative(sheet, row, A0, 7, 5, narrativa) + 2;
+
+  // Correlaciones (general y por dimension de V1) con significancia bilateral.
+  pairs.forEach((pair) => {
     sheet.range(row, A0, row, A0 + 7).merged(true).style(ST_BLOCK);
     sheet.cell(row, A0).value(`${pair.a.full}  –  ${pair.b.full}`);
     row += 1;
-
-    // Pruebas de normalidad (las completa el tesista desde SPSS).
-    tabla += 1;
-    sheet.cell(row, A0).value(`Tabla ${tabla}`).style(ST_LABEL_BOLD);
-    row += 1;
-    sheet.range(row, A0, row, A0 + 6).merged(true).style(ST_HEADER);
-    sheet.cell(row, A0).value("Pruebas de normalidad");
-    row += 1;
-    sheet.cell(row, A0).value("").style(ST_HEADER);
-    sheet.range(row, A0 + 1, row, A0 + 3).merged(true).style(ST_HEADER);
-    sheet.cell(row, A0 + 1).value("Kolmogorov-Smirnov (a)");
-    sheet.range(row, A0 + 4, row, A0 + 6).merged(true).style(ST_HEADER);
-    sheet.cell(row, A0 + 4).value("Shapiro-Wilk");
-    row += 1;
-    ["", "Estadístico", "gl", "Sig.", "Estadístico", "gl", "Sig."].forEach((h, i) => {
-      sheet.cell(row, A0 + i).value(h).style(ST_HEADER);
-    });
-    row += 1;
-    [pair.a, pair.b].forEach((s) => {
-      sheet.cell(row, A0).value(s.label).style(ST_CELL_LEFT);
-      [1, 2, 3, 4, 5, 6].forEach((i) => sheet.cell(row, A0 + i).style(ST_CELL));
-      sheet.cell(row, A0 + 2).value(N);
-      sheet.cell(row, A0 + 5).value(N);
-      row += 1;
-    });
-    sheet.cell(row, A0).value("a. Corrección de significación de Lilliefors").style(ST_NOTE);
-    row += 1;
-    row = writeNarrative(sheet, row, A0, 7, 4, narrativeNormalidad(tabla, pair.a.full, pair.b.full)) + 1;
-
-    // Correlacion de Pearson con significancia bilateral.
     tabla += 1;
     sheet.cell(row, A0).value(`Tabla ${tabla}`).style(ST_LABEL_BOLD);
     row += 1;
@@ -1158,9 +1367,9 @@ const addRelacionesSheet = (sheet, cfg, refsV1, refsV2) => {
     sheet.cell(row, A0).value("Correlaciones");
     row += 1;
     const rCellRef = `${colLetter(A0 + 1)}${row}`;
-    sheet.cell(row, A0).value("Correlación de Pearson").style(ST_CELL_LEFT);
+    sheet.cell(row, A0).value(methodLabel).style(ST_CELL_LEFT);
     sheet.range(row, A0 + 1, row, A0 + 2).merged(true).style({ ...ST_CELL, numberFormat: "0.0000" });
-    sheet.cell(row, A0 + 1).formula(`IFERROR(CORREL(${rangeA},${rangeB}),"")`);
+    sheet.cell(row, A0 + 1).formula(`IFERROR(CORREL(${corrRange(pair.a)},${corrRange(pair.b)}),"")`);
     row += 1;
     sheet.cell(row, A0).value("Sig. (bilateral)").style(ST_CELL_LEFT);
     sheet.range(row, A0 + 1, row, A0 + 2).merged(true).style({ ...ST_CELL, numberFormat: "0.0000" });
@@ -1177,8 +1386,15 @@ const addRelacionesSheet = (sheet, cfg, refsV1, refsV2) => {
   });
 
   sheet.column("B").width(18);
-  for (let c = C0 + 1; c <= A0 + 7; c += 1) sheet.column(colLetter(c)).width(14);
-  paintFrame(sheet, Math.max(dEnd, row) + 1, A0 + 9);
+  const lastCol = method === "spearman" ? R0 + corrSeries.length - 1 : A0 + 7;
+  for (let c = C0 + 1; c <= lastCol; c += 1) sheet.column(colLetter(c)).width(14);
+  paintFrame(sheet, Math.max(dEnd, row) + 1, lastCol + 2);
+
+  return {
+    method,
+    v1Range: `${quoteSheet(sheet.name())}!${corrRange(totalV1)}`,
+    v2Range: `${quoteSheet(sheet.name())}!${corrRange(totalV2)}`,
+  };
 };
 
 // ── Hoja de correlacion (criterio para el valor r) ───────────────────────────
@@ -1191,10 +1407,12 @@ const CRITERIO_R = [
   ["0.00", "Correlación nula"],
 ];
 
-const addCorrelacionSheet = (sheet, cfg, refV1, refV2) => {
-  const rangeOf = (ref) => `${quoteSheet(ref.sheetName)}!$${ref.col}$${ref.start}:$${ref.col}$${ref.end}`;
+const addCorrelacionSheet = (sheet, cfg, relInfo) => {
+  const esSpearman = relInfo.method === "spearman";
   sheet.range(1, 1, 1, 4).merged(true).style({ ...ST_HEADER, fontSize: 12 });
-  sheet.cell(1, 1).value("Correlación de Pearson entre variables");
+  sheet.cell(1, 1).value(esSpearman
+    ? "Correlación Rho de Spearman entre variables"
+    : "Correlación de Pearson entre variables");
   sheet.row(1).height(22);
 
   const rows = [
@@ -1208,10 +1426,12 @@ const addCorrelacionSheet = (sheet, cfg, refV1, refV2) => {
     sheet.cell(3 + i, 2).value(v);
   });
 
-  sheet.cell(7, 1).value("r de Pearson").style({ ...ST_CELL_LEFT, bold: true, fill: COLOR_STATS });
+  sheet.cell(7, 1).value(esSpearman ? "Rho de Spearman" : "r de Pearson")
+    .style({ ...ST_CELL_LEFT, bold: true, fill: COLOR_STATS });
   sheet.cell(7, 2).style({ ...ST_CELL, numberFormat: "0.0000" })
-    .formula(`IFERROR(CORREL(${rangeOf(refV1)},${rangeOf(refV2)}),"")`);
-  sheet.cell(8, 1).value("r² (determinación)").style({ ...ST_CELL_LEFT, bold: true, fill: COLOR_STATS });
+    .formula(`IFERROR(CORREL(${relInfo.v1Range},${relInfo.v2Range}),"")`);
+  sheet.cell(8, 1).value(esSpearman ? "rho² (determinación)" : "r² (determinación)")
+    .style({ ...ST_CELL_LEFT, bold: true, fill: COLOR_STATS });
   sheet.cell(8, 2).style({ ...ST_CELL, numberFormat: "0.0000" })
     .formula('IF(B7="","",B7^2)');
   sheet.cell(9, 1).value("Interpretación").style({ ...ST_CELL_LEFT, bold: true, fill: COLOR_STATS });
@@ -1617,9 +1837,9 @@ export const buildWorkbook = async (cfg, base) => {
 
   if (cfg.variables.length >= 2) {
     const relName = sanitizeSheetName("Relaciones", usedNames);
-    addRelacionesSheet(workbook.addSheet(relName), cfg, relRefs[0], relRefs[1]);
+    const relInfo = addRelacionesSheet(workbook.addSheet(relName), cfg, relRefs[0], relRefs[1], base);
     const corrName = sanitizeSheetName("Correlación", usedNames);
-    addCorrelacionSheet(workbook.addSheet(corrName), cfg, relRefs[0].globalSumaRef, relRefs[1].globalSumaRef);
+    addCorrelacionSheet(workbook.addSheet(corrName), cfg, relInfo);
   }
 
   const infoName = sanitizeSheetName("Información", usedNames);

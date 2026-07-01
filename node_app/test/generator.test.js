@@ -8,6 +8,8 @@ import {
   MAX_ITEMS_POR_VARIABLE,
   MAX_MUESTRA,
   generateArtifacts,
+  lillieforsTest,
+  shapiroWilkTest,
 } from "../generator.js";
 
 const baseConfig = JSON.parse(fs.readFileSync(DEFAULT_CONFIG_PATH, "utf-8"));
@@ -142,7 +144,27 @@ test("hojas de items y conteo: tablas, fuente y narrativas", async () => {
   assert.match(String(conteo.cell("D6").formula()), /C6\/90/);
 });
 
-test("hoja Relaciones: normalidad y correlaciones por pares", async () => {
+test("pruebas de normalidad: Lilliefors y Shapiro-Wilk", () => {
+  // scipy.stats.shapiro(range(1, 11)) -> W ~ 0.970, p ~ 0.893
+  const uniforme = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const sw = shapiroWilkTest(uniforme);
+  assert.ok(Math.abs(sw.stat - 0.970) < 0.02, `W=${sw.stat}`);
+  assert.ok(sw.p > 0.5, `p=${sw.p}`);
+  const ks = lillieforsTest(uniforme);
+  assert.ok(ks.stat > 0 && ks.stat < 0.25, `D=${ks.stat}`);
+  assert.ok(ks.p > 0.05, `p=${ks.p}`);
+
+  // Datos muy asimetricos: ambas pruebas deben rechazar la normalidad.
+  const sesgados = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 5, 9, 20, 45, 90];
+  assert.ok(shapiroWilkTest(sesgados).p < 0.01);
+  assert.ok(lillieforsTest(sesgados).p < 0.01);
+
+  // Sin varianza no hay prueba posible.
+  assert.equal(shapiroWilkTest([3, 3, 3, 3, 3]), null);
+  assert.equal(lillieforsTest([3, 3, 3, 3, 3]), null);
+});
+
+test("hoja Relaciones: normalidad calculada y correlaciones", async () => {
   const result = await generateArtifacts({ ...baseConfig, muestra: "15" });
   const workbook = await XlsxPopulate.fromDataAsync(result.excelBuffer);
   const sheet = workbook.sheet("Relaciones");
@@ -150,13 +172,45 @@ test("hoja Relaciones: normalidad y correlaciones por pares", async () => {
   assert.equal(sheet.cell("B4").value(), "Encuestado");
   assert.match(String(sheet.cell("C5").formula()), /'Dimensiones Gestion de abasteci'!I17/);
 
-  let pearsonRow = null;
-  for (let r = 4; r <= 60; r += 1) {
-    if (String(sheet.cell(r, 10).value() ?? "") === "Correlación de Pearson") { pearsonRow = r; break; }
+  // Tabla unica de normalidad: total V1, total V2 y las 3 dimensiones de V1,
+  // con estadisticos y significancias ya calculados.
+  let normRow = null;
+  for (let r = 4; r <= 20; r += 1) {
+    if (String(sheet.cell(r, 10).value() ?? "") === "Pruebas de normalidad") { normRow = r; break; }
   }
-  assert.ok(pearsonRow, "tabla de correlaciones presente");
-  assert.match(String(sheet.cell(pearsonRow, 11).formula()), /CORREL\(/);
-  assert.match(String(sheet.cell(pearsonRow + 1, 11).formula()), /T\.DIST\.2T/);
+  assert.ok(normRow, "tabla de normalidad presente");
+  const firstData = normRow + 3;
+  assert.match(String(sheet.cell(firstData, 10).value()), /^Total /);
+  for (let r = firstData; r < firstData + 5; r += 1) {
+    assert.equal(typeof sheet.cell(r, 11).value(), "number", `KS estadistico fila ${r}`);
+    assert.equal(sheet.cell(r, 12).value(), 15);
+    assert.equal(typeof sheet.cell(r, 13).value(), "number", `KS sig fila ${r}`);
+    assert.equal(typeof sheet.cell(r, 14).value(), "number", `SW estadistico fila ${r}`);
+    assert.equal(typeof sheet.cell(r, 16).value(), "number", `SW sig fila ${r}`);
+  }
+  assert.match(String(sheet.cell(firstData + 5, 10).value()), /^a\. Corrección/,
+    "solo 5 filas: las dimensiones de V2 no llevan normalidad");
+
+  // Correlaciones con el metodo decidido por la normalidad: la general V1-V2
+  // mas una por cada dimension de V1 (4 tablas en total).
+  const corrRows = [];
+  let label = null;
+  for (let r = 4; r <= 150; r += 1) {
+    const v = String(sheet.cell(r, 10).value() ?? "");
+    if (v === "Correlación de Pearson" || v === "Rho de Spearman") {
+      corrRows.push(r);
+      label = v;
+    }
+  }
+  assert.equal(corrRows.length, 4, "correlacion general + 3 dimensiones de V1");
+  corrRows.forEach((r) => {
+    assert.match(String(sheet.cell(r, 11).formula()), /CORREL\(/);
+    assert.match(String(sheet.cell(r + 1, 11).formula()), /T\.DIST\.2T/);
+  });
+  if (label === "Rho de Spearman") {
+    // Con Spearman las columnas de rangos alimentan el CORREL.
+    assert.match(String(sheet.cell(5, 19).formula()), /RANK\.AVG/);
+  }
 });
 
 test("estructura_v1 agrupa indicadores con celdas combinadas", async () => {
