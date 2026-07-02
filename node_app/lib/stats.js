@@ -181,45 +181,114 @@ export const computeCorrelation = (base, cfg) => {
   return r;
 };
 
+// Perfiles de distribucion por item: cada item recibe al azar una forma de
+// respuesta distinta (campana, polarizada, sesgada o dispersa) mediante un
+// "warp" monotono sobre el percentil 0-1. Al ser transformaciones monotonas
+// del mismo factor latente, la correlacion entre variables se conserva; lo
+// que cambia es la forma de cada columna, rompiendo los patrones repetitivos.
+const ITEM_PROFILES = [
+  { // campana: concentrado alrededor del centro, sin exagerar
+    peso: 3,
+    ruido: 1,
+    warp: () => {
+      const k = 1.5 + Math.random() * 1.1;
+      return (u) => {
+        const t = 2 * u - 1;
+        return 0.5 * (1 + Math.sign(t) * Math.abs(t) ** k);
+      };
+    },
+  },
+  { // extremo: respuestas cargadas hacia los polos de la escala
+    peso: 1.5,
+    ruido: 0.9,
+    warp: () => {
+      const k = 0.35 + Math.random() * 0.3;
+      return (u) => {
+        const t = 2 * u - 1;
+        return 0.5 * (1 + Math.sign(t) * Math.abs(t) ** k);
+      };
+    },
+  },
+  { // sesgado alto: la mayoria responde en la parte superior de la escala
+    peso: 2,
+    ruido: 1,
+    warp: () => {
+      const p = 0.4 + Math.random() * 0.3;
+      return (u) => u ** p;
+    },
+  },
+  { // sesgado bajo: la mayoria responde en la parte inferior de la escala
+    peso: 2,
+    ruido: 1,
+    warp: () => {
+      const p = 0.4 + Math.random() * 0.3;
+      return (u) => 1 - (1 - u) ** p;
+    },
+  },
+  { // disperso: reparto amplio entre todas las opciones
+    peso: 2,
+    ruido: 1.5,
+    warp: () => (u) => u,
+  },
+];
+
+const pickProfile = () => {
+  const total = ITEM_PROFILES.reduce((acc, p) => acc + p.peso, 0);
+  let r = Math.random() * total;
+  for (const p of ITEM_PROFILES) {
+    r -= p.peso;
+    if (r <= 0) return p;
+  }
+  return ITEM_PROFILES[0];
+};
+
 export const generateBaseData = (cfg) => {
   const rows = cfg.encuestados;
   const v1Count = cfg.variables[0].totalItems;
   const v2Count = cfg.variables[1]?.totalItems ?? 0;
   const minResponse = Math.min(...cfg.escala.map((o) => o.valor));
   const maxResponse = Math.max(...cfg.escala.map((o) => o.valor));
+  const nOpts = maxResponse - minResponse + 1;
   const sign = cfg.relacionInversa ? -1 : 1;
 
   const targetCorr = 0.95;
   let noiseStd = Math.sqrt(1 / (targetCorr ** 2) - 1);
 
-  const scaleToRange = (values) => {
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    if (min === max) {
-      const mid = Math.floor((minResponse + maxResponse) / 2);
-      return values.map(() => mid);
-    }
-    return values.map((v) => {
-      const norm = (v - min) / (max - min);
-      const mapped = minResponse + norm * (maxResponse - minResponse);
-      const val = Math.round(mapped);
-      return Math.max(minResponse, Math.min(maxResponse, val));
+  // Percentil aproximado de cada valor dentro de su columna (media/sd
+  // muestrales): conserva el orden —y con el la correlacion— pero permite
+  // deformar la distribucion de frecuencias con el warp del perfil, siempre
+  // dentro del rango exacto de la escala.
+  const discretize = (s, warp) => {
+    const mean = s.reduce((a, b) => a + b, 0) / s.length;
+    const sd = Math.sqrt(s.reduce((a, v) => a + (v - mean) ** 2, 0) / s.length) || 1;
+    return s.map((v) => {
+      const u = Math.min(0.999999, Math.max(0.000001, normCdf((v - mean) / sd)));
+      const k = Math.floor(warp(u) * nOpts);
+      return minResponse + Math.min(nOpts - 1, Math.max(0, k));
     });
   };
 
   const buildOnce = (std) => {
-    const z = Array.from({ length: rows }, () => randn());
-    const cols = {};
-    for (let i = 1; i <= v1Count; i += 1) {
-      cols[`V1_${i}`] = z.map((v) => v + randn() * std);
-    }
-    for (let i = 1; i <= v2Count; i += 1) {
-      cols[`V2_${i}`] = z.map((v) => sign * v + randn() * std);
-    }
+    // Heterogeneidad entre encuestados: factor comun (correlacion V1-V2) +
+    // rasgo individual (estilo de respuesta: criticos/optimistas) + grupos
+    // latentes con medias distintas. Para la relacion inversa se invierte el
+    // latente completo de V2, asi la heterogeneidad no diluye el signo.
+    const groupOffsets = [-0.55, 0, 0.55];
+    const latent = Array.from({ length: rows }, () => (
+      randn() + 0.35 * randn() + groupOffsets[Math.floor(Math.random() * groupOffsets.length)]
+    ));
+
     const data = {};
-    Object.entries(cols).forEach(([k, values]) => {
-      data[k] = scaleToRange(values);
-    });
+    const addColumns = (varNum, count, colSign) => {
+      for (let i = 1; i <= count; i += 1) {
+        const perfil = pickProfile();
+        const carga = 0.75 + Math.random() * 0.4; // discriminacion del item
+        const s = latent.map((v) => colSign * carga * v + randn() * std * perfil.ruido);
+        data[`V${varNum}_${i}`] = discretize(s, perfil.warp());
+      }
+    };
+    addColumns(1, v1Count, 1);
+    if (v2Count > 0) addColumns(2, v2Count, sign);
     return data;
   };
 

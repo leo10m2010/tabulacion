@@ -9,6 +9,10 @@ Actualizado: 2026-07-01.
 - Frontend React/Vite en `frontend/` consumiendo la API (`POST /generate` en modo `inline`); envía la estructura jerárquica en `estructura_v1`/`estructura_v2`.
 - Suite de tests con `node:test` (`cd node_app && npm test`): 22 tests de generador y API.
 
+## Simulación de datos con dispersión realista (2026-07-01)
+
+- `generateBaseData` (`node_app/lib/stats.js`) dejó de concentrar todas las respuestas en el centro: cada ítem recibe un **perfil de distribución** aleatorio (campana, polarizado, sesgado alto/bajo o disperso, con parámetros aleatorios por ítem) aplicado como warp monótono sobre el percentil, y hay **heterogeneidad entre encuestados** (rasgo individual de estilo de respuesta + grupos latentes con medias distintas). Como los warps son monótonos sobre el mismo factor latente, la correlación objetivo se conserva (|r| ≈ 0.97-0.98, inversa incluida) y los valores siempre caen dentro del rango de la escala.
+
 ## Refactor por módulos (2026-07-01)
 
 - `node_app/generator.js` (antes ~1,800 líneas) quedó como orquestador de ~70 líneas que **re-exporta la API pública** (los imports de server/tests/CLI no cambian). La lógica vive en `node_app/lib/`: `config.js` (normalización, límites, temas), `stats.js` (simulación, correlación, normalidad), `sheet-style.js` (estilos y utilidades), `narratives.js` (interpretaciones), `sheets.js` (las hojas + `buildWorkbook`) y `ooxml.js` (dedupe de estilos + gráficos).
