@@ -233,6 +233,40 @@ test("hoja Relaciones: normalidad calculada y correlaciones", async () => {
   }
 });
 
+test("control de correlacion: niveles y direccion respetados", async () => {
+  // Nivel moderada, direccion directa: r de Spearman dentro de ±0.40-0.69.
+  const moderada = await generateArtifacts({ ...baseConfig, muestra: "80", nivelCorrelacion: "moderada" });
+  const cc = moderada.correlationControl;
+  assert.equal(cc.activo, true);
+  assert.equal(cc.metodo, "spearman");
+  assert.equal(cc.direccion, "directa");
+  assert.equal(cc.esperadoMin, 0.4);
+  assert.equal(cc.esperadoMax, 0.69);
+  assert.ok(cc.obtenido >= 0.34 && cc.obtenido <= 0.75, `r=${cc.obtenido}`);
+
+  // Nivel alta + relacion inversa: correlacion negativa en ±0.70-0.89.
+  const inversa = await generateArtifacts({
+    ...baseConfig, muestra: "80", relacionversa: "1", nivelCorrelacion: "alta",
+  });
+  const cci = inversa.correlationControl;
+  assert.equal(cci.direccion, "inversa");
+  assert.ok(cci.obtenido <= -0.64 && cci.obtenido >= -0.95, `r=${cci.obtenido}`);
+
+  // Nivel desconocido: aviso y fallback a muy_alta.
+  const malo = await generateArtifacts({ ...baseConfig, muestra: "30", nivelCorrelacion: "gigante" });
+  assert.ok(malo.warnings.some((w) => w.includes("nivel de correlacion")));
+  assert.equal(malo.correlationControl.nivel, "muy_alta");
+});
+
+test("control de correlacion desactivado: resultado natural", async () => {
+  const result = await generateArtifacts({ ...baseConfig, muestra: "60", controlCorrelacion: "0" });
+  const cc = result.correlationControl;
+  assert.equal(cc.activo, false);
+  assert.equal(typeof cc.obtenido, "number");
+  assert.equal(cc.cumple, undefined); // sin objetivo no hay rango que cumplir
+  assert.equal(typeof result.correlation, "number"); // Pearson informativo sigue presente
+});
+
 test("tema powerbi colorea los puntos y expone chartsPreview", async () => {
   const result = await generateArtifacts({ ...baseConfig, muestra: "15", tema: "powerbi" });
   assert.equal(result.tema, "powerbi");

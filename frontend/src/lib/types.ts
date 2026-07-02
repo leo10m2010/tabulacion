@@ -22,8 +22,22 @@ export interface SheetChartsPreview {
   charts: ChartPreview[];
 }
 
+// Resultado del control opcional de correlacion de la simulacion.
+export interface CorrelationControl {
+  activo: boolean;
+  nivel?: string;
+  etiqueta?: string;
+  direccion: "directa" | "inversa";
+  metodo: "spearman" | "pearson";
+  obtenido: number;
+  esperadoMin?: number;
+  esperadoMax?: number;
+  cumple?: boolean;
+}
+
 export interface InlineGenerateResponse {
   correlation: number | null;
+  correlationControl?: CorrelationControl | null;
   warnings?: string[];
   baseCsv: string;
   excelBase64: string;
@@ -47,6 +61,7 @@ export interface DownloadLinks {
 
 export interface GeneratedResult {
   correlation: number | null;
+  correlationControl: CorrelationControl | null;
   warnings: string[];
   csvRows: TableRows;
   sheetNames: string[];

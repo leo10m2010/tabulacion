@@ -21,6 +21,19 @@ export const CHART_THEMES = {
   monocromo: { nombre: "Monocromo", colores: ["212529", "495057", "6C757D", "ADB5BD", "CED4DA"] },
 };
 
+// Niveles de correlacion para el control opcional de la simulacion. Los
+// rangos son en valor absoluto: el signo lo define la relacion (directa /
+// inversa) elegida por el usuario. "nula" acepta la fluctuacion muestral
+// natural alrededor de 0.
+export const NIVELES_CORRELACION = {
+  muy_alta: { etiqueta: "Correlación muy alta", min: 0.9, max: 1.0 },
+  alta: { etiqueta: "Correlación alta", min: 0.7, max: 0.89 },
+  moderada: { etiqueta: "Correlación moderada", min: 0.4, max: 0.69 },
+  baja: { etiqueta: "Correlación baja", min: 0.2, max: 0.39 },
+  muy_baja: { etiqueta: "Correlación muy baja", min: 0.01, max: 0.19 },
+  nula: { etiqueta: "Correlación nula", min: 0, max: 0.09 },
+};
+
 export const toInt = (value, fallback = 0) => {
   const n = parseInt(String(value ?? "").trim(), 10);
   return Number.isFinite(n) ? n : fallback;
@@ -191,6 +204,15 @@ export const normalizeConfig = (raw) => {
     warnings.push(`El tema de graficos "${temaRaw}" no existe; se uso el tema clasico.`);
   }
 
+  // Control opcional de la correlacion simulada. Por compatibilidad el
+  // default es activado con nivel "muy_alta" (el comportamiento historico).
+  const controlRaw = String(raw.controlCorrelacion ?? "1").trim().toLowerCase();
+  const nivelRaw = String(raw.nivelCorrelacion ?? "muy_alta").trim().toLowerCase();
+  if (nivelRaw && !NIVELES_CORRELACION[nivelRaw]) {
+    warnings.push(`El nivel de correlacion "${nivelRaw}" no existe; se uso "muy_alta".`);
+  }
+  const metodoRaw = String(raw.metodoCorrelacion ?? "spearman").trim().toLowerCase();
+
   return {
     warnings,
     titulo: String(raw.titulo ?? "").trim(),
@@ -202,5 +224,8 @@ export const normalizeConfig = (raw) => {
     relacionInversa: new Set(["1", "si", "sí", "true", "inversa"]).has(relacion),
     conDatos: !new Set(["0", "false", "no", "off"]).has(conDatosRaw),
     tema: CHART_THEMES[temaRaw] ? temaRaw : "clasico",
+    controlCorrelacion: !new Set(["0", "false", "no", "off"]).has(controlRaw),
+    nivelCorrelacion: NIVELES_CORRELACION[nivelRaw] ? nivelRaw : "muy_alta",
+    metodoCorrelacion: metodoRaw === "pearson" ? "pearson" : "spearman",
   };
 };

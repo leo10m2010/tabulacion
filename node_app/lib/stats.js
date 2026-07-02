@@ -1,5 +1,6 @@
-// Estadistica del generador: simulacion de la base de datos, correlacion de
-// Pearson y pruebas de normalidad (Lilliefors y Shapiro-Wilk).
+// Estadistica del generador: simulacion de la base de datos, correlaciones
+// (Pearson y Spearman) y pruebas de normalidad (Lilliefors y Shapiro-Wilk).
+import { NIVELES_CORRELACION } from "./config.js";
 
 // ── Simulacion de base de datos ──────────────────────────────────────────────
 const randn = () => {
@@ -181,6 +182,34 @@ export const computeCorrelation = (base, cfg) => {
   return r;
 };
 
+// Rangos promedio para empates (Rho de Spearman = Pearson sobre rangos).
+const rankAvg = (values) => {
+  const n = values.length;
+  const order = values.map((v, i) => [v, i]).sort((a, b) => a[0] - b[0]);
+  const out = new Array(n);
+  let i = 0;
+  while (i < n) {
+    let j = i;
+    while (j + 1 < n && order[j + 1][0] === order[i][0]) j += 1;
+    const avg = (i + j) / 2 + 1;
+    for (let k = i; k <= j; k += 1) out[order[k][1]] = avg;
+    i = j + 1;
+  }
+  return out;
+};
+
+export const spearmanCorrelation = (base, cfg) => {
+  const rows = cfg.encuestados;
+  if (cfg.variables.length < 2) return null;
+  const v1 = sumPerRow(base, 1, cfg.variables[0].totalItems, rows);
+  const v2 = sumPerRow(base, 2, cfg.variables[1].totalItems, rows);
+  const r = pearson(rankAvg(v1), rankAvg(v2));
+  if (!Number.isFinite(r)) {
+    throw new Error("No se pudo calcular una correlacion valida con la base generada.");
+  }
+  return r;
+};
+
 // Perfiles de distribucion por item: cada item recibe al azar una forma de
 // respuesta distinta (campana, polarizada, sesgada o dispersa) mediante un
 // "warp" monotono sobre el percentil 0-1. Al ser transformaciones monotonas
@@ -242,6 +271,14 @@ const pickProfile = () => {
   return ITEM_PROFILES[0];
 };
 
+// Genera la base simulada. Devuelve { base, control }: `control` describe el
+// resultado del control opcional de correlacion (null con 1 sola variable).
+//
+// Modelo: cada persona tiene un factor compartido entre variables (cuyo peso
+// `w` controla la correlacion) y un componente propio por variable que carga
+// la heterogeneidad (rasgo de estilo de respuesta + grupos latentes) sin
+// forzar correlacion extra. Los items agregan su propio ruido y perfil de
+// distribucion, siempre dentro del rango exacto de la escala.
 export const generateBaseData = (cfg) => {
   const rows = cfg.encuestados;
   const v1Count = cfg.variables[0].totalItems;
@@ -251,13 +288,9 @@ export const generateBaseData = (cfg) => {
   const nOpts = maxResponse - minResponse + 1;
   const sign = cfg.relacionInversa ? -1 : 1;
 
-  const targetCorr = 0.95;
-  let noiseStd = Math.sqrt(1 / (targetCorr ** 2) - 1);
-
   // Percentil aproximado de cada valor dentro de su columna (media/sd
   // muestrales): conserva el orden —y con el la correlacion— pero permite
-  // deformar la distribucion de frecuencias con el warp del perfil, siempre
-  // dentro del rango exacto de la escala.
+  // deformar la distribucion de frecuencias con el warp del perfil.
   const discretize = (s, warp) => {
     const mean = s.reduce((a, b) => a + b, 0) / s.length;
     const sd = Math.sqrt(s.reduce((a, v) => a + (v - mean) ** 2, 0) / s.length) || 1;
@@ -268,45 +301,88 @@ export const generateBaseData = (cfg) => {
     });
   };
 
-  const buildOnce = (std) => {
-    // Heterogeneidad entre encuestados: factor comun (correlacion V1-V2) +
-    // rasgo individual (estilo de respuesta: criticos/optimistas) + grupos
-    // latentes con medias distintas. Para la relacion inversa se invierte el
-    // latente completo de V2, asi la heterogeneidad no diluye el signo.
-    const groupOffsets = [-0.55, 0, 0.55];
-    const latent = Array.from({ length: rows }, () => (
-      randn() + 0.35 * randn() + groupOffsets[Math.floor(Math.random() * groupOffsets.length)]
-    ));
+  // Heterogeneidad por persona y variable: rasgo individual (criticos /
+  // optimistas) + grupos latentes con medias distintas, normalizada a sd~1.
+  const groupOffsets = [-0.55, 0, 0.55];
+  const heterog = () => (
+    randn() + 0.35 * randn() + groupOffsets[Math.floor(Math.random() * groupOffsets.length)]
+  ) / 1.15;
+
+  const ITEM_STD = 0.55; // ruido por item: la correlacion se controla con w
+  const buildOnce = (w) => {
+    const a = Math.sqrt(Math.max(0, Math.min(1, w)));
+    const b = Math.sqrt(1 - a * a);
+    const shared = Array.from({ length: rows }, () => randn());
+    const latent1 = shared.map((z) => a * z + b * heterog());
+    const latent2 = v2Count > 0 ? shared.map((z) => sign * a * z + b * heterog()) : null;
 
     const data = {};
-    const addColumns = (varNum, count, colSign) => {
+    const addColumns = (varNum, count, latent) => {
       for (let i = 1; i <= count; i += 1) {
         const perfil = pickProfile();
         const carga = 0.75 + Math.random() * 0.4; // discriminacion del item
-        const s = latent.map((v) => colSign * carga * v + randn() * std * perfil.ruido);
+        const s = latent.map((v) => carga * v + randn() * ITEM_STD * perfil.ruido);
         data[`V${varNum}_${i}`] = discretize(s, perfil.warp());
       }
     };
-    addColumns(1, v1Count, 1);
-    if (v2Count > 0) addColumns(2, v2Count, sign);
+    addColumns(1, v1Count, latent1);
+    if (v2Count > 0) addColumns(2, v2Count, latent2);
     return data;
   };
 
-  if (v2Count === 0) return buildOnce(noiseStd);
+  // Con una sola variable no hay correlacion que controlar.
+  if (v2Count === 0) return { base: buildOnce(0.6), control: null };
 
-  let best = null;
-  let bestCorr = 0;
-  for (let i = 0; i < 6; i += 1) {
-    const data = buildOnce(noiseStd);
-    const r = computeCorrelation(data, cfg);
-    if (Math.abs(r) > Math.abs(bestCorr)) {
-      bestCorr = r;
-      best = data;
-    }
-    if (Math.abs(r) >= 0.9) return data;
-    noiseStd = Math.max(0.05, noiseStd * 0.7);
+  const metodo = cfg.metodoCorrelacion;
+  const measure = metodo === "pearson" ? computeCorrelation : spearmanCorrelation;
+  const direccion = cfg.relacionInversa ? "inversa" : "directa";
+
+  // Control desactivado: una sola generacion con fuerza de relacion
+  // aleatoria; la correlacion obtenida es el resultado natural de los datos.
+  if (!cfg.controlCorrelacion) {
+    const base = buildOnce(0.15 + Math.random() * 0.7);
+    return {
+      base,
+      control: { activo: false, direccion, metodo, obtenido: measure(base, cfg) },
+    };
   }
-  return best ?? buildOnce(0.05);
+
+  // Control activado: busqueda adaptativa del peso compartido w hasta que la
+  // correlacion (en valor absoluto) caiga dentro del rango del nivel elegido;
+  // si no se logra, se conserva el intento mas cercano al rango.
+  const nivel = cfg.nivelCorrelacion;
+  const objetivo = NIVELES_CORRELACION[nivel];
+  const mid = (objetivo.min + objetivo.max) / 2;
+  let w = nivel === "nula" ? 0 : Math.min(0.98, mid / 0.85);
+  let best = null;
+  for (let i = 0; i < 14; i += 1) {
+    const base = buildOnce(w);
+    const r = measure(base, cfg);
+    const abs = Math.abs(r);
+    const signOk = nivel === "nula" || (sign < 0 ? r <= 0 : r >= 0);
+    const dist = (abs < objetivo.min ? objetivo.min - abs : abs > objetivo.max ? abs - objetivo.max : 0)
+      + (signOk ? 0 : 1);
+    if (!best || dist < best.dist) best = { base, r, dist };
+    if (dist === 0) break;
+    if (nivel !== "nula") {
+      const ratio = abs > 1e-6 ? mid / abs : 2;
+      w = Math.min(0.99, Math.max(0.02, w * Math.min(2.5, Math.max(0.4, ratio))));
+    }
+  }
+  return {
+    base: best.base,
+    control: {
+      activo: true,
+      nivel,
+      etiqueta: objetivo.etiqueta,
+      direccion,
+      metodo,
+      obtenido: best.r,
+      esperadoMin: objetivo.min,
+      esperadoMax: objetivo.max,
+      cumple: best.dist === 0,
+    },
+  };
 };
 
 export const buildBaseCsv = (base, cfg) => {

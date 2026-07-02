@@ -873,7 +873,7 @@ const addCorrelacionSheet = (sheet, cfg, relInfo) => {
 };
 
 // ── Hoja de informacion ──────────────────────────────────────────────────────
-const addInfoSheet = (sheet, cfg, baseSheetNames) => {
+const addInfoSheet = (sheet, cfg, baseSheetNames, correlationControl = null) => {
   let row = 1;
   sheet.range(row, 1, row, 4).merged(true).style({ ...ST_HEADER, fontSize: 13 });
   sheet.cell(row, 1).value(cfg.titulo || "Instrumento de investigación");
@@ -933,6 +933,37 @@ const addInfoSheet = (sheet, cfg, baseSheetNames) => {
     row += 1;
   });
 
+  // Resumen del control opcional de correlacion de la simulacion.
+  if (correlationControl) {
+    const cc = correlationControl;
+    row += 1;
+    sheet.range(row, 1, row, 4).merged(true).style(ST_HEADER);
+    sheet.cell(row, 1).value("Simulación de datos — control de correlación");
+    row += 1;
+    const filas = [
+      ["Control de correlación", cc.activo ? "Activado" : "Desactivado (correlación natural)"],
+      ...(cc.activo
+        ? [["Nivel elegido", `${cc.etiqueta} (±${cc.esperadoMin.toFixed(2)} a ±${cc.esperadoMax.toFixed(2)})`]]
+        : []),
+      ["Dirección (del paso de relación)", cc.direccion === "inversa" ? "Inversa (correlación negativa)" : "Directa (correlación positiva)"],
+      ["Método de verificación", cc.metodo === "pearson" ? "Pearson" : "Rho de Spearman"],
+      ["Correlación obtenida", Number(cc.obtenido.toFixed(3))],
+      ...(cc.activo
+        ? [["¿Cumple el rango elegido?", cc.cumple ? "Sí" : "No (se aproximó lo máximo posible)"]]
+        : []),
+    ];
+    filas.forEach(([k, v]) => {
+      sheet.cell(row, 1).value(k).style({ ...ST_CELL_LEFT, bold: true, fill: COLOR_STATS });
+      sheet.range(row, 2, row, 4).merged(true).style(ST_CELL_LEFT);
+      sheet.cell(row, 2).value(v);
+      row += 1;
+    });
+    sheet.range(row, 1, row, 4).merged(true).style({ ...FONT, fontSize: 9, italic: true, horizontalAlignment: "left" });
+    sheet.cell(row, 1).value(
+      "• Los datos son simulados: esta función está pensada para pruebas del sistema, ensayos estadísticos y demostraciones académicas; no reemplaza datos reales recolectados en una investigación.",
+    );
+  }
+
   sheet.column("A").width(28);
   sheet.column("B").width(44);
   sheet.column("C").width(20);
@@ -940,7 +971,7 @@ const addInfoSheet = (sheet, cfg, baseSheetNames) => {
 };
 
 // ── Orquestacion del workbook ────────────────────────────────────────────────
-export const buildWorkbook = async (cfg, base) => {
+export const buildWorkbook = async (cfg, base, correlationControl = null) => {
   resetAxisIds(); // ids de ejes deterministas por archivo
   const workbook = await XlsxPopulate.fromBlankAsync();
   const usedNames = new Set();
@@ -987,7 +1018,7 @@ export const buildWorkbook = async (cfg, base) => {
   }
 
   const infoName = sanitizeSheetName("Información", usedNames);
-  addInfoSheet(workbook.addSheet(infoName), cfg, baseSheetNames);
+  addInfoSheet(workbook.addSheet(infoName), cfg, baseSheetNames, correlationControl);
 
   return { workbook, sheetCharts };
 };

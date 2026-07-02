@@ -46,7 +46,21 @@ export const FALLBACK_CONFIG: TabConfig = {
   nombre_indicador: ["Planificacion", "Transparencia", "Cumplimiento normativo", "Satisfaccion del servicio"],
   numero_indicador0: ["3", "1"],
   tema: "clasico",
+  controlCorrelacion: "1",
+  nivelCorrelacion: "muy_alta",
+  metodoCorrelacion: "spearman",
 };
+
+// Niveles del control opcional de correlacion. Deben coincidir con
+// NIVELES_CORRELACION de node_app/lib/config.js.
+export const CORRELATION_LEVELS = [
+  { id: "muy_alta", nombre: "Muy alta", rango: "±0.90 a ±1.00" },
+  { id: "alta", nombre: "Alta", rango: "±0.70 a ±0.89" },
+  { id: "moderada", nombre: "Moderada", rango: "±0.40 a ±0.69" },
+  { id: "baja", nombre: "Baja", rango: "±0.20 a ±0.39" },
+  { id: "muy_baja", nombre: "Muy baja", rango: "±0.01 a ±0.19" },
+  { id: "nula", nombre: "Nula", rango: "≈ 0.00" },
+];
 
 // Temas de color para los graficos del Excel y de la vista previa. Deben
 // coincidir con CHART_THEMES de node_app/generator.js (alli sin "#").

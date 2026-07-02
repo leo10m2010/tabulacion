@@ -96,6 +96,7 @@ test("un usuario con rol 'user' y suscripcion vigente puede generar", async () =
   assert.equal(limits.maxMuestra, 2000);
   assert.equal(limits.maxItemsV1, 60);
   assert.ok(Array.isArray(limits.temas) && limits.temas.some((t) => t.id === "powerbi"));
+  assert.ok(Array.isArray(limits.nivelesCorrelacion) && limits.nivelesCorrelacion.some((n) => n.id === "moderada"));
 
   const config = JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, "..", "..", "Tabulacion.json"), "utf-8"));
   const gen = await fetch(`${BASE}/generate`, {
@@ -109,6 +110,9 @@ test("un usuario con rol 'user' y suscripcion vigente puede generar", async () =
   assert.ok(payload.excelBase64.length > 1000);
   assert.equal(payload.tema, "clasico");
   assert.ok(Array.isArray(payload.chartsPreview) && payload.chartsPreview.length > 0);
+  assert.equal(payload.correlationControl?.activo, true);
+  assert.equal(payload.correlationControl?.metodo, "spearman");
+  assert.equal(typeof payload.correlationControl?.obtenido, "number");
 });
 
 test("la gestion de usuarios sigue siendo solo para admins", async () => {

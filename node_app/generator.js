@@ -18,8 +18,8 @@ import { buildWorkbook } from "./lib/sheets.js";
 import { postProcessWorkbook } from "./lib/ooxml.js";
 
 // API publica re-exportada (server, CLI y tests importan desde aqui).
-export { CHART_THEMES, MAX_ITEMS_POR_VARIABLE, MAX_MUESTRA, normalizeConfig } from "./lib/config.js";
-export { computeCorrelation, generateBaseData, lillieforsTest, shapiroWilkTest } from "./lib/stats.js";
+export { CHART_THEMES, MAX_ITEMS_POR_VARIABLE, MAX_MUESTRA, NIVELES_CORRELACION, normalizeConfig } from "./lib/config.js";
+export { computeCorrelation, generateBaseData, lillieforsTest, shapiroWilkTest, spearmanCorrelation } from "./lib/stats.js";
 export { buildWorkbook } from "./lib/sheets.js";
 export { postProcessWorkbook } from "./lib/ooxml.js";
 
@@ -35,8 +35,11 @@ export const generateArtifacts = async (rawConfig) => {
 
   let base = null;
   let correlation = null;
+  let correlationControl = null;
   if (cfg.conDatos) {
-    base = generateBaseData(cfg);
+    const generated = generateBaseData(cfg);
+    base = generated.base;
+    correlationControl = generated.control;
     correlation = computeCorrelation(base, cfg);
   }
   if (cfg.variables.length < 2) {
@@ -45,7 +48,7 @@ export const generateArtifacts = async (rawConfig) => {
 
   // Liberar el DOM del workbook antes del post-procesado reduce el pico de
   // memoria (importante en contenedores de 512 MB).
-  let built = await buildWorkbook(cfg, base);
+  let built = await buildWorkbook(cfg, base, correlationControl);
   const { sheetCharts } = built;
   const plainBuffer = await built.workbook.outputAsync({ type: "nodebuffer" });
   built = null;
@@ -63,7 +66,7 @@ export const generateArtifacts = async (rawConfig) => {
     }))
     .filter((s) => s.charts.length > 0);
 
-  return { correlation, excelBuffer, baseCsv, warnings, chartsPreview, tema: cfg.tema };
+  return { correlation, correlationControl, excelBuffer, baseCsv, warnings, chartsPreview, tema: cfg.tema };
 };
 
 export const generateAndWriteFiles = async (config, opts = {}) => {

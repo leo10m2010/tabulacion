@@ -9,6 +9,10 @@ Actualizado: 2026-07-01.
 - Frontend React/Vite en `frontend/` consumiendo la API (`POST /generate` en modo `inline`); envía la estructura jerárquica en `estructura_v1`/`estructura_v2`.
 - Suite de tests con `node:test` (`cd node_app && npm test`): 22 tests de generador y API.
 
+## Control opcional de correlación (2026-07-01)
+
+- Interruptor `controlCorrelacion` (default activado por compatibilidad): activado, el usuario elige `nivelCorrelacion` (muy_alta/alta/moderada/baja/muy_baja/nula, rangos en valor absoluto) y el generador busca adaptativamente el peso del factor compartido hasta que la correlación de las sumas caiga en el rango; desactivado, la correlación es el resultado natural (fuerza aleatoria por generación). El signo lo aporta `relacionversa` (no se vuelve a preguntar). Verificación con `metodoCorrelacion`: Spearman (default, adecuado para Likert) o Pearson. El resultado (`correlationControl`: activo, nivel, dirección, método, obtenido, rango esperado, cumple) viaja en la respuesta inline, se muestra en el paso 3 del frontend y se documenta en la hoja "Información" con el disclaimer de datos simulados.
+
 ## Simulación de datos con dispersión realista (2026-07-01)
 
 - `generateBaseData` (`node_app/lib/stats.js`) dejó de concentrar todas las respuestas en el centro: cada ítem recibe un **perfil de distribución** aleatorio (campana, polarizado, sesgado alto/bajo o disperso, con parámetros aleatorios por ítem) aplicado como warp monótono sobre el percentil, y hay **heterogeneidad entre encuestados** (rasgo individual de estilo de respuesta + grupos latentes con medias distintas). Como los warps son monótonos sobre el mismo factor latente, la correlación objetivo se conserva (|r| ≈ 0.97-0.98, inversa incluida) y los valores siempre caen dentro del rango de la escala.

@@ -44,7 +44,7 @@ import type {
   WizardStep,
 } from "./lib/types";
 import * as api from "./lib/api";
-import { DEFAULT_API_BASE_URL, FALLBACK_CONFIG, LIST_GROUPS, themePalette } from "./lib/constants";
+import { CORRELATION_LEVELS, DEFAULT_API_BASE_URL, FALLBACK_CONFIG, LIST_GROUPS, themePalette } from "./lib/constants";
 import {
   base64ToUint8Array,
   eid,
@@ -453,6 +453,7 @@ export default function App() {
       setDownloadLinks((cur) => { revokeDownloadLinks(cur); return nextLinks; });
       setResult({
         correlation: payload.correlation,
+        correlationControl: payload.correlationControl ?? null,
         warnings: payload.warnings ?? [],
         csvRows,
         sheetNames: parsedWorkbook.names,
@@ -861,6 +862,91 @@ export default function App() {
                           </div>
                         </div>
                       )}
+
+                      {/* Control de correlación — solo con 2 variables */}
+                      {(parseInt(getScalar("variable"), 10) || 2) >= 2 && (
+                        <div className="rounded-xl border border-border/80 bg-background/50 p-4">
+                          <div className="mb-2 flex items-center gap-2.5">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">3</span>
+                            <p className="text-base font-semibold text-foreground">¿Controlar la correlación de los datos simulados?</p>
+                          </div>
+                          <FieldHint text="Activado: eliges qué tan fuerte debe salir la relación entre tus variables. Desactivado: la correlación será el resultado natural de los datos. Función pensada para datos simulados, pruebas y demostraciones académicas." />
+                          <div className="mt-3 flex gap-2">
+                            <button
+                              onClick={() => setScalar("controlCorrelacion", "1")}
+                              className={cn(
+                                "flex-1 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                getScalar("controlCorrelacion") !== "0"
+                                  ? "border-primary bg-primary/10 text-primary"
+                                  : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                              )}
+                            >
+                              Activado
+                            </button>
+                            <button
+                              onClick={() => setScalar("controlCorrelacion", "0")}
+                              className={cn(
+                                "flex-1 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                getScalar("controlCorrelacion") === "0"
+                                  ? "border-primary bg-primary/10 text-primary"
+                                  : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                              )}
+                            >
+                              Desactivado — correlación natural
+                            </button>
+                          </div>
+
+                          {getScalar("controlCorrelacion") !== "0" && (
+                            <div className="mt-4">
+                              <p className="text-sm font-medium text-foreground">Nivel de correlación deseado</p>
+                              <FieldHint text={`La dirección no se vuelve a preguntar: ya la elegiste arriba (${getScalar("relacionversa") === "1" ? "inversa → correlación negativa" : "directa → correlación positiva"}).`} />
+                              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                                {CORRELATION_LEVELS.map((lvl) => {
+                                  const selected = (getScalar("nivelCorrelacion") || "muy_alta") === lvl.id;
+                                  return (
+                                    <button
+                                      key={lvl.id}
+                                      onClick={() => setScalar("nivelCorrelacion", lvl.id)}
+                                      className={cn(
+                                        "rounded-xl border-2 px-3 py-2 text-left transition-all",
+                                        selected
+                                          ? "border-primary bg-primary/10"
+                                          : "border-border bg-background hover:border-primary/50",
+                                      )}
+                                    >
+                                      <span className={cn("block text-sm font-semibold", selected ? "text-primary" : "text-foreground")}>{lvl.nombre}</span>
+                                      <span className="block text-xs text-muted-foreground">{lvl.rango}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <span className="text-xs font-medium text-muted-foreground">Verificar con:</span>
+                                {[
+                                  { id: "spearman", label: "Spearman (recomendado para Likert)" },
+                                  { id: "pearson", label: "Pearson" },
+                                ].map((m) => {
+                                  const selected = (getScalar("metodoCorrelacion") || "spearman") === m.id;
+                                  return (
+                                    <button
+                                      key={m.id}
+                                      onClick={() => setScalar("metodoCorrelacion", m.id)}
+                                      className={cn(
+                                        "rounded-full border px-3 py-1 text-xs font-medium transition-all",
+                                        selected
+                                          ? "border-primary bg-primary/10 text-primary"
+                                          : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                                      )}
+                                    >
+                                      {m.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
 
@@ -1135,6 +1221,12 @@ export default function App() {
                           ...((parseIntSafe(config.variable) ?? 2) >= 2 ? [{ label: "Niveles baremo V2", value: getScalar("escala_v2") }] : []),
                           { label: "Opciones por pregunta", value: `1 al ${getScalar("respuesta")}` },
                           { label: "Relación", value: getScalar("relacionversa") === "1" ? "Inversa" : "Directa" },
+                          ...((parseIntSafe(config.variable) ?? 2) >= 2 ? [{
+                            label: "Control de correlación",
+                            value: getScalar("controlCorrelacion") === "0"
+                              ? "Desactivado (natural)"
+                              : (CORRELATION_LEVELS.find((l) => l.id === (getScalar("nivelCorrelacion") || "muy_alta"))?.nombre ?? "Muy alta"),
+                          }] : []),
                           { label: "Variables", value: getList("nombre_dimension").filter(Boolean).join(", ") || "—" },
                         ].map((item) => (
                           <div key={item.label} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2.5">
@@ -1222,7 +1314,47 @@ export default function App() {
                       </CardHeader>
                       <CardContent className="space-y-5">
                         {/* Correlation: con 1 sola variable no aplica */}
-                        {result.correlation !== null && (
+                        {result.correlationControl ? (
+                          <div className="rounded-xl border border-border/60 bg-background/80 p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-sm text-muted-foreground">
+                                Correlación obtenida ({result.correlationControl.metodo === "pearson" ? "Pearson" : "Rho de Spearman"})
+                                {" · "}dirección {result.correlationControl.direccion}
+                              </p>
+                              {result.correlationControl.activo ? (
+                                result.correlationControl.cumple ? (
+                                  <span className="rounded-full bg-green-500/15 px-2.5 py-0.5 text-xs font-semibold text-green-600 dark:text-green-400">
+                                    ✓ Dentro del rango elegido
+                                  </span>
+                                ) : (
+                                  <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                                    Fuera del rango (se aproximó lo máximo posible)
+                                  </span>
+                                )
+                              ) : (
+                                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                                  Control desactivado — resultado natural
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1 flex items-baseline gap-3">
+                              <span className="text-4xl font-bold tracking-tight text-primary">{result.correlationControl.obtenido.toFixed(3)}</span>
+                              <div>
+                                <span className={cn("text-sm font-semibold", correlationInfo(result.correlationControl.obtenido).colorClass)}>
+                                  Correlación {correlationInfo(result.correlationControl.obtenido).label}
+                                </span>
+                                <p className="text-xs text-muted-foreground">
+                                  {result.correlationControl.activo
+                                    ? `Objetivo: ${result.correlationControl.etiqueta} (±${result.correlationControl.esperadoMin?.toFixed(2)} a ±${result.correlationControl.esperadoMax?.toFixed(2)})`
+                                    : correlationInfo(result.correlationControl.obtenido).explanation}
+                                </p>
+                              </div>
+                            </div>
+                            <p className="mt-2 text-[11px] text-muted-foreground">
+                              Datos simulados: función pensada para pruebas, ensayos estadísticos y demostraciones académicas; no reemplaza datos reales.
+                            </p>
+                          </div>
+                        ) : result.correlation !== null && (
                           <div className="rounded-xl border border-border/60 bg-background/80 p-4">
                             <p className="text-sm text-muted-foreground">Coeficiente de correlación de Pearson</p>
                             <div className="mt-1 flex items-baseline gap-3">

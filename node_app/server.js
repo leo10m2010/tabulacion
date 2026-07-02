@@ -8,6 +8,7 @@ import {
   CHART_THEMES,
   MAX_ITEMS_POR_VARIABLE,
   MAX_MUESTRA,
+  NIVELES_CORRELACION,
   generateArtifacts,
 } from "./generator.js";
 
@@ -778,6 +779,8 @@ const server = http.createServer(async (req, res) => {
         maxItemsV2: MAX_ITEMS_POR_VARIABLE,
         baseCapacity: MAX_MUESTRA,
         temas: Object.entries(CHART_THEMES).map(([id, t]) => ({ id, nombre: t.nombre, colores: t.colores })),
+        nivelesCorrelacion: Object.entries(NIVELES_CORRELACION)
+          .map(([id, n]) => ({ id, etiqueta: n.etiqueta, min: n.min, max: n.max })),
       });
       return;
     }
@@ -801,6 +804,7 @@ const server = http.createServer(async (req, res) => {
       if (responseMode === "inline") {
         sendJson(res, 200, {
           correlation: artifacts.correlation,
+          correlationControl: artifacts.correlationControl ?? null,
           warnings: artifacts.warnings ?? [],
           baseCsv: artifacts.baseCsv,
           excelBase64: artifacts.excelBuffer.toString("base64"),
