@@ -96,7 +96,7 @@ export function LandingPage({
   const faqs = [
     {
       q: "¿Qué recibo exactamente al generar?",
-      a: "Un archivo Excel con 11 hojas: base de datos, estadísticos por ítem, baremos con valoración automática, frecuencias, gráficos e interpretaciones narrativas bajo cada figura. También un CSV con la base de datos.",
+      a: "Un archivo Excel con 9 hojas: base de datos, estadísticos por ítem, baremos con valoración automática, frecuencias, gráficos e interpretaciones narrativas bajo cada figura. También un CSV con la base de datos.",
     },
     {
       q: "¿Funciona con mi instrumento?",
@@ -382,7 +382,7 @@ export function LandingPage({
                         <FileSpreadsheet className="h-8 w-8" />
                       </motion.div>
                       <p className="mt-4 text-base font-semibold">Tu Excel está listo</p>
-                      <p className="mt-1 text-sm text-muted-foreground">11 hojas, 37 gráficos e interpretaciones</p>
+                      <p className="mt-1 text-sm text-muted-foreground">9 hojas, más de 30 gráficos e interpretaciones</p>
                       <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }} className="mt-5">
                         <Button size="sm" onClick={onOpenApp}>
                           <Download className="h-4 w-4" />
@@ -394,7 +394,7 @@ export function LandingPage({
                 </AnimatePresence>
               </div>
               <div className="mt-4 flex gap-1 border-t border-border pt-3">
-                {["Variable 1", "Dimensiones", "Ítems", "Conteo"].map((tab, i) => (
+                {["Variable 1", "Dimensiones", "Ítems", "Relaciones"].map((tab, i) => (
                   <span
                     key={tab}
                     className={cn(

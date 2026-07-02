@@ -9,6 +9,11 @@ Actualizado: 2026-07-01.
 - Frontend React/Vite en `frontend/` consumiendo la API (`POST /generate` en modo `inline`); envía la estructura jerárquica en `estructura_v1`/`estructura_v2`.
 - Suite de tests con `node:test` (`cd node_app && npm test`): 22 tests de generador y API.
 
+## Hojas de conteo eliminadas + método de correlación explícito (2026-07-01)
+
+- Se eliminaron las hojas "Conteo <Variable>": contaban las respuestas Likert agregadas por dimensión, pero la escala Likert es exclusivamente de los ítems — las dimensiones se miden por **niveles de baremo** (tabla baremada de la hoja Dimensiones). El Excel queda en 9 hojas / 33 gráficos con la config clásica.
+- `metodoCorrelacion` ahora es `auto` (default) | `pearson` | `spearman`. En `auto` la prueba de normalidad decide el método de las hojas (comportamiento anterior). Con un método explícito, **ese método manda** en Relaciones/Correlación y la narrativa lo justifica sin contradecir la tabla de normalidad (p. ej. Pearson con normalidad rechazada → "considerando el tamaño de la muestra y la robustez del estimador… conforme al diseño metodológico"). Con `pearson` los ítems se discretizan con umbrales lineales (forma cuasi-normal) y el lazo de control además prefiere bases que pasan la normalidad — a N chico/medio la normalidad pasa de verdad; a N grande (~300) las sumas Likert discretas rechazan KS/SW casi siempre (propiedad estadística real), y ahí aplica la narrativa justificada.
+
 ## Control opcional de correlación (2026-07-01)
 
 - Interruptor `controlCorrelacion` (default activado por compatibilidad): activado, el usuario elige `nivelCorrelacion` (muy_alta/alta/moderada/baja/muy_baja/nula, rangos en valor absoluto) y el generador busca adaptativamente el peso del factor compartido hasta que la correlación de las sumas caiga en el rango; desactivado, la correlación es el resultado natural (fuerza aleatoria por generación). El signo lo aporta `relacionversa` (no se vuelve a preguntar). Verificación con `metodoCorrelacion`: Spearman (default, adecuado para Likert) o Pearson. El resultado (`correlationControl`: activo, nivel, dirección, método, obtenido, rango esperado, cumple) viaja en la respuesta inline, se muestra en el paso 3 del frontend y se documenta en la hoja "Información" con el disclaimer de datos simulados.

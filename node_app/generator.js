@@ -1,6 +1,7 @@
 // Generador de tabulaciones 100% por codigo: construye el .xlsx completo
 // (estructura, formulas reales, graficos e interpretaciones) sin depender de
-// ninguna plantilla.
+// ninguna plantilla. Hojas: base, "Ítems" y "Dimensiones" por variable, mas
+// "Relaciones", "Correlación" e "Información".
 //
 // Este archivo solo orquesta; la logica vive en lib/:
 //   lib/config.js       normalizacion de la configuracion, limites y temas

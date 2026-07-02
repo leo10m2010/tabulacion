@@ -29,7 +29,7 @@ Por cada variable:
    - Debajo, un bloque por dimensión más el consolidado: ficha de baremo (11 campos) y tabla de niveles (rangos calculados con amplitud = rango/niveles, o tomados de `desde`/`hasta` para el consolidado).
    - "Tabla N" + tabla baremada (Calificación | Desde | Hasta | f | %) que cuenta con `COUNTIF` la columna Nivel de la tabla ancha, fuente, gráfico al costado, "Figura N" y narrativa con el nivel predominante.
 
-4. **`Conteo <Variable>`** — un bloque por dimensión: respuestas agregadas de todos los ítems de la dimensión (`COUNTIF` sobre el rango 2D de la hoja base), % sobre N×ítems, gráfico, Figura y narrativa.
+> Nota conceptual: la escala Likert es exclusivamente de los ítems; las dimensiones se miden por **niveles de baremo** (tabla baremada de la hoja Dimensiones). Por eso no existen hojas de "conteo por escala" de dimensiones.
 
 Globales: **`Relaciones`** (tabla de sumas por encuestado referenciando las hojas de dimensiones + una tabla única de pruebas de normalidad KS-Lilliefors/Shapiro-Wilk sobre V1 total, V2 total y las dimensiones de V1 —calculada por el generador con la base simulada; en blanco para SPSS con `conDatos: "0"`— con narrativa que decide Pearson o Rho de Spearman según los Sig. (todos ≥ 0.05 → Pearson; alguno < 0.05 → Spearman), y tablas de correlación —general V1-V2 y cada dimensión de V1 contra V2— con `CORREL` y Sig. bilateral vía `T.DIST.2T`; con Spearman se agregan columnas de rangos `RANK.AVG`), **`Correlación`** (r o rho vivo, r², interpretación automática y criterio) e **`Información`** (escala, niveles, instrucciones).
 

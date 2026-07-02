@@ -46,34 +46,34 @@ export const narrativeDimension = (cfg, tablaN, variableName, dimName, nivelCoun
     + `por todo ello, la dimensión ${dimName} es "${shares[0].label}".`;
 };
 
-export const narrativeConteo = (cfg, tablaN, dimName, nItems, counts) => {
-  if (!counts) {
-    return `En la Tabla ${tablaN} y la Figura ${tablaN} se observan las respuestas agregadas de los ${nItems} ítems de la dimensión ${dimName}. `
-      + `Ingrese las respuestas en la hoja base para completar esta interpretación.`;
-  }
-  const total = counts.reduce((a, b) => a + b, 0);
-  const shares = sortShares(counts, cfg.escala.map((o) => o.etiqueta), total);
-  return `En la Tabla ${tablaN} y la Figura ${tablaN} se observan las ${total} respuestas agregadas de los ${nItems} ítems de la dimensión ${dimName}: `
-    + `${joinShares(shares, "corresponde a")}. La opción predominante de la dimensión es "${shares[0].label}".`;
-};
-
-export const narrativeNormalidadAuto = (tablaN, v1Name, v2Name, useSW, method) => {
+// `forced` indica que el metodo lo eligio el investigador ("pearson" |
+// "spearman" | null para decision automatica por normalidad); `hayNoNormal`
+// es el resultado real de la tabla (algun Sig. < 0.05). La narrativa nunca
+// contradice la tabla: si el metodo elegido no coincide con la normalidad,
+// se justifica la eleccion.
+export const narrativeNormalidadAuto = (tablaN, v1Name, v2Name, useSW, method, forced = null, hayNoNormal = null) => {
   const prueba = useSW
     ? "Shapiro-Wilk (muestra ≤ 50)"
     : "Kolmogorov-Smirnov con corrección de Lilliefors (muestra > 50)";
+  const noNormal = hayNoNormal ?? method === "spearman";
+  const intro = noNormal
+    ? `En la Tabla ${tablaN}, y basándose en la prueba de ${prueba}, se puede observar que al menos uno de los valores de significancia (Sig.) de la variable ${v1Name}, `
+      + `de la variable ${v2Name} y de las dimensiones de ${v1Name} es menor que 0.05; es decir, los datos no se encuentran normalmente distribuidos. `
+    : `En la Tabla ${tablaN}, y basándose en la prueba de ${prueba}, se puede observar que los valores de significancia (Sig.) de la variable ${v1Name}, `
+      + `de la variable ${v2Name} y de las dimensiones de ${v1Name} son todos mayores o iguales a 0.05; es decir, los datos se encuentran normalmente distribuidos. `;
   if (method === "pearson") {
-    return `En la Tabla ${tablaN}, y basándose en la prueba de ${prueba}, se puede observar que los valores de significancia (Sig.) de la variable ${v1Name}, `
-      + `de la variable ${v2Name} y de las dimensiones de ${v1Name} son todos mayores o iguales a 0.05; es decir, los datos se encuentran normalmente `
-      + `distribuidos. Por tal motivo se procederá a utilizar la prueba paramétrica de correlación de Pearson.`;
+    return intro + (noNormal
+      ? `No obstante, considerando el tamaño de la muestra y la robustez del estimador, se utilizó la correlación de Pearson conforme al diseño metodológico del estudio.`
+      : `Por tal motivo se procederá a utilizar la prueba paramétrica de correlación de Pearson.`);
   }
-  return `En la Tabla ${tablaN}, y basándose en la prueba de ${prueba}, se puede observar que al menos uno de los valores de significancia (Sig.) de la variable ${v1Name}, `
-    + `de la variable ${v2Name} y de las dimensiones de ${v1Name} es menor que 0.05; es decir, los datos no se encuentran normalmente distribuidos. `
-    + `Por tal motivo se procederá a utilizar la prueba no paramétrica Rho de Spearman.`;
+  return intro + (noNormal
+    ? `Por tal motivo se procederá a utilizar la prueba no paramétrica Rho de Spearman.`
+    : `${forced ? "Aun así, por tratarse de datos ordinales de tipo Likert, se utilizó la prueba no paramétrica Rho de Spearman conforme al diseño metodológico del estudio." : "Por tal motivo se procederá a utilizar la prueba no paramétrica Rho de Spearman."}`);
 };
 
-export const narrativeNormalidadManual = (tablaN, v1Name, v2Name) => (
+export const narrativeNormalidadManual = (tablaN, v1Name, v2Name, method = "pearson") => (
   `En la Tabla ${tablaN} se presentan las pruebas de normalidad de la variable ${v1Name}, de la variable ${v2Name} y de las dimensiones de ${v1Name} `
   + `(la normalidad no se aplica a las dimensiones de la variable 2). Complete los valores con los resultados de SPSS y revise las significancias: `
   + `si todos los Sig. son mayores o iguales a 0.05, utilice la correlación de Pearson; si uno o más son menores que 0.05, utilice Rho de Spearman. `
-  + `Las tablas de correlación de este archivo se generaron con Pearson por defecto.`
+  + `Las tablas de correlación de este archivo se generaron con ${method === "spearman" ? "Rho de Spearman" : "Pearson"}.`
 );

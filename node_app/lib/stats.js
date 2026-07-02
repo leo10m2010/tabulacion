@@ -308,6 +308,22 @@ export const generateBaseData = (cfg) => {
     randn() + 0.35 * randn() + groupOffsets[Math.floor(Math.random() * groupOffsets.length)]
   ) / 1.15;
 
+  // Con Pearson como metodo elegido, los items se discretizan con umbrales
+  // lineales fijos en z (forma cuasi-normal, con corrimiento y apertura
+  // aleatorios por item): las sumas quedan aproximadamente normales y la
+  // prueba de normalidad de la hoja "Relaciones" selecciona Pearson de forma
+  // estadisticamente coherente. Con Spearman se usan los perfiles dispersos.
+  const modoNormal = cfg.metodoCorrelacion === "pearson";
+  const discretizeLinear = (s, bias, apertura) => {
+    const mean = s.reduce((a, b) => a + b, 0) / s.length;
+    const sd = Math.sqrt(s.reduce((a, v) => a + (v - mean) ** 2, 0) / s.length) || 1;
+    return s.map((v) => {
+      const z = (v - mean) / sd + bias;
+      const idx = Math.floor(((z + apertura) / (2 * apertura)) * nOpts);
+      return minResponse + Math.min(nOpts - 1, Math.max(0, idx));
+    });
+  };
+
   const ITEM_STD = 0.55; // ruido por item: la correlacion se controla con w
   const buildOnce = (w) => {
     const a = Math.sqrt(Math.max(0, Math.min(1, w)));
@@ -319,10 +335,17 @@ export const generateBaseData = (cfg) => {
     const data = {};
     const addColumns = (varNum, count, latent) => {
       for (let i = 1; i <= count; i += 1) {
-        const perfil = pickProfile();
         const carga = 0.75 + Math.random() * 0.4; // discriminacion del item
-        const s = latent.map((v) => carga * v + randn() * ITEM_STD * perfil.ruido);
-        data[`V${varNum}_${i}`] = discretize(s, perfil.warp());
+        if (modoNormal) {
+          const bias = (Math.random() - 0.5) * 0.5; // corrimiento leve por item
+          const apertura = 1.8 + Math.random() * 0.6; // que tanto abren los umbrales
+          const s = latent.map((v) => carga * v + randn() * ITEM_STD);
+          data[`V${varNum}_${i}`] = discretizeLinear(s, bias, apertura);
+        } else {
+          const perfil = pickProfile();
+          const s = latent.map((v) => carga * v + randn() * ITEM_STD * perfil.ruido);
+          data[`V${varNum}_${i}`] = discretize(s, perfil.warp());
+        }
       }
     };
     addColumns(1, v1Count, latent1);
@@ -330,10 +353,31 @@ export const generateBaseData = (cfg) => {
     return data;
   };
 
+  // Misma regla de decision que la hoja "Relaciones": Shapiro-Wilk si n <= 50,
+  // Kolmogorov-Smirnov (Lilliefors) si n > 50, sobre V1 total, V2 total y las
+  // dimensiones de V1. true si todos los Sig. son >= 0.05 (normalidad).
+  const normalityOk = (base) => {
+    const targets = [];
+    let from = 1;
+    cfg.variables[0].dimensiones.forEach((d) => {
+      const count = d.indicadores.reduce((acc, ind) => acc + ind.items, 0);
+      targets.push(sumRangePerRow(base, 1, from, from + count - 1, rows));
+      from += count;
+    });
+    targets.push(sumPerRow(base, 1, v1Count, rows));
+    targets.push(sumPerRow(base, 2, v2Count, rows));
+    const useSW = rows <= 50;
+    return targets.every((values) => {
+      const test = useSW ? shapiroWilkTest(values) : lillieforsTest(values);
+      return test === null || test.p >= 0.05;
+    });
+  };
+
   // Con una sola variable no hay correlacion que controlar.
   if (v2Count === 0) return { base: buildOnce(0.6), control: null };
 
-  const metodo = cfg.metodoCorrelacion;
+  // "auto" verifica con Spearman (adecuado para Likert); "pearson" con Pearson.
+  const metodo = cfg.metodoCorrelacion === "pearson" ? "pearson" : "spearman";
   const measure = metodo === "pearson" ? computeCorrelation : spearmanCorrelation;
   const direccion = cfg.relacionInversa ? "inversa" : "directa";
 
@@ -349,21 +393,25 @@ export const generateBaseData = (cfg) => {
 
   // Control activado: busqueda adaptativa del peso compartido w hasta que la
   // correlacion (en valor absoluto) caiga dentro del rango del nivel elegido;
-  // si no se logra, se conserva el intento mas cercano al rango.
+  // con Pearson ademas se exige que la normalidad de las sumas pase (para que
+  // la hoja "Relaciones" elija Pearson). Si no se logra, se conserva el
+  // intento mas cercano.
   const nivel = cfg.nivelCorrelacion;
   const objetivo = NIVELES_CORRELACION[nivel];
   const mid = (objetivo.min + objetivo.max) / 2;
   let w = nivel === "nula" ? 0 : Math.min(0.98, mid / 0.85);
   let best = null;
-  for (let i = 0; i < 14; i += 1) {
+  const intentos = modoNormal ? 20 : 14;
+  for (let i = 0; i < intentos; i += 1) {
     const base = buildOnce(w);
     const r = measure(base, cfg);
     const abs = Math.abs(r);
     const signOk = nivel === "nula" || (sign < 0 ? r <= 0 : r >= 0);
-    const dist = (abs < objetivo.min ? objetivo.min - abs : abs > objetivo.max ? abs - objetivo.max : 0)
+    const distCorr = (abs < objetivo.min ? objetivo.min - abs : abs > objetivo.max ? abs - objetivo.max : 0)
       + (signOk ? 0 : 1);
-    if (!best || dist < best.dist) best = { base, r, dist };
-    if (dist === 0) break;
+    const score = distCorr + (modoNormal && !normalityOk(base) ? 0.5 : 0);
+    if (!best || score < best.score) best = { base, r, distCorr, score };
+    if (score === 0) break;
     if (nivel !== "nula") {
       const ratio = abs > 1e-6 ? mid / abs : 2;
       w = Math.min(0.99, Math.max(0.02, w * Math.min(2.5, Math.max(0.4, ratio))));
@@ -380,7 +428,7 @@ export const generateBaseData = (cfg) => {
       obtenido: best.r,
       esperadoMin: objetivo.min,
       esperadoMax: objetivo.max,
-      cumple: best.dist === 0,
+      cumple: best.distCorr === 0,
     },
   };
 };

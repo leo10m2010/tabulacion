@@ -63,7 +63,7 @@ Opcional:
 - `config.tema`: tema de color de los gráficos del Excel (`clasico`, `powerbi`, `ejecutivo`, `esmeralda`, `atardecer`, `monocromo`; default `clasico`). Los temas disponibles se listan en `GET /template-info`.
 - `config.controlCorrelacion`: `"1"` (default) controla la correlación de los datos simulados; `"0"` la deja como resultado natural.
 - `config.nivelCorrelacion`: nivel objetivo cuando el control está activado — `muy_alta` (±0.90-1.00, default), `alta` (±0.70-0.89), `moderada` (±0.40-0.69), `baja` (±0.20-0.39), `muy_baja` (±0.01-0.19), `nula` (≈0). El signo lo define `relacionversa` (directa/inversa); los niveles se listan en `GET /template-info`.
-- `config.metodoCorrelacion`: `spearman` (default, recomendado para Likert) o `pearson` para verificar el objetivo. La respuesta incluye `correlationControl` con: activo, nivel, dirección, método, correlación obtenida, rango esperado y si cumple; el mismo resumen se escribe en la hoja "Información" del Excel. Función pensada para datos simulados (pruebas y demostraciones académicas).
+- `config.metodoCorrelacion`: `auto` (default: la prueba de normalidad del Excel decide entre Pearson y Spearman), `spearman` o `pearson` (fuerzan el método en las hojas Relaciones/Correlación con narrativa justificada; con `pearson` los datos se generan con distribuciones compatibles con normalidad). La verificación del objetivo usa Spearman en `auto`/`spearman` y Pearson en `pearson`. La respuesta incluye `correlationControl` con: activo, nivel, dirección, método, correlación obtenida, rango esperado y si cumple; el mismo resumen se escribe en la hoja "Información" del Excel. Función pensada para datos simulados (pruebas y demostraciones académicas).
 
 Ejemplo:
 

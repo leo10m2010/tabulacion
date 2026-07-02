@@ -34,5 +34,5 @@
   "tema": "clasico",
   "controlCorrelacion": "1",
   "nivelCorrelacion": "muy_alta",
-  "metodoCorrelacion": "spearman"
+  "metodoCorrelacion": "auto"
 }

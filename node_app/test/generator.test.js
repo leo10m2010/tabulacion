@@ -24,13 +24,14 @@ test("config clasica genera con correlacion alta, csv y graficos", async () => {
   assert.equal(lines.length, 1 + 289);
   assert.equal(lines[0].split(",").length, 18 + 9);
 
-  // Graficos inyectados: 27 por item, 4 + 2 en dimensiones, 3 + 1 en conteo.
+  // Graficos inyectados: 27 por item y 4 + 2 en dimensiones (sin hojas de
+  // conteo: la escala Likert es de los items; las dimensiones van por nivel).
   const zip = await JSZip.loadAsync(result.excelBuffer);
   const charts = Object.keys(zip.files)
     .filter((n) => n.startsWith("xl/charts/") && !zip.files[n].dir);
-  assert.equal(charts.length, 37);
+  assert.equal(charts.length, 33);
   const contentTypes = await zip.file("[Content_Types].xml").async("string");
-  assert.equal((contentTypes.match(/chart\+xml/g) ?? []).length, 37);
+  assert.equal((contentTypes.match(/chart\+xml/g) ?? []).length, 33);
 });
 
 test("hoja base: encabezados, datos, estadisticos y frecuencias", async () => {
@@ -143,7 +144,7 @@ test("hoja de dimensiones: tabla ancha Suma/Nivel/Código, baremo y narrativa", 
   assert.equal(sheet.cell(consolidadoRow + 4, 7).value(), 90); // hasta nivel 3
 });
 
-test("hojas de items y conteo: tablas, fuente y narrativas", async () => {
+test("hoja de items: tablas, fuente y narrativas; sin hojas de conteo", async () => {
   const result = await generateArtifacts({ ...baseConfig, muestra: "15" });
   const workbook = await XlsxPopulate.fromDataAsync(result.excelBuffer);
 
@@ -156,12 +157,10 @@ test("hojas de items y conteo: tablas, fuente y narrativas", async () => {
   assert.equal(items.cell("B12").value(), "Elaboración: Propia");
   assert.equal(items.cell("B13").value(), "Fuente: Encuesta aplicada");
 
-  const conteo = workbook.sheet("Conteo Gestion de abastecimient");
-  assert.ok(conteo, "hoja de conteo V1 existe");
-  assert.match(String(conteo.cell("B2").value()), /Dimensión 1/);
-  // 15 personas x 6 items = 90 respuestas agregadas por dimension
-  assert.match(String(conteo.cell("C6").formula()), /COUNTIF\('Gestion de abastecimiento'!B5:G19,1\)/);
-  assert.match(String(conteo.cell("D6").formula()), /C6\/90/);
+  // La escala Likert es de los items; las dimensiones se miden por niveles en
+  // la hoja "Dimensiones": no deben existir hojas de conteo por escala.
+  assert.equal(workbook.sheet("Conteo Gestion de abastecimient"), undefined);
+  assert.ok(workbook.sheets().every((s) => !s.name().startsWith("Conteo")));
 });
 
 test("pruebas de normalidad: Lilliefors y Shapiro-Wilk", () => {
@@ -258,6 +257,26 @@ test("control de correlacion: niveles y direccion respetados", async () => {
   assert.equal(malo.correlationControl.nivel, "muy_alta");
 });
 
+test("metodo pearson: la normalidad pasa y Relaciones usa Pearson", async () => {
+  const result = await generateArtifacts({
+    ...baseConfig, muestra: "80", nivelCorrelacion: "alta", metodoCorrelacion: "pearson",
+  });
+  assert.equal(result.correlationControl.metodo, "pearson");
+  assert.ok(result.correlationControl.obtenido >= 0.64 && result.correlationControl.obtenido <= 0.95,
+    `r=${result.correlationControl.obtenido}`);
+
+  // Con datos generados con perfiles simetricos la prueba de normalidad de la
+  // hoja Relaciones debe pasar y las tablas usar Pearson (no Spearman).
+  const workbook = await XlsxPopulate.fromDataAsync(result.excelBuffer);
+  const sheet = workbook.sheet("Relaciones");
+  let label = null;
+  for (let r = 4; r <= 150; r += 1) {
+    const v = String(sheet.cell(r, 10).value() ?? "");
+    if (v === "Correlación de Pearson" || v === "Rho de Spearman") { label = v; break; }
+  }
+  assert.equal(label, "Correlación de Pearson");
+});
+
 test("control de correlacion desactivado: resultado natural", async () => {
   const result = await generateArtifacts({ ...baseConfig, muestra: "60", controlCorrelacion: "0" });
   const cc = result.correlationControl;
@@ -278,7 +297,7 @@ test("tema powerbi colorea los puntos y expone chartsPreview", async () => {
 
   // Datos para la vista previa: un registro por grafico inyectado.
   const totalCharts = result.chartsPreview.reduce((acc, s) => acc + s.charts.length, 0);
-  assert.equal(totalCharts, 37);
+  assert.equal(totalCharts, 33);
   const first = result.chartsPreview[0].charts[0];
   assert.equal(first.categories.length, 5);
   const sum = first.values.reduce((a, b) => a + b, 0);

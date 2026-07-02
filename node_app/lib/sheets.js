@@ -1,12 +1,12 @@
 // Construccion de las hojas del workbook.
 //
-// Hojas generadas por variable:
+// Hojas generadas por variable (la escala Likert es de los items; las
+// dimensiones se miden por niveles de baremo):
 //   1. "[Variable]"              base de datos + estadisticos + frecuencias por escala
 //   2. "Ítems [Variable]"        tabla frec/% + grafico + Figura + interpretacion por item
 //   3. "Dimensiones [Variable]"  tabla ancha Suma/Nivel/Codigo por dimension y
 //                                consolidado (sin repetir la base), ficha de baremo,
-//                                frecuencia baremada, grafico e interpretacion por dimension
-//   4. "Conteo [Variable]"       respuestas agregadas por dimension + grafico + interpretacion
+//                                frecuencia baremada por NIVEL, grafico e interpretacion
 // Mas "Relaciones" (normalidad calculada sobre V1 total, V2 total y las
 // dimensiones de V1; correlaciones Pearson o Rho de Spearman segun los Sig.:
 // general V1-V2 y cada dimension de V1 contra V2), "Correlación" (r/rho vivo
@@ -40,7 +40,6 @@ import {
   writeNarrative,
 } from "./sheet-style.js";
 import {
-  narrativeConteo,
   narrativeDimension,
   narrativeItem,
   narrativeNormalidadAuto,
@@ -284,95 +283,6 @@ const addItemsSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base, varI
     row += 3;
 
     row = writeNarrative(sheet, row, C0, 7, 5, narrativeItem(cfg, tabla, item.code, texto, counts)) + 2;
-  });
-
-  sheet.column("B").width(30);
-  ["C", "D", "E", "F", "G", "H"].forEach((c) => sheet.column(c).width(13));
-  paintFrame(sheet, row, C0 + 8);
-  return { charts };
-};
-
-// ── Hoja de conteo por dimension ─────────────────────────────────────────────
-const addConteoSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base, varIndex) => {
-  const N = cfg.encuestados;
-  const escala = cfg.escala;
-  const baseRef = quoteSheet(baseSheetName);
-  const sheetRef = quoteSheet(sheet.name());
-  const C0 = 2;
-  const charts = [];
-  const CHART_H = 14;
-  const CHART_W = 6;
-  let row = 2;
-  let tabla = 0;
-
-  baseInfo.dims.forEach((dim) => {
-    tabla += 1;
-    const items = dim.indicadores.flatMap((ind) => ind.items);
-    const nItems = items.length;
-    const totalResp = N * nItems;
-    const rangeRef = `${baseRef}!${colLetter(dim.startCol)}${baseInfo.dataStart}:${colLetter(dim.endCol)}${baseInfo.dataEnd}`;
-
-    sheet.range(row, C0, row, C0 + 3).merged(true).style(ST_BLOCK);
-    sheet.cell(row, C0).value(`Dimensión ${tabla}: ${dim.nombre}`);
-    row += 1;
-    sheet.cell(row, C0).value(`Tabla ${tabla}`).style(ST_LABEL_BOLD);
-    sheet.cell(row + 1, C0).value(dim.nombre).style(FONT);
-    row += 2;
-
-    sheet.cell(row, C0).value("").style(ST_HEADER);
-    sheet.cell(row, C0 + 1).value("Frec.").style(ST_HEADER);
-    sheet.cell(row, C0 + 2).value("%").style(ST_HEADER);
-    const tStart = row + 1;
-    escala.forEach((opt, i) => {
-      const r = tStart + i;
-      sheet.cell(r, C0).value(opt.etiqueta).style(ST_CELL_LEFT);
-      sheet.cell(r, C0 + 1).style(ST_CELL).formula(`COUNTIF(${rangeRef},${opt.valor})`);
-      sheet.cell(r, C0 + 2).style({ ...ST_CELL, numberFormat: FMT_PCT })
-        .formula(`${colLetter(C0 + 1)}${r}/${totalResp}`);
-    });
-    const tTotal = tStart + escala.length;
-    sheet.cell(tTotal, C0).value("Total").style(ST_STATS_LABEL);
-    sheet.cell(tTotal, C0 + 1).style(ST_STATS_VALUE)
-      .formula(`SUM(${colLetter(C0 + 1)}${tStart}:${colLetter(C0 + 1)}${tTotal - 1})`);
-    sheet.cell(tTotal, C0 + 2).style({ ...ST_STATS_VALUE, numberFormat: FMT_PCT })
-      .formula(`SUM(${colLetter(C0 + 2)}${tStart}:${colLetter(C0 + 2)}${tTotal - 1})`);
-    row = writeFuente(sheet, tTotal + 1, C0) + 1;
-
-    let counts = null;
-    if (base) {
-      counts = escala.map(() => 0);
-      items.forEach((item) => {
-        countByValue(base[`V${varIndex + 1}_${item.indexInVar}`], escala)
-          .forEach((c, i) => { counts[i] += c; });
-      });
-    }
-
-    const chartTop = row;
-    charts.push({
-      title: dim.nombre,
-      seriesName: "%",
-      catRef: `${sheetRef}!$${colLetter(C0)}$${tStart}:$${colLetter(C0)}$${tTotal - 1}`,
-      valRef: `${sheetRef}!$${colLetter(C0 + 2)}$${tStart}:$${colLetter(C0 + 2)}$${tTotal - 1}`,
-      numFmt: FMT_PCT,
-      varyColors: false,
-      points: escala.length,
-      preview: counts
-        ? { categories: escala.map((o) => o.etiqueta), values: counts.map((c) => c / totalResp) }
-        : null,
-      anchor: {
-        fromCol: C0 - 1,
-        fromRow: chartTop - 1,
-        toCol: C0 - 1 + CHART_W,
-        toRow: chartTop - 1 + CHART_H,
-      },
-    });
-    row = chartTop + CHART_H + 1;
-
-    sheet.cell(row, C0).value(`Figura ${tabla}`).style(ST_LABEL_BOLD);
-    sheet.cell(row + 1, C0).value(dim.nombre).style(FONT);
-    row += 3;
-
-    row = writeNarrative(sheet, row, C0, 7, 5, narrativeConteo(cfg, tabla, dim.nombre, nItems, counts)) + 2;
   });
 
   sheet.column("B").width(30);
@@ -690,13 +600,17 @@ const addRelacionesSheet = (sheet, cfg, refsV1, refsV2, base) => {
     });
   }
 
-  // Decision Pearson/Spearman: Shapiro-Wilk si n <= 50, Kolmogorov-Smirnov si
-  // n > 50. Todos los Sig. >= 0.05 -> Pearson; alguno < 0.05 -> Spearman.
+  // Decision Pearson/Spearman: en modo "auto" decide la normalidad
+  // (Shapiro-Wilk si n <= 50, Kolmogorov-Smirnov si n > 50: todos los
+  // Sig. >= 0.05 -> Pearson; alguno < 0.05 -> Spearman). Si el usuario eligio
+  // un metodo explicito, ese manda y la narrativa lo justifica.
   const useSW = N <= 50;
   const sigs = targets
     .map((s) => (useSW ? s.sw?.p : s.ks?.p))
     .filter((p) => Number.isFinite(p));
-  const method = sigs.length > 0 && sigs.some((p) => p < 0.05) ? "spearman" : "pearson";
+  const hayNoNormal = sigs.length > 0 && sigs.some((p) => p < 0.05);
+  const forced = cfg.metodoCorrelacion !== "auto" ? cfg.metodoCorrelacion : null;
+  const method = forced ?? (hayNoNormal ? "spearman" : "pearson");
   const methodLabel = method === "spearman" ? "Rho de Spearman" : "Correlación de Pearson";
 
   // Pares a correlacionar: V1-V2 (general) y cada dimension de V1 contra V2.
@@ -769,8 +683,8 @@ const addRelacionesSheet = (sheet, cfg, refsV1, refsV2, base) => {
   sheet.cell(row, A0).value("a. Corrección de significación de Lilliefors").style(ST_NOTE);
   row += 1;
   const narrativa = base
-    ? narrativeNormalidadAuto(tabla, v1.nombre, v2.nombre, useSW, method)
-    : narrativeNormalidadManual(tabla, v1.nombre, v2.nombre);
+    ? narrativeNormalidadAuto(tabla, v1.nombre, v2.nombre, useSW, method, forced, hayNoNormal)
+    : narrativeNormalidadManual(tabla, v1.nombre, v2.nombre, method);
   row = writeNarrative(sheet, row, A0, 7, 5, narrativa) + 2;
 
   // Correlaciones (general y por dimension de V1) con significancia bilateral.
@@ -984,9 +898,8 @@ export const buildWorkbook = async (cfg, base, correlationControl = null) => {
     const baseName = sanitizeSheetName(variable.nombre, usedNames);
     const itemsName = sanitizeSheetName(`Ítems ${variable.nombre}`, usedNames);
     const dimName = sanitizeSheetName(`Dimensiones ${variable.nombre}`, usedNames);
-    const conteoName = sanitizeSheetName(`Conteo ${variable.nombre}`, usedNames);
     baseSheetNames.push(baseName);
-    return { variable, baseName, itemsName, dimName, conteoName };
+    return { variable, baseName, itemsName, dimName };
   });
 
   plans.forEach((plan, idx) => {
@@ -1004,10 +917,6 @@ export const buildWorkbook = async (cfg, base, correlationControl = null) => {
     const dimResult = addDimensionesSheet(dimSheet, cfg, plan.variable, baseInfo, plan.baseName, base, idx);
     sheetCharts.push({ sheetName: plan.dimName, charts: dimResult.charts });
     relRefs.push(dimResult);
-
-    const conteoSheet = workbook.addSheet(plan.conteoName);
-    const conteoResult = addConteoSheet(conteoSheet, cfg, plan.variable, baseInfo, plan.baseName, base, idx);
-    sheetCharts.push({ sheetName: plan.conteoName, charts: conteoResult.charts });
   });
 
   if (cfg.variables.length >= 2) {

@@ -211,7 +211,10 @@ export const normalizeConfig = (raw) => {
   if (nivelRaw && !NIVELES_CORRELACION[nivelRaw]) {
     warnings.push(`El nivel de correlacion "${nivelRaw}" no existe; se uso "muy_alta".`);
   }
-  const metodoRaw = String(raw.metodoCorrelacion ?? "spearman").trim().toLowerCase();
+  // Metodo de correlacion: "auto" (default) deja que la prueba de normalidad
+  // del Excel decida; "pearson" o "spearman" fuerzan el metodo en las hojas
+  // (con Pearson ademas se generan datos compatibles con normalidad).
+  const metodoRaw = String(raw.metodoCorrelacion ?? "auto").trim().toLowerCase();
 
   return {
     warnings,
@@ -226,6 +229,6 @@ export const normalizeConfig = (raw) => {
     tema: CHART_THEMES[temaRaw] ? temaRaw : "clasico",
     controlCorrelacion: !new Set(["0", "false", "no", "off"]).has(controlRaw),
     nivelCorrelacion: NIVELES_CORRELACION[nivelRaw] ? nivelRaw : "muy_alta",
-    metodoCorrelacion: metodoRaw === "pearson" ? "pearson" : "spearman",
+    metodoCorrelacion: ["pearson", "spearman"].includes(metodoRaw) ? metodoRaw : "auto",
   };
 };

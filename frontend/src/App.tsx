@@ -920,28 +920,32 @@ export default function App() {
                                   );
                                 })}
                               </div>
-                              <div className="mt-3 flex flex-wrap items-center gap-2">
-                                <span className="text-xs font-medium text-muted-foreground">Verificar con:</span>
-                                {[
-                                  { id: "spearman", label: "Spearman (recomendado para Likert)" },
-                                  { id: "pearson", label: "Pearson" },
-                                ].map((m) => {
-                                  const selected = (getScalar("metodoCorrelacion") || "spearman") === m.id;
-                                  return (
-                                    <button
-                                      key={m.id}
-                                      onClick={() => setScalar("metodoCorrelacion", m.id)}
-                                      className={cn(
-                                        "rounded-full border px-3 py-1 text-xs font-medium transition-all",
-                                        selected
-                                          ? "border-primary bg-primary/10 text-primary"
-                                          : "border-border bg-background text-muted-foreground hover:border-primary/50",
-                                      )}
-                                    >
-                                      {m.label}
-                                    </button>
-                                  );
-                                })}
+                              <div className="mt-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-xs font-medium text-muted-foreground">Método de correlación:</span>
+                                  {[
+                                    { id: "auto", label: "Automático (según normalidad)" },
+                                    { id: "spearman", label: "Spearman" },
+                                    { id: "pearson", label: "Pearson" },
+                                  ].map((m) => {
+                                    const selected = (getScalar("metodoCorrelacion") || "auto") === m.id;
+                                    return (
+                                      <button
+                                        key={m.id}
+                                        onClick={() => setScalar("metodoCorrelacion", m.id)}
+                                        className={cn(
+                                          "rounded-full border px-3 py-1 text-xs font-medium transition-all",
+                                          selected
+                                            ? "border-primary bg-primary/10 text-primary"
+                                            : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                                        )}
+                                      >
+                                        {m.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                <FieldHint text="Automático: la prueba de normalidad del Excel decide (Pearson si los datos salen normales, Spearman si no). Si eliges Pearson o Spearman, el Excel usa ese método y la narrativa lo justifica; con Pearson además los datos se generan con distribuciones compatibles con normalidad." />
                               </div>
                             </div>
                           )}

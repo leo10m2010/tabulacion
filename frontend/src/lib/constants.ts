@@ -48,7 +48,7 @@ export const FALLBACK_CONFIG: TabConfig = {
   tema: "clasico",
   controlCorrelacion: "1",
   nivelCorrelacion: "muy_alta",
-  metodoCorrelacion: "spearman",
+  metodoCorrelacion: "auto",
 };
 
 // Niveles del control opcional de correlacion. Deben coincidir con
