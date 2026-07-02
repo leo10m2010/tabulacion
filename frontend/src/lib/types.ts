@@ -81,6 +81,14 @@ export interface AuthUser {
   createdAt: string;
   updatedAt: string;
   lastLoginAt: string | null;
+  // Tabulación va por suscripción (días); Forms va por usos (1 uso = 1
+  // corrida de llenado; null = ilimitados, admins).
+  formsUsesLeft?: number | null;
+  formsUsesUsed?: number;
+  generationsCount?: number;
+  lastGenerationAt?: string | null;
+  hasApiKey?: boolean;
+  apiKeyLast4?: string | null;
 }
 
 export interface AuthLoginResponse {

@@ -142,6 +142,9 @@ app.get('/health', (req, res) => {
 app.get('/api/tesistab/config', (req, res) => {
   res.json({
     requestId: req.requestId,
+    // Cuenta asociada a la clave (null en modo legado): la extension muestra
+    // los usos de Forms restantes (null = ilimitados, admins).
+    user: req.tesistabUser ?? null,
     service: {
       name: 'Tutorica Forms Backend',
       staleJobAfterMs: TESISTAB_STALE_JOB_AFTER_MS,
@@ -318,6 +321,17 @@ app.post('/api/tesistab/submit', async (req, res) => {
       ? clamp(requestedJitterMs, 0, TESISTAB_MAX_JITTER_MS)
       : 0;
 
+    // Forms funciona por usos: 1 uso = 1 corrida de llenado. Se descuenta
+    // recien aqui, con todas las validaciones aprobadas.
+    const usage = consumeTesistabUse(req);
+    if (!usage.ok) {
+      const usageMessage = usage.reason === 'sin_usos'
+        ? 'No tienes usos de Forms disponibles: solicita una recarga al administrador en TesisTab.'
+        : 'No se pudo verificar tus usos de Forms; intenta de nuevo.';
+      sendApiError(res, 403, 'sin_usos', usageMessage, req.requestId);
+      return;
+    }
+
     const sanitizedSmartProfile = sanitizeSmartProfile(smartProfile);
     const jobId = randomUUID();
     tesistabJobStore[jobId] = {
@@ -357,6 +371,7 @@ app.post('/api/tesistab/submit', async (req, res) => {
       requestId: req.requestId,
       id: jobId,
       status: tesistabJobStore[jobId].status,
+      usesLeft: usage.usesLeft,
       applied: {
         count: safeCount,
         delayMs: safeDelayMs,
@@ -420,6 +435,15 @@ app.post('/api/forms/submit', async (req, res) => {
       Object.assign(payload, compatStoredForms[formId]);
       delete payload.formId;
       delete payload.updatedAt;
+    }
+
+    // Forms funciona por usos: tambien la ruta de compatibilidad descuenta
+    // 1 uso por corrida.
+    const usage = consumeTesistabUse(req);
+    if (!usage.ok) {
+      res.status(403).type('text/plain')
+        .send('No tienes usos de Forms disponibles: solicita una recarga al administrador en TesisTab.');
+      return;
     }
 
     const jobId = randomUUID();
@@ -1821,6 +1845,21 @@ app.setKeyValidator = (fn) => {
   inProcessKeyValidator = typeof fn === 'function' ? fn : null;
 };
 
+// Consumidor de usos inyectado por el anfitrion: Forms funciona por usos y
+// 1 uso = 1 corrida de llenado (job). Devuelve { ok, usesLeft, reason }.
+// Sin consumidor configurado (modo legado/desarrollo) no se descuenta nada.
+let inProcessUsageConsumer = null;
+app.setUsageConsumer = (fn) => {
+  inProcessUsageConsumer = typeof fn === 'function' ? fn : null;
+};
+
+function consumeTesistabUse(req) {
+  if (!inProcessUsageConsumer || !req.tesistabApiKey) {
+    return { ok: true, usesLeft: null };
+  }
+  return inProcessUsageConsumer(req.tesistabApiKey);
+}
+
 async function validateTesistabKey(apiKey) {
   if (inProcessKeyValidator) {
     return inProcessKeyValidator(apiKey);
@@ -1898,7 +1937,12 @@ function requireTesistabApiKey(req, res, next) {
   validateTesistabKey(apiKey)
     .then((result) => {
       if (result.valid) {
-        req.tesistabUser = { email: result.email, plan: result.plan };
+        req.tesistabApiKey = apiKey;
+        req.tesistabUser = {
+          email: result.email,
+          plan: result.plan,
+          usesLeft: result.usesLeft !== undefined ? result.usesLeft : null,
+        };
         next();
         return;
       }

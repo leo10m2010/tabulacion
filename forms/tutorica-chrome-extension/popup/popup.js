@@ -330,7 +330,15 @@ async function refreshConnection(announce) {
     }
 
     applyBackendConfig(result);
-    setConnectionState('online', 'Conectado', 'Listo para enviar respuestas');
+    // Forms funciona por usos (1 uso = 1 corrida de llenado). null significa
+    // usos ilimitados (admin) o backend sin control de usos (modo legado).
+    const usesLeft = result?.user?.usesLeft;
+    const connectionSub = usesLeft === null || usesLeft === undefined
+      ? 'Listo para enviar respuestas'
+      : usesLeft > 0
+        ? `Usos de Forms disponibles: ${usesLeft}`
+        : 'Sin usos disponibles: pide una recarga en TesisTab';
+    setConnectionState('online', 'Conectado', connectionSub);
     if (announce) showStatus('Conexion verificada.', false);
   } catch (error) {
     setConnectionState('offline', 'Sin conexion', 'Revisa tu internet o intenta luego');

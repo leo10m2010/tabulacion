@@ -219,6 +219,14 @@ const sanitizeUser = (user) => ({
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
   lastLoginAt: user.lastLoginAt,
+  // Metricas y usos: Tabulacion va por suscripcion (dias); Forms va por usos
+  // (1 uso = 1 corrida de llenado; los admins tienen usos ilimitados: null).
+  formsUsesLeft: user.role === "admin" ? null : (Number.isFinite(user.formsUsesLeft) ? user.formsUsesLeft : 0),
+  formsUsesUsed: user.formsUsesUsed ?? 0,
+  generationsCount: user.generationsCount ?? 0,
+  lastGenerationAt: user.lastGenerationAt ?? null,
+  hasApiKey: Boolean(user.apiKeyHash),
+  apiKeyLast4: user.apiKeyLast4 ?? null,
 });
 
 const hashPassword = (password, saltHex) => {
@@ -266,6 +274,7 @@ const createUser = ({
   plan = "pro",
   subscriptionEndsAt,
   subscriptionDays,
+  formsUses,
 }) => {
   const normalizedEmail = assertUniqueEmail(email);
   if (!["admin", "user"].includes(role)) {
@@ -298,6 +307,12 @@ const createUser = ({
     createdAt: nowIso,
     updatedAt: nowIso,
     lastLoginAt: null,
+    formsUsesLeft: Number.isFinite(Number(formsUses)) && Number(formsUses) > 0
+      ? Math.floor(Number(formsUses))
+      : 0,
+    formsUsesUsed: 0,
+    generationsCount: 0,
+    lastGenerationAt: null,
     ...credentials,
   };
 
@@ -353,6 +368,23 @@ const patchUser = (user, payload) => {
   }
   if (payload.password !== undefined) {
     Object.assign(next, buildPassword(String(payload.password)));
+  }
+  // Usos de Forms: valor absoluto o recarga incremental (puede ser negativa
+  // para corregir, sin bajar de 0).
+  if (payload.formsUses !== undefined) {
+    const uses = Number(payload.formsUses);
+    if (!Number.isFinite(uses) || uses < 0) {
+      throw new HttpError(400, "formsUses debe ser 0 o mayor.");
+    }
+    next.formsUsesLeft = Math.floor(uses);
+  }
+  if (payload.formsUsesDelta !== undefined) {
+    const delta = Number(payload.formsUsesDelta);
+    if (!Number.isFinite(delta) || delta === 0) {
+      throw new HttpError(400, "formsUsesDelta debe ser diferente de 0.");
+    }
+    const current = Number.isFinite(next.formsUsesLeft) ? next.formsUsesLeft : 0;
+    next.formsUsesLeft = Math.max(0, Math.floor(current + delta));
   }
 
   next.updatedAt = new Date().toISOString();
@@ -550,14 +582,43 @@ setInterval(cleanupExpired, 60_000).unref();
 
 // Forms valida las claves ttab_ en memoria (mismo proceso): lee la lista de
 // usuarios viva, sin llamadas HTTP ni secreto compartido.
-formsApp.setKeyValidator((apiKey) => {
+const findKeyOwner = (apiKey) => {
   const key = String(apiKey || "").trim();
-  if (!key.startsWith("ttab_") || key.length < 20) return { valid: false, reason: "formato_invalido" };
-  const owner = users.find((item) => item.apiKeyHash === hashApiKey(key));
+  if (!key.startsWith("ttab_") || key.length < 20) return null;
+  return users.find((item) => item.apiKeyHash === hashApiKey(key)) ?? null;
+};
+
+const formsUsesLeftOf = (owner) => (
+  owner.role === "admin" ? null : (Number.isFinite(owner.formsUsesLeft) ? owner.formsUsesLeft : 0)
+);
+
+formsApp.setKeyValidator((apiKey) => {
+  const owner = findKeyOwner(apiKey);
   if (!owner) return { valid: false, reason: "clave_desconocida" };
   if (owner.status !== "active") return { valid: false, reason: "usuario_inactivo" };
   if (isSubscriptionExpired(owner)) return { valid: false, reason: "suscripcion_vencida" };
-  return { valid: true, email: owner.email, plan: owner.plan, role: owner.role };
+  return {
+    valid: true,
+    email: owner.email,
+    plan: owner.plan,
+    role: owner.role,
+    usesLeft: formsUsesLeftOf(owner),
+  };
+});
+
+// Forms funciona por usos: 1 uso = 1 corrida de llenado. El consumo ocurre al
+// crear el job (los admins tienen usos ilimitados: usesLeft null).
+formsApp.setUsageConsumer((apiKey) => {
+  const owner = findKeyOwner(apiKey);
+  if (!owner) return { ok: false, reason: "clave_desconocida" };
+  if (owner.role === "admin") return { ok: true, usesLeft: null };
+  const left = formsUsesLeftOf(owner);
+  if (left <= 0) return { ok: false, reason: "sin_usos" };
+  owner.formsUsesLeft = left - 1;
+  owner.formsUsesUsed = (owner.formsUsesUsed ?? 0) + 1;
+  owner.updatedAt = new Date().toISOString();
+  writeUsers();
+  return { ok: true, usesLeft: owner.formsUsesLeft };
 });
 
 const server = http.createServer(async (req, res) => {
@@ -701,6 +762,7 @@ const server = http.createServer(async (req, res) => {
         plan: owner.plan,
         role: owner.role,
         subscriptionEndsAt: owner.subscriptionEndsAt,
+        usesLeft: formsUsesLeftOf(owner),
       });
       return;
     }
@@ -725,8 +787,25 @@ const server = http.createServer(async (req, res) => {
         plan: payload?.plan ?? "pro",
         subscriptionEndsAt: payload?.subscriptionEndsAt,
         subscriptionDays: payload?.subscriptionDays,
+        formsUses: payload?.formsUses,
       });
       sendJson(res, 201, { ok: true, user: sanitizeUser(user) });
+      return;
+    }
+
+    // Revocar la clave de API de un usuario (admin): la extension del usuario
+    // deja de validar de inmediato.
+    const userApiKeyRoute = pathname.match(/^\/auth\/users\/([0-9a-fA-F-]+)\/api-key$/);
+    if (userApiKeyRoute && req.method === "DELETE") {
+      requireAuth(req, { adminOnly: true, allowExpiredSubscription: true });
+      const target = users.find((item) => item.id === userApiKeyRoute[1]);
+      if (!target) throw new HttpError(404, "Usuario no encontrado.");
+      delete target.apiKeyHash;
+      delete target.apiKeyLast4;
+      delete target.apiKeyCreatedAt;
+      target.updatedAt = new Date().toISOString();
+      writeUsers();
+      sendJson(res, 200, { ok: true, user: sanitizeUser(target) });
       return;
     }
 
@@ -800,6 +879,15 @@ const server = http.createServer(async (req, res) => {
 
       const artifacts = await generateArtifacts(config);
       const responseMode = String(payload?.responseMode ?? "links").toLowerCase();
+
+      // Metricas por usuario (el usuario dev sin store no se contabiliza).
+      const owner = users.find((item) => item.id === authUser.id);
+      if (owner) {
+        owner.generationsCount = (owner.generationsCount ?? 0) + 1;
+        owner.lastGenerationAt = new Date().toISOString();
+        owner.updatedAt = owner.lastGenerationAt;
+        writeUsers();
+      }
 
       if (responseMode === "inline") {
         sendJson(res, 200, {

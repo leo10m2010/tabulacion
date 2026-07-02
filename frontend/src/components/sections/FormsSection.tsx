@@ -5,11 +5,17 @@ import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { createApiKey, getApiKeyInfo, revokeApiKey, type ApiKeyInfo } from "../../lib/api";
 import { formatDateTime } from "../../lib/helpers";
+import type { AuthUser } from "../../lib/types";
 
 // Sección Forms / Integraciones: clave de API para la extensión Tutorica
 // Forms. Autocontenida: App la monta cuando la sección está activa, por eso
 // carga el estado de la clave en el mount.
-export function FormsSection({ apiBaseUrl, authToken }: { apiBaseUrl: string; authToken: string }) {
+export function FormsSection({ apiBaseUrl, authToken, authUser }: {
+  apiBaseUrl: string;
+  authToken: string;
+  authUser: AuthUser;
+}) {
+  const usesLeft = authUser.role === "admin" ? null : (authUser.formsUsesLeft ?? 0);
   const [apiKeyInfo, setApiKeyInfo] = useState<ApiKeyInfo | null>(null);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
   const [apiKeyBusy, setApiKeyBusy] = useState(false);
@@ -87,7 +93,9 @@ export function FormsSection({ apiBaseUrl, authToken }: { apiBaseUrl: string; au
                 configurables, desde una extensión de Chrome conectada a tu cuenta.
               </CardDescription>
             </div>
-            <Badge>Incluido en tu plan</Badge>
+            <Badge>
+              {usesLeft === null ? "Usos ilimitados (admin)" : `${usesLeft} uso${usesLeft === 1 ? "" : "s"} disponible${usesLeft === 1 ? "" : "s"}`}
+            </Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -171,8 +179,9 @@ export function FormsSection({ apiBaseUrl, authToken }: { apiBaseUrl: string; au
           </div>
 
           <p className="text-xs text-muted-foreground">
-            La clave funciona mientras tu suscripción esté vigente. Si vence, la extensión mostrará
-            "suscripción vencida" hasta que la renueves.
+            Forms funciona por usos: cada corrida de llenado consume 1 uso, sin importar cuántas
+            respuestas envíe. Cuando se agoten, solicita una recarga al administrador. La clave además
+            requiere que tu suscripción esté vigente.
           </p>
         </CardContent>
       </Card>

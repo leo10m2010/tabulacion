@@ -208,6 +208,72 @@ test("claves de API: generar, validar, vencimiento y revocar", async () => {
   assert.equal(v.valid, false);
 });
 
+test("Forms por usos: consume 1 uso por corrida, bloquea sin usos y admin recarga", async () => {
+  const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  const auth = { "Content-Type": "application/json", Authorization: `Bearer ${admin.body.token}` };
+
+  // Usuario nuevo con 2 usos asignados desde la creacion.
+  const created = await fetch(`${BASE}/auth/users`, {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({ email: "usos@test.local", password: "ClaveUsos123!", subscriptionDays: 30, formsUses: 2 }),
+  });
+  const createdBody = await created.json();
+  assert.equal(createdBody.user.formsUsesLeft, 2);
+
+  const userLogin = await login("usos@test.local", "ClaveUsos123!");
+  const keyRes = await fetch(`${BASE}/auth/api-key`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${userLogin.body.token}` },
+  });
+  const apiKey = (await keyRes.json()).apiKey;
+
+  // La extension ve los usos restantes en /api/tesistab/config.
+  const cfgRes = await fetch(`${BASE}/api/tesistab/config`, { headers: { "X-API-Key": apiKey } });
+  assert.equal(cfgRes.status, 200);
+  assert.equal((await cfgRes.json()).user.usesLeft, 2);
+
+  const submit = () => fetch(`${BASE}/api/tesistab/submit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+    body: JSON.stringify({
+      formUrl: "https://docs.google.com/forms/d/e/prueba-usos/formResponse",
+      payload: { "entry.1": "hola" },
+      count: 1,
+    }),
+  });
+
+  // 1 uso = 1 corrida: 2 corridas consumen los 2 usos; la tercera se bloquea.
+  let res = await submit();
+  assert.equal(res.status, 202);
+  assert.equal((await res.json()).usesLeft, 1);
+  res = await submit();
+  assert.equal(res.status, 202);
+  assert.equal((await res.json()).usesLeft, 0);
+  res = await submit();
+  assert.equal(res.status, 403);
+
+  // El admin recarga usos desde el dashboard.
+  const patch = await fetch(`${BASE}/auth/users/${createdBody.user.id}`, {
+    method: "PATCH",
+    headers: auth,
+    body: JSON.stringify({ formsUsesDelta: 5 }),
+  });
+  assert.equal((await patch.json()).user.formsUsesLeft, 5);
+
+  // El admin puede revocar la clave del usuario: la extension deja de validar.
+  const revoke = await fetch(`${BASE}/auth/users/${createdBody.user.id}/api-key`, { method: "DELETE", headers: auth });
+  assert.equal(revoke.status, 200);
+  const cfgAfter = await fetch(`${BASE}/api/tesistab/config`, { headers: { "X-API-Key": apiKey } });
+  assert.equal(cfgAfter.status, 401);
+
+  // Metricas de generacion por usuario en el listado del admin.
+  const list = await fetch(`${BASE}/auth/users`, { headers: auth });
+  const listBody = await list.json();
+  const generador = listBody.users.find((u) => u.email === "user@test.local");
+  assert.ok(generador && generador.generationsCount >= 1, "generationsCount registrado");
+});
+
 test("rate limiting: bloquea tras varios intentos fallidos", async () => {
   const email = "fuerza-bruta@test.local";
   for (let i = 0; i < 3; i += 1) {

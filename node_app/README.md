@@ -47,7 +47,8 @@ npm test
 
 - `GET /health`
 - `POST /auth/login`, `GET /auth/me`
-- `GET|POST /auth/users`, `PATCH|DELETE /auth/users/:id` (solo admin)
+- `GET|POST /auth/users`, `PATCH|DELETE /auth/users/:id` (solo admin). `POST` acepta `formsUses` iniciales; `PATCH` acepta `email`, `role`, `plan`, `status`, `password` (reset), `subscriptionDays`/`subscriptionDaysDelta` y `formsUses`/`formsUsesDelta`.
+- `DELETE /auth/users/:id/api-key` (solo admin): revoca la clave de la extensión de un usuario.
 - `GET /template-info` (límites del generador y temas de gráficos disponibles)
 - `POST /generate` (autenticado)
 - `GET /results/:id`, `GET /results/:id/xlsx`, `GET /results/:id/csv`, `DELETE /results/:id`

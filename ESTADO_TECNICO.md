@@ -9,6 +9,13 @@ Actualizado: 2026-07-01.
 - Frontend React/Vite en `frontend/` consumiendo la API (`POST /generate` en modo `inline`); envía la estructura jerárquica en `estructura_v1`/`estructura_v2`.
 - Suite de tests con `node:test` (`cd node_app && npm test`): 22 tests de generador y API.
 
+## Forms por usos + dashboard de administración (2026-07-02)
+
+- **Forms funciona por usos**: 1 uso = 1 corrida de llenado (job). El consumo ocurre en `POST /api/tesistab/submit` y en la ruta de compatibilidad, tras pasar todas las validaciones; los admins tienen usos ilimitados (`usesLeft: null`). El anfitrión inyecta `formsApp.setUsageConsumer(fn)` junto al validador en memoria; sin consumidor (modo legado/tests) no se descuenta. La extensión (v1.3.0, zip regenerado) muestra los usos restantes en la tarjeta de conexión (`/api/tesistab/config` ahora incluye `user.usesLeft`), y la sección Forms de la web muestra el saldo del usuario. Tabulación sigue por suscripción (días).
+- **Usuarios**: `users.json` guarda `formsUsesLeft/formsUsesUsed` y métricas `generationsCount/lastGenerationAt` (se incrementan en `/generate`). `sanitizeUser` expone además `hasApiKey`/`apiKeyLast4`. `PATCH /auth/users/:id` acepta `role`, `plan`, `password` (reset), `formsUses`/`formsUsesDelta`; nuevo `DELETE /auth/users/:id/api-key` (admin revoca la clave de la extensión de un usuario).
+- **Dashboard admin rediseñado** (`UsersSection.tsx`): tarjetas de métricas globales (activos, vencidos, Excel generados, usos de Forms), buscador por email y filtros por estado/rol, formulario de creación plegable con usos iniciales, y por usuario: chips de estado/rol, métricas con `tabular-nums`, recargas rápidas de días y usos, y panel "Gestionar" expandible (rol, plan, reset de contraseña, revocar clave API, eliminar con confirmación inline). Skeletons de carga y estados vacíos diferenciados.
+- El ítem "Análisis (Pronto)" del menú pasó a "Generador de títulos" (sigue Pronto).
+
 ## Hojas de conteo eliminadas + método de correlación explícito (2026-07-01)
 
 - Se eliminaron las hojas "Conteo <Variable>": contaban las respuestas Likert agregadas por dimensión, pero la escala Likert es exclusivamente de los ítems — las dimensiones se miden por **niveles de baremo** (tabla baremada de la hoja Dimensiones). El Excel queda en 9 hojas / 33 gráficos con la config clásica.

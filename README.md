@@ -4,7 +4,7 @@ Aplicación web para generar la tabulación de una tesis: a partir de la configu
 
 ## Arquitectura
 
-- **Backend / API**: `node_app/server.js` (Node 18+, sin frameworks). Autenticación con tokens firmados, usuarios con roles y suscripción, generación vía `POST /generate`.
+- **Backend / API**: `node_app/server.js` (Node 18+, sin frameworks). Autenticación con tokens firmados, usuarios con roles y suscripción, generación vía `POST /generate`. Tabulación va por suscripción (días); **Tutorica Forms va por usos** (1 uso = 1 corrida de llenado, recargables por el admin desde el dashboard).
 - **Motor de generación**: `node_app/generator.js` (`xlsx-populate` para celdas/fórmulas + `jszip` para inyectar los gráficos OOXML). También usable por CLI: `node_app/index.js`.
 - **Frontend**: `frontend/` (React + Vite + Tailwind). Wizard de 3 pasos, gestión de usuarios para admins.
 - **Salidas**: `Tabulacion_generada.xlsx` y `Tabulacion_base.csv`.

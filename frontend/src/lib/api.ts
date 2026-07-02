@@ -60,7 +60,7 @@ export const listUsers = (apiBaseUrl: string, token: string) =>
 export const createUser = (
   apiBaseUrl: string,
   token: string,
-  data: { email: string; password: string; role: "admin" | "user"; plan: string; subscriptionDays: number },
+  data: { email: string; password: string; role: "admin" | "user"; plan: string; subscriptionDays: number; formsUses: number },
 ) => request<{ ok?: boolean }>(apiBaseUrl, "/auth/users", { method: "POST", token, body: data });
 
 export const patchUser = (apiBaseUrl: string, token: string, userId: string, patch: Record<string, unknown>) =>
@@ -68,6 +68,10 @@ export const patchUser = (apiBaseUrl: string, token: string, userId: string, pat
 
 export const deleteUser = (apiBaseUrl: string, token: string, userId: string) =>
   request<{ ok?: boolean }>(apiBaseUrl, `/auth/users/${userId}`, { method: "DELETE", token });
+
+// Revoca la clave de API de la extensión de un usuario (solo admin).
+export const revokeUserApiKey = (apiBaseUrl: string, token: string, userId: string) =>
+  request<{ ok?: boolean }>(apiBaseUrl, `/auth/users/${userId}/api-key`, { method: "DELETE", token });
 
 // ── Clave de API (extensión Tutorica Forms) ──────────────────────────────────
 export interface ApiKeyInfo {

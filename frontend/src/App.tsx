@@ -4,13 +4,13 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUpDown,
-  ChartNoAxesCombined,
   Check,
   ChevronRight,
   Download,
   FileSpreadsheet,
   HelpCircle,
   KeyRound,
+  Lightbulb,
   Loader2,
   LogOut,
   Moon,
@@ -569,7 +569,7 @@ export default function App() {
 
           {/* Coming soon items */}
           {[
-            { label: "Análisis", icon: ChartNoAxesCombined },
+            { label: "Generador de títulos", icon: Lightbulb },
           ].map((item) => (
             <div
               key={item.label}
@@ -1469,7 +1469,7 @@ export default function App() {
 
           {/* ── Integraciones (clave de API + Tutorica Forms) ── */}
           {activeSection === "forms" && authUser && (
-            <FormsSection apiBaseUrl={apiBaseUrl} authToken={authToken} />
+            <FormsSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
           )}
 
           {/* ── Usuarios (admin) ── */}
