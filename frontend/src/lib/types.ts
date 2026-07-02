@@ -47,6 +47,24 @@ export interface InlineGenerateResponse {
   error?: string;
 }
 
+// Respuesta de la prueba de confiabilidad (Alfa de Cronbach).
+export interface CronbachResponse {
+  ok?: boolean;
+  alpha: number;
+  cumple: boolean;
+  nivel: string;
+  etiqueta: string;
+  esperadoMin: number;
+  esperadoMax: number;
+  K: number;
+  encuestados: number;
+  variable: string;
+  warnings?: string[];
+  excelBase64: string;
+  excelFileName?: string;
+  error?: string;
+}
+
 export interface TemplateInfo {
   maxMuestra: number;
   maxItemsV1: number;
@@ -89,6 +107,8 @@ export interface AuthUser {
   lastGenerationAt?: string | null;
   hasApiKey?: boolean;
   apiKeyLast4?: string | null;
+  // Historial de actividad (solo llega en el listado del admin).
+  activity?: { at: string; detail: string }[];
 }
 
 export interface AuthLoginResponse {
@@ -105,5 +125,5 @@ export interface AuthUsersResponse {
 
 export type ThemeMode = "light" | "dark";
 export type AppView = "landing" | "app";
-export type AppSection = "tabulacion" | "forms" | "usuarios";
+export type AppSection = "tabulacion" | "confiabilidad" | "forms" | "usuarios" | "cuenta";
 export type WizardStep = 1 | 2 | 3;

@@ -7,7 +7,29 @@ Actualizado: 2026-07-01.
 - Generación **100% por código** (`node_app/generator.js` orquesta módulos en `node_app/lib/`): `xlsx-populate` construye celdas/fórmulas/estilos y un post-procesado con `jszip` deduplica estilos e inyecta los gráficos OOXML. **No existe plantilla**: `Tabulacion.xlsx` fue eliminada del repositorio.
 - API HTTP propia (`node_app/server.js`) con auth por tokens, roles, suscripciones y rate limiting.
 - Frontend React/Vite en `frontend/` consumiendo la API (`POST /generate` en modo `inline`); envía la estructura jerárquica en `estructura_v1`/`estructura_v2`.
-- Suite de tests con `node:test` (`cd node_app && npm test`): 22 tests de generador y API.
+- Suite de tests con `node:test` (`cd node_app && npm test`): 28 tests de generador y API.
+- Verificación de fórmulas: `python scripts/recalc.py archivo.xlsx` recalcula todas las fórmulas del Excel (librería `formulas`) y reporta celdas con error; `--show PATRON` imprime valores recalculados de celdas clave.
+
+## Prueba de confiabilidad — Alfa de Cronbach (2026-07-02)
+
+- **Nuevo apartado "Confiabilidad"** en la web (`CronbachSection.tsx`, entre Tabulación y Forms): la prueba se hace **por variable** con los mismos datos del instrumento (nombre, dimensiones y cantidad de ítems) más el N de encuestados y el **nivel de alfa deseado** (excelente 0.90–0.97 / bueno 0.80–0.89 / aceptable 0.70–0.79, escala de George y Mallery).
+- **Backend**: `node_app/lib/cronbach.js` (`normalizeCronbachConfig`, `generateCronbachData`, `buildCronbachWorkbook`, `generateCronbach`) + `POST /cronbach` (misma suscripción vigente que `/generate`; incrementa `generationsCount` y registra actividad). `/template-info` expone `nivelesAlfa`.
+- **Simulación adaptativa**: rasgo latente por encuestado (variación normal entre sujetos) + sesgo leve por ítem + ruido intra-sujeto que se ajusta hasta que el α (calculado con varianza poblacional, igual que VARP) cae en el rango pedido. El α nunca llega a 1.0 (datos idénticos serían sospechosos).
+- **Excel de una sola hoja** ("Alfa de Cronbach", Calibri, sin cuadrícula, encabezados congelados): título azul marino, subtítulo celeste, tabla de datos con bandas alternadas y columna SUMA resaltada, fila VARIANZA (fórmula `VARP`) en naranja claro, panel de tarjetas con K (`=COUNT()` sobre la fila de varianzas, nunca fijo), ΣSi², St² y α=(K/(K-1))*(1-(ΣSi²/St²)) **como fórmulas vivas**, interpretación automática con SI anidado + TEXTO, escala de interpretación con semáforo de colores y leyenda Likert a la derecha. Estilos deduplicados con el mismo post-procesado OOXML.
+- Verificado con `scripts/recalc.py` (nuevo): 0 errores de fórmula; el α recalculado en celda coincide con el del generador.
+
+## Auditoría de seguridad del sistema de usuarios (2026-07-02)
+
+- **Hallazgo**: el repo es público y commits antiguos (hasta `7884f4b`) contienen `node_app/data/users.json` con el hash scrypt del admin **de desarrollo** (`admin@tabulacion.local`, contraseña de dev visible en el autofill DEV del login). Nunca hubo datos de clientes ni secretos de producción en el historial (`frontend/.env` histórico solo tenía `VITE_API_BASE_URL=/api`). Regla operativa: **la contraseña/email del admin de producción (Render, sync:false) jamás debe coincidir con los valores de desarrollo.**
+- Los usuarios de los tests (`*@test.local`) viven en un `USER_STORE_PATH` temporal por proceso y nunca tocan producción.
+- **Endurecimiento aplicado**: `tokenVersion` por usuario — cambiar o restablecer la contraseña (self-service, admin o sync del bootstrap) invalida todas las sesiones anteriores (el claim `ver` del token se verifica en `requireAuth`); el self-service devuelve un token fresco para no cortar la sesión actual, y tiene rate limiting propio (mismo límite que el login) para que un token robado no pueda probar contraseñas sin freno.
+
+## Acceso desacoplado, dashboard tabla+panel y self-service (2026-07-02)
+
+- **Productos desacoplados**: el login solo exige cuenta activa; `/generate` exige suscripción vigente (`requireAuth(req, { requireSubscription: true })`); Forms va por usos aunque la suscripción esté vencida (el validador de claves ya no rechaza por vencimiento). La web muestra un aviso ámbar en Tabulación cuando la suscripción venció.
+- **Dashboard admin = tabla + panel lateral**: tabla compacta (usuario/suscripción/usos/Excel/último acceso) con filtros (incluye "Por vencer" ≤7 días con chip ámbar) y panel lateral (Escape o backdrop para cerrar) con resumen, recargas de días/usos, rol/plan, reset de contraseña, revocar clave API, eliminar e **historial de actividad** (`activity` por usuario, últimos 30 eventos: cuenta creada, recargas del admin, corridas de Forms, Excel generados, cambios de contraseña/clave).
+- **Respaldo del almacén**: `GET /auth/users/backup` y `POST /auth/users/restore` (admin) + botones Exportar/Importar en el dashboard con confirmación inline — mitiga el disco efímero de Render free.
+- **Contraseña self-service**: `POST /auth/change-password` + sección "Mi cuenta" (resumen de cuenta, usos, suscripción y cambio de contraseña); accesible desde la caja de usuario del sidebar y la pestaña móvil "Cuenta".
 
 ## Forms por usos + dashboard de administración (2026-07-02)
 

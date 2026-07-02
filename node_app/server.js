@@ -8,8 +8,10 @@ import {
   CHART_THEMES,
   MAX_ITEMS_POR_VARIABLE,
   MAX_MUESTRA,
+  NIVELES_ALFA,
   NIVELES_CORRELACION,
   generateArtifacts,
+  generateCronbach,
 } from "./generator.js";
 
 // Tutorica Forms (rellenador de Google Forms) corre en este mismo proceso: es
@@ -313,8 +315,11 @@ const createUser = ({
     formsUsesUsed: 0,
     generationsCount: 0,
     lastGenerationAt: null,
+    activity: [],
+    tokenVersion: 1,
     ...credentials,
   };
+  logActivity(user, "Cuenta creada");
 
   users.push(user);
   writeUsers();
@@ -368,6 +373,8 @@ const patchUser = (user, payload) => {
   }
   if (payload.password !== undefined) {
     Object.assign(next, buildPassword(String(payload.password)));
+    // Restablecer la contraseña invalida todas las sesiones abiertas.
+    next.tokenVersion = (next.tokenVersion ?? 1) + 1;
   }
   // Usos de Forms: valor absoluto o recarga incremental (puede ser negativa
   // para corregir, sin bajar de 0).
@@ -421,6 +428,7 @@ const ensureBootstrapAdmin = () => {
       Object.assign(existing, buildPassword(ADMIN_PASSWORD));
       existing.role = "admin";
       existing.status = "active";
+      existing.tokenVersion = (existing.tokenVersion ?? 1) + 1;
       existing.updatedAt = new Date().toISOString();
       changed = true;
       // eslint-disable-next-line no-console
@@ -463,6 +471,9 @@ const signToken = (user) => {
     sub: user.id,
     email: user.email,
     role: user.role,
+    // Version de credenciales: cambiar/restablecer la contraseña la
+    // incrementa y todos los tokens anteriores quedan invalidados.
+    ver: user.tokenVersion ?? 1,
     iat: now,
     exp,
   });
@@ -519,13 +530,27 @@ const requireAuth = (req, opts = {}) => {
   const user = users.find((item) => item.id === claims.sub);
   if (!user) throw new HttpError(401, "Usuario del token no existe.");
   if (user.status !== "active") throw new HttpError(403, "Usuario inactivo.");
-  if (!opts.allowExpiredSubscription && isSubscriptionExpired(user)) {
+  if ((claims.ver ?? 1) !== (user.tokenVersion ?? 1)) {
+    throw new HttpError(401, "Sesion invalidada por un cambio de contraseña. Inicia sesion de nuevo.");
+  }
+  // Productos desacoplados: la sesion solo exige cuenta activa. Los dias de
+  // suscripcion se exigen unicamente donde aplica (/generate, Tabulacion);
+  // Forms va por usos y no depende de los dias.
+  if (opts.requireSubscription && isSubscriptionExpired(user)) {
     throw new HttpError(403, `Suscripcion vencida (${user.subscriptionEndsAt ?? "sin fecha"}).`);
   }
   if (opts.adminOnly && user.role !== "admin") {
     throw new HttpError(403, "Se requiere rol administrador.");
   }
   return user;
+};
+
+// Historial de actividad por usuario (ultimos 30 eventos).
+const logActivity = (user, detail) => {
+  user.activity = [
+    { at: new Date().toISOString(), detail },
+    ...(Array.isArray(user.activity) ? user.activity : []),
+  ].slice(0, 30);
 };
 
 // ── Rate limiting de login (en memoria) ─────────────────────────────────────
@@ -592,11 +617,12 @@ const formsUsesLeftOf = (owner) => (
   owner.role === "admin" ? null : (Number.isFinite(owner.formsUsesLeft) ? owner.formsUsesLeft : 0)
 );
 
+// Forms va por usos, desacoplado de la suscripcion: la clave es valida
+// mientras la cuenta este activa; los usos se verifican al consumir.
 formsApp.setKeyValidator((apiKey) => {
   const owner = findKeyOwner(apiKey);
   if (!owner) return { valid: false, reason: "clave_desconocida" };
   if (owner.status !== "active") return { valid: false, reason: "usuario_inactivo" };
-  if (isSubscriptionExpired(owner)) return { valid: false, reason: "suscripcion_vencida" };
   return {
     valid: true,
     email: owner.email,
@@ -616,6 +642,7 @@ formsApp.setUsageConsumer((apiKey) => {
   if (left <= 0) return { ok: false, reason: "sin_usos" };
   owner.formsUsesLeft = left - 1;
   owner.formsUsesUsed = (owner.formsUsesUsed ?? 0) + 1;
+  logActivity(owner, `Corrida de Forms (quedan ${owner.formsUsesLeft} usos)`);
   owner.updatedAt = new Date().toISOString();
   writeUsers();
   return { ok: true, usesLeft: owner.formsUsesLeft };
@@ -665,9 +692,8 @@ const server = http.createServer(async (req, res) => {
       if (user.status !== "active") {
         throw new HttpError(403, "Usuario inactivo.");
       }
-      if (isSubscriptionExpired(user)) {
-        throw new HttpError(403, `Suscripcion vencida (${user.subscriptionEndsAt ?? "sin fecha"}).`);
-      }
+      // La suscripcion vencida NO bloquea el login: el usuario puede entrar a
+      // ver su cuenta y usar Forms con sus usos; /generate si exige dias.
       user.lastLoginAt = new Date().toISOString();
       user.updatedAt = user.lastLoginAt;
       writeUsers();
@@ -711,6 +737,7 @@ const server = http.createServer(async (req, res) => {
         user.apiKeyLast4 = apiKey.slice(-4);
         user.apiKeyCreatedAt = new Date().toISOString();
         user.updatedAt = user.apiKeyCreatedAt;
+        logActivity(user, "Generó su clave de API");
         writeUsers();
         // La clave en claro solo viaja en esta respuesta.
         sendJson(res, 200, { ok: true, apiKey, last4: user.apiKeyLast4, createdAt: user.apiKeyCreatedAt });
@@ -721,6 +748,7 @@ const server = http.createServer(async (req, res) => {
         delete user.apiKeyLast4;
         delete user.apiKeyCreatedAt;
         user.updatedAt = new Date().toISOString();
+        logActivity(user, "Revocó su clave de API");
         writeUsers();
         sendJson(res, 200, { ok: true });
         return;
@@ -753,10 +781,7 @@ const server = http.createServer(async (req, res) => {
         reply(false, { reason: "usuario_inactivo" });
         return;
       }
-      if (isSubscriptionExpired(owner)) {
-        reply(false, { reason: "suscripcion_vencida", subscriptionEndsAt: owner.subscriptionEndsAt });
-        return;
-      }
+      // Forms va por usos: la suscripcion vencida no invalida la clave.
       reply(true, {
         email: owner.email,
         plan: owner.plan,
@@ -767,17 +792,72 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Cambio de contraseña por el propio usuario (self-service). Con rate
+    // limiting: un token robado no puede probar contraseñas sin freno.
+    if (req.method === "POST" && pathname === "/auth/change-password") {
+      const user = requireAuth(req);
+      const payload = await parseJsonBody(req);
+      const rateKey = `chpwd|${user.id}`;
+      assertLoginAllowed(rateKey);
+      const current = String(payload?.currentPassword ?? "");
+      if (!current || !checkPassword(current, user)) {
+        registerLoginFailure(rateKey);
+        throw new HttpError(401, "La contraseña actual no es correcta.");
+      }
+      loginAttempts.delete(rateKey);
+      Object.assign(user, buildPassword(String(payload?.newPassword ?? "")));
+      // Invalida todas las sesiones anteriores y emite un token fresco para
+      // que esta sesion continue sin re-login.
+      user.tokenVersion = (user.tokenVersion ?? 1) + 1;
+      logActivity(user, "Cambió su contraseña");
+      user.updatedAt = new Date().toISOString();
+      writeUsers();
+      const signed = signToken(user);
+      sendJson(res, 200, { ok: true, token: signed.token, tokenExpiresAt: signed.expiresAt });
+      return;
+    }
+
+    // Respaldo del almacen de usuarios (admin): con disco efimero (Render
+    // free) users.json se borra en cada reinicio; exportar/importar permite
+    // no perder cuentas, claves y usos.
+    if (req.method === "GET" && pathname === "/auth/users/backup") {
+      requireAuth(req, { adminOnly: true });
+      sendJson(res, 200, { ok: true, exportedAt: new Date().toISOString(), users });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/auth/users/restore") {
+      requireAuth(req, { adminOnly: true });
+      const payload = await parseJsonBody(req);
+      const incoming = Array.isArray(payload?.users) ? payload.users : null;
+      if (!incoming || incoming.length === 0) {
+        throw new HttpError(400, "El respaldo debe incluir un arreglo 'users' con al menos un usuario.");
+      }
+      const shapeOk = incoming.every((u) => u && typeof u === "object"
+        && u.id && u.emailLower && u.passwordHash && u.passwordSalt);
+      if (!shapeOk) {
+        throw new HttpError(400, "El respaldo tiene un formato invalido (faltan campos de usuario).");
+      }
+      users = incoming;
+      writeUsers();
+      // Garantiza que el admin de ADMIN_EMAIL/ADMIN_PASSWORD siga entrando
+      // aunque el respaldo venga de otro entorno.
+      ensureBootstrapAdmin();
+      sendJson(res, 200, { ok: true, restored: users.length });
+      return;
+    }
+
     if (req.method === "GET" && pathname === "/auth/users") {
-      requireAuth(req, { adminOnly: true, allowExpiredSubscription: true });
+      requireAuth(req, { adminOnly: true });
       const list = [...users]
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
-        .map((item) => sanitizeUser(item));
+        .map((item) => ({ ...sanitizeUser(item), activity: (item.activity ?? []).slice(0, 20) }));
       sendJson(res, 200, { ok: true, users: list });
       return;
     }
 
     if (req.method === "POST" && pathname === "/auth/users") {
-      requireAuth(req, { adminOnly: true, allowExpiredSubscription: true });
+      requireAuth(req, { adminOnly: true });
       const payload = await parseJsonBody(req);
       const user = createUser({
         email: payload?.email,
@@ -797,13 +877,14 @@ const server = http.createServer(async (req, res) => {
     // deja de validar de inmediato.
     const userApiKeyRoute = pathname.match(/^\/auth\/users\/([0-9a-fA-F-]+)\/api-key$/);
     if (userApiKeyRoute && req.method === "DELETE") {
-      requireAuth(req, { adminOnly: true, allowExpiredSubscription: true });
+      requireAuth(req, { adminOnly: true });
       const target = users.find((item) => item.id === userApiKeyRoute[1]);
       if (!target) throw new HttpError(404, "Usuario no encontrado.");
       delete target.apiKeyHash;
       delete target.apiKeyLast4;
       delete target.apiKeyCreatedAt;
       target.updatedAt = new Date().toISOString();
+      logActivity(target, "Clave de API revocada por el administrador");
       writeUsers();
       sendJson(res, 200, { ok: true, user: sanitizeUser(target) });
       return;
@@ -811,7 +892,7 @@ const server = http.createServer(async (req, res) => {
 
     const authUserRoute = pathname.match(/^\/auth\/users\/([0-9a-fA-F-]+)$/);
     if (authUserRoute && req.method === "PATCH") {
-      const admin = requireAuth(req, { adminOnly: true, allowExpiredSubscription: true });
+      const admin = requireAuth(req, { adminOnly: true });
       const targetId = authUserRoute[1];
       const target = users.find((item) => item.id === targetId);
       if (!target) throw new HttpError(404, "Usuario no encontrado.");
@@ -827,6 +908,19 @@ const server = http.createServer(async (req, res) => {
       }
 
       const updated = patchUser(target, payload ?? {});
+      // Historial: que cambio el admin en esta cuenta.
+      const cambios = [];
+      if (payload?.subscriptionDaysDelta !== undefined) cambios.push(`recarga de ${payload.subscriptionDaysDelta} días`);
+      if (payload?.subscriptionDays !== undefined) cambios.push(`suscripción fijada en ${payload.subscriptionDays} días`);
+      if (payload?.subscriptionEndsAt !== undefined) cambios.push("vencimiento de suscripción ajustado");
+      if (payload?.formsUsesDelta !== undefined) cambios.push(`recarga de ${payload.formsUsesDelta} usos de Forms`);
+      if (payload?.formsUses !== undefined) cambios.push(`usos de Forms fijados en ${payload.formsUses}`);
+      if (payload?.password !== undefined) cambios.push("contraseña restablecida");
+      if (payload?.role !== undefined) cambios.push(`rol cambiado a ${payload.role}`);
+      if (payload?.plan !== undefined) cambios.push(`plan cambiado a ${payload.plan}`);
+      if (payload?.status !== undefined) cambios.push(payload.status === "active" ? "cuenta activada" : "cuenta desactivada");
+      if (payload?.email !== undefined) cambios.push("email actualizado");
+      if (cambios.length > 0) logActivity(updated, `Admin: ${cambios.join(", ")}`);
       const idx = users.findIndex((item) => item.id === target.id);
       users[idx] = updated;
       writeUsers();
@@ -835,7 +929,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (authUserRoute && req.method === "DELETE") {
-      const admin = requireAuth(req, { adminOnly: true, allowExpiredSubscription: true });
+      const admin = requireAuth(req, { adminOnly: true });
       const targetId = authUserRoute[1];
       if (targetId === admin.id) {
         throw new HttpError(400, "No puedes eliminar tu propio usuario admin.");
@@ -860,14 +954,16 @@ const server = http.createServer(async (req, res) => {
         temas: Object.entries(CHART_THEMES).map(([id, t]) => ({ id, nombre: t.nombre, colores: t.colores })),
         nivelesCorrelacion: Object.entries(NIVELES_CORRELACION)
           .map(([id, n]) => ({ id, etiqueta: n.etiqueta, min: n.min, max: n.max })),
+        nivelesAlfa: Object.entries(NIVELES_ALFA)
+          .map(([id, n]) => ({ id, etiqueta: n.etiqueta, min: n.min, max: n.max })),
       });
       return;
     }
 
-    // Cualquier usuario autenticado, activo y con suscripcion vigente puede
-    // generar (el plan de suscripcion es justamente para esto).
+    // Generar Excel exige suscripcion vigente (Tabulacion va por dias; el
+    // resto de la cuenta, incluido Forms por usos, no depende de los dias).
     if (req.method === "POST" && pathname === "/generate") {
-      const authUser = requireAuth(req);
+      const authUser = requireAuth(req, { requireSubscription: true });
       const payload = await parseJsonBody(req);
       const config = payload?.config && typeof payload.config === "object"
         ? payload.config
@@ -886,6 +982,7 @@ const server = http.createServer(async (req, res) => {
         owner.generationsCount = (owner.generationsCount ?? 0) + 1;
         owner.lastGenerationAt = new Date().toISOString();
         owner.updatedAt = owner.lastGenerationAt;
+        logActivity(owner, "Generó un Excel");
         writeUsers();
       }
 
@@ -925,6 +1022,44 @@ const server = http.createServer(async (req, res) => {
           xlsx: `${baseUrl}/results/${id}/xlsx`,
           csv: `${baseUrl}/results/${id}/csv`,
         },
+      });
+      return;
+    }
+
+    // Prueba de confiabilidad (Alfa de Cronbach): un solo Excel de una hoja
+    // con datos simulados. Forma parte de Tabulacion, por eso exige la misma
+    // suscripcion vigente que /generate.
+    if (req.method === "POST" && pathname === "/cronbach") {
+      const authUser = requireAuth(req, { requireSubscription: true });
+      const payload = await parseJsonBody(req);
+      const config = payload?.config && typeof payload.config === "object"
+        ? payload.config
+        : payload;
+      const result = await generateCronbach(config);
+
+      const owner = users.find((item) => item.id === authUser.id);
+      if (owner) {
+        owner.generationsCount = (owner.generationsCount ?? 0) + 1;
+        owner.lastGenerationAt = new Date().toISOString();
+        owner.updatedAt = owner.lastGenerationAt;
+        logActivity(owner, `Generó una prueba de confiabilidad (α = ${result.alpha.toFixed(3)})`);
+        writeUsers();
+      }
+
+      sendJson(res, 200, {
+        ok: true,
+        alpha: result.alpha,
+        cumple: result.cumple,
+        nivel: result.nivel,
+        etiqueta: result.etiqueta,
+        esperadoMin: result.esperadoMin,
+        esperadoMax: result.esperadoMax,
+        K: result.K,
+        encuestados: result.encuestados,
+        variable: result.variable,
+        warnings: result.warnings,
+        excelBase64: result.excelBuffer.toString("base64"),
+        excelFileName: "Alfa_Cronbach.xlsx",
       });
       return;
     }

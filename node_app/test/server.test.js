@@ -146,6 +146,47 @@ test("config que excede los limites devuelve 500 con mensaje claro", async () =>
   assert.match(itemsPayload.error, /maximo 60 items/);
 });
 
+test("prueba de confiabilidad: /cronbach genera el Excel con alfa en el nivel pedido", async () => {
+  const sinToken = await fetch(`${BASE}/cronbach`, { method: "POST" });
+  assert.equal(sinToken.status, 401);
+
+  const user = await login("user@test.local", "OtraClave123!");
+  const auth = { "Content-Type": "application/json", Authorization: `Bearer ${user.body.token}` };
+  const res = await fetch(`${BASE}/cronbach`, {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({
+      config: {
+        variable: "Clima organizacional",
+        encuestados: 30,
+        respuesta: 5,
+        dimensiones: [
+          { nombre: "Comunicación", items: 8 },
+          { nombre: "Liderazgo", items: 7 },
+        ],
+        nivelAlfa: "excelente",
+      },
+    }),
+  });
+  assert.equal(res.status, 200);
+  const payload = await res.json();
+  assert.equal(payload.K, 15);
+  assert.equal(payload.encuestados, 30);
+  assert.equal(payload.etiqueta, "Excelente");
+  assert.ok(payload.alpha >= 0.85, `alfa alto (obtenido ${payload.alpha})`);
+  assert.ok(payload.excelBase64.length > 1000);
+  assert.equal(payload.excelFileName, "Alfa_Cronbach.xlsx");
+
+  // Config invalida: mensaje claro.
+  const invalido = await fetch(`${BASE}/cronbach`, {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({ config: { variable: "X", encuestados: 30 } }),
+  });
+  assert.equal(invalido.status, 500);
+  assert.match((await invalido.json()).error, /al menos 2 items/);
+});
+
 test("claves de API: generar, validar, vencimiento y revocar", async () => {
   const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
   const auth = { "Content-Type": "application/json", Authorization: `Bearer ${admin.body.token}` };
@@ -179,7 +220,8 @@ test("claves de API: generar, validar, vencimiento y revocar", async () => {
   v = await validate("no-es-una-clave");
   assert.equal(v.valid, false);
 
-  // Usuario con suscripcion vencida: clave rechazada
+  // Usuario con suscripcion vencida: desacoplado — la clave de Forms sigue
+  // valida (va por usos), el login funciona, pero /generate exige dias.
   const created = await fetch(`${BASE}/auth/users`, {
     method: "POST",
     headers: auth,
@@ -198,8 +240,17 @@ test("claves de API: generar, validar, vencimiento y revocar", async () => {
     body: JSON.stringify({ subscriptionEndsAt: "2020-01-01T00:00:00.000Z" }),
   });
   v = await validate(expiredKey);
-  assert.equal(v.valid, false);
-  assert.equal(v.reason, "suscripcion_vencida");
+  assert.equal(v.valid, true);
+  assert.equal(v.usesLeft, 0);
+  const expiredLogin2 = await login("vencido@test.local", "ClaveVencida1!");
+  assert.equal(expiredLogin2.status, 200);
+  const genExpired = await fetch(`${BASE}/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${expiredLogin2.body.token}` },
+    body: JSON.stringify({ config: { muestra: "10", item: "4", variable: "1" }, responseMode: "inline" }),
+  });
+  assert.equal(genExpired.status, 403);
+  assert.match((await genExpired.json()).error, /Suscripcion vencida/);
 
   // Revocar
   res = await fetch(`${BASE}/auth/api-key`, { method: "DELETE", headers: auth });
@@ -272,6 +323,89 @@ test("Forms por usos: consume 1 uso por corrida, bloquea sin usos y admin recarg
   const listBody = await list.json();
   const generador = listBody.users.find((u) => u.email === "user@test.local");
   assert.ok(generador && generador.generationsCount >= 1, "generationsCount registrado");
+});
+
+test("contraseña self-service, historial de actividad y respaldo", async () => {
+  const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  const auth = { "Content-Type": "application/json", Authorization: `Bearer ${admin.body.token}` };
+
+  // Self-service: la contraseña actual incorrecta se rechaza.
+  const userLogin = await login("usos@test.local", "ClaveUsos123!");
+  const userAuth = { "Content-Type": "application/json", Authorization: `Bearer ${userLogin.body.token}` };
+  let res = await fetch(`${BASE}/auth/change-password`, {
+    method: "POST",
+    headers: userAuth,
+    body: JSON.stringify({ currentPassword: "equivocada", newPassword: "NuevaClave123!" }),
+  });
+  assert.equal(res.status, 401);
+  res = await fetch(`${BASE}/auth/change-password`, {
+    method: "POST",
+    headers: userAuth,
+    body: JSON.stringify({ currentPassword: "ClaveUsos123!", newPassword: "NuevaClave123!" }),
+  });
+  assert.equal(res.status, 200);
+  const changed = await res.json();
+  assert.ok(changed.token, "el cambio devuelve un token fresco");
+  assert.equal((await login("usos@test.local", "ClaveUsos123!")).status, 401);
+  assert.equal((await login("usos@test.local", "NuevaClave123!")).status, 200);
+
+  // Las sesiones anteriores quedan invalidadas; el token fresco sigue vivo.
+  const meOld = await fetch(`${BASE}/auth/me`, { headers: { Authorization: `Bearer ${userLogin.body.token}` } });
+  assert.equal(meOld.status, 401);
+  const meNew = await fetch(`${BASE}/auth/me`, { headers: { Authorization: `Bearer ${changed.token}` } });
+  assert.equal(meNew.status, 200);
+
+  // Rate limiting del cambio de contraseña (LOGIN_MAX_ATTEMPTS=3 en tests).
+  const freshAuth = { "Content-Type": "application/json", Authorization: `Bearer ${changed.token}` };
+  for (let i = 0; i < 3; i += 1) {
+    const bad = await fetch(`${BASE}/auth/change-password`, {
+      method: "POST",
+      headers: freshAuth,
+      body: JSON.stringify({ currentPassword: "adivinando", newPassword: "LoQueSea123!" }),
+    });
+    assert.equal(bad.status, 401);
+  }
+  const blockedChange = await fetch(`${BASE}/auth/change-password`, {
+    method: "POST",
+    headers: freshAuth,
+    body: JSON.stringify({ currentPassword: "adivinando", newPassword: "LoQueSea123!" }),
+  });
+  assert.equal(blockedChange.status, 429);
+
+  // Historial: las corridas de Forms y recargas del test anterior quedaron registradas.
+  const list = await fetch(`${BASE}/auth/users`, { headers: auth });
+  const listBody = await list.json();
+  const conUsos = listBody.users.find((u) => u.email === "usos@test.local");
+  assert.ok(Array.isArray(conUsos.activity) && conUsos.activity.length > 0, "historial presente");
+  assert.ok(conUsos.activity.some((e) => e.detail.includes("Corrida de Forms")), "corridas registradas");
+  assert.ok(conUsos.activity.some((e) => e.detail.includes("usos de Forms")), "recarga registrada");
+  assert.ok(conUsos.activity.some((e) => e.detail.includes("Cambió su contraseña")), "cambio de contraseña registrado");
+
+  // Respaldo: exportar y restaurar el almacen completo.
+  const backupRes = await fetch(`${BASE}/auth/users/backup`, { headers: auth });
+  assert.equal(backupRes.status, 200);
+  const backup = await backupRes.json();
+  assert.ok(Array.isArray(backup.users) && backup.users.length >= 2);
+  assert.ok(backup.users[0].passwordHash, "el respaldo conserva credenciales");
+
+  const restoreRes = await fetch(`${BASE}/auth/users/restore`, {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({ users: backup.users }),
+  });
+  assert.equal(restoreRes.status, 200);
+  assert.equal((await restoreRes.json()).restored, backup.users.length);
+  // Tras restaurar, las cuentas siguen funcionando.
+  assert.equal((await login("usos@test.local", "NuevaClave123!")).status, 200);
+  assert.equal((await login(ADMIN_EMAIL, ADMIN_PASSWORD)).status, 200);
+
+  // El respaldo invalido se rechaza sin tocar el almacen.
+  const badRestore = await fetch(`${BASE}/auth/users/restore`, {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({ users: [{ email: "roto@test.local" }] }),
+  });
+  assert.equal(badRestore.status, 400);
 });
 
 test("rate limiting: bloquea tras varios intentos fallidos", async () => {

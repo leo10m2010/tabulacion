@@ -46,9 +46,11 @@ npm test
 ### Endpoints
 
 - `GET /health`
-- `POST /auth/login`, `GET /auth/me`
+- `POST /auth/login`, `GET /auth/me`, `POST /auth/change-password` (self-service: `currentPassword` + `newPassword`)
 - `GET|POST /auth/users`, `PATCH|DELETE /auth/users/:id` (solo admin). `POST` acepta `formsUses` iniciales; `PATCH` acepta `email`, `role`, `plan`, `status`, `password` (reset), `subscriptionDays`/`subscriptionDaysDelta` y `formsUses`/`formsUsesDelta`.
 - `DELETE /auth/users/:id/api-key` (solo admin): revoca la clave de la extensión de un usuario.
+- `GET /auth/users/backup` y `POST /auth/users/restore` (solo admin): exportar/restaurar el almacén completo de usuarios (con disco efímero en el hosting es el respaldo de cuentas, claves y usos).
+- **Acceso desacoplado**: el login solo exige cuenta activa. `POST /generate` exige suscripción vigente (Tabulación va por días); Forms va por usos y funciona aunque la suscripción esté vencida. El listado de admin incluye `activity` (últimos 20 eventos por usuario: recargas, corridas de Forms, Excel generados, cambios de cuenta).
 - `GET /template-info` (límites del generador y temas de gráficos disponibles)
 - `POST /generate` (autenticado)
 - `GET /results/:id`, `GET /results/:id/xlsx`, `GET /results/:id/csv`, `DELETE /results/:id`

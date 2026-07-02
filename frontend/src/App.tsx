@@ -15,8 +15,10 @@ import {
   LogOut,
   Moon,
   Palette,
+  ShieldCheck,
   Sparkles,
   Sun,
+  UserRound,
   Users,
   Zap,
 } from "lucide-react";
@@ -68,6 +70,8 @@ import { PreviewCharts } from "./components/PreviewCharts";
 import { ThemePicker } from "./components/ThemePicker";
 import { WizardProgress } from "./components/WizardProgress";
 import { LandingPage } from "./components/LandingPage";
+import { AccountSection } from "./components/sections/AccountSection";
+import { CronbachSection } from "./components/sections/CronbachSection";
 import { FormsSection } from "./components/sections/FormsSection";
 import { UsersSection } from "./components/sections/UsersSection";
 
@@ -554,6 +558,20 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setActiveSection("confiabilidad")}
+            className={cn(
+              "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
+              activeSection === "confiabilidad"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
+          >
+            <ShieldCheck className="h-4 w-4 shrink-0" />
+            Confiabilidad
+            {activeSection === "confiabilidad" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
+          </button>
+
+          <button
             onClick={() => setActiveSection("forms")}
             className={cn(
               "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
@@ -622,10 +640,19 @@ export default function App() {
               />
             </div>
           )}
-          <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2">
+          <button
+            onClick={() => setActiveSection("cuenta")}
+            className={cn(
+              "w-full rounded-xl border px-3 py-2 text-left transition-all",
+              activeSection === "cuenta"
+                ? "border-primary/50 bg-primary/10"
+                : "border-border/60 bg-background/60 hover:border-primary/40 hover:bg-accent",
+            )}
+            title="Mi cuenta"
+          >
             <p className="truncate text-xs font-medium text-foreground">{authUser?.email}</p>
-            <p className="text-[10px] text-muted-foreground capitalize">{authUser?.role}</p>
-          </div>
+            <p className="text-[10px] text-muted-foreground capitalize">{authUser?.role} · Mi cuenta</p>
+          </button>
           <button
             onClick={handleLogout}
             className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-danger/10 hover:text-danger transition-all"
@@ -665,6 +692,13 @@ export default function App() {
             Tabulación
           </button>
           <button
+            onClick={() => setActiveSection("confiabilidad")}
+            className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "confiabilidad" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Alfa
+          </button>
+          <button
             onClick={() => setActiveSection("forms")}
             className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "forms" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
           >
@@ -680,6 +714,13 @@ export default function App() {
               Usuarios
             </button>
           )}
+          <button
+            onClick={() => setActiveSection("cuenta")}
+            className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "cuenta" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
+          >
+            <UserRound className="h-3.5 w-3.5" />
+            Cuenta
+          </button>
         </div>
 
         {/* Content */}
@@ -692,6 +733,18 @@ export default function App() {
                 <h2 className="text-2xl font-bold tracking-tight">Generar tabulación</h2>
                 <p className="mt-1 text-sm text-muted-foreground">Completa los 3 pasos para generar tu archivo Excel.</p>
               </div>
+
+              {/* Tabulación exige suscripción vigente; Forms va por usos y sigue disponible. */}
+              {authUser.role !== "admin"
+                && (!authUser.subscriptionEndsAt || Date.parse(authUser.subscriptionEndsAt) < Date.now()) && (
+                <div className="mb-5 flex items-start gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-sm">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <p className="text-amber-700 dark:text-amber-300">
+                    Tu suscripción de Tabulación está vencida: no podrás generar el Excel hasta que el
+                    administrador recargue tus días. Forms sigue disponible con tus usos.
+                  </p>
+                </div>
+              )}
 
               <WizardProgress currentStep={wizardStep} />
 
@@ -1467,6 +1520,11 @@ export default function App() {
             </div>
           )}
 
+          {/* ── Confiabilidad (Alfa de Cronbach) ── */}
+          {activeSection === "confiabilidad" && authUser && (
+            <CronbachSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+          )}
+
           {/* ── Integraciones (clave de API + Tutorica Forms) ── */}
           {activeSection === "forms" && authUser && (
             <FormsSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
@@ -1475,6 +1533,16 @@ export default function App() {
           {/* ── Usuarios (admin) ── */}
           {activeSection === "usuarios" && isAdmin && authUser && (
             <UsersSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+          )}
+
+          {/* ── Mi cuenta ── */}
+          {activeSection === "cuenta" && authUser && (
+            <AccountSection
+              apiBaseUrl={apiBaseUrl}
+              authToken={authToken}
+              authUser={authUser}
+              onTokenRefresh={setAuthToken}
+            />
           )}
 
         </main>

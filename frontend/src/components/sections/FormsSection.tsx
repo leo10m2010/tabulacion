@@ -180,8 +180,8 @@ export function FormsSection({ apiBaseUrl, authToken, authUser }: {
 
           <p className="text-xs text-muted-foreground">
             Forms funciona por usos: cada corrida de llenado consume 1 uso, sin importar cuántas
-            respuestas envíe. Cuando se agoten, solicita una recarga al administrador. La clave además
-            requiere que tu suscripción esté vigente.
+            respuestas envíe. Cuando se agoten, solicita una recarga al administrador. Los usos son
+            independientes de la suscripción de Tabulación: solo necesitas la cuenta activa.
           </p>
         </CardContent>
       </Card>

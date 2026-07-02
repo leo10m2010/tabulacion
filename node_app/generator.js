@@ -23,6 +23,7 @@ export { CHART_THEMES, MAX_ITEMS_POR_VARIABLE, MAX_MUESTRA, NIVELES_CORRELACION,
 export { computeCorrelation, generateBaseData, lillieforsTest, shapiroWilkTest, spearmanCorrelation } from "./lib/stats.js";
 export { buildWorkbook } from "./lib/sheets.js";
 export { postProcessWorkbook } from "./lib/ooxml.js";
+export { NIVELES_ALFA, computeCronbachAlpha, generateCronbach, normalizeCronbachConfig } from "./lib/cronbach.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT_DIR = path.resolve(SCRIPT_DIR, "..");

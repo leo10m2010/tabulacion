@@ -5,6 +5,7 @@ import type {
   AuthLoginResponse,
   AuthUser,
   AuthUsersResponse,
+  CronbachResponse,
   InlineGenerateResponse,
   TabConfig,
   TemplateInfo,
@@ -42,6 +43,15 @@ export const login = (apiBaseUrl: string, email: string, password: string) =>
 export const fetchMe = (apiBaseUrl: string, token: string) =>
   request<{ user?: AuthUser }>(apiBaseUrl, "/auth/me", { token });
 
+// El cambio de contraseña invalida las sesiones anteriores y devuelve un
+// token fresco para que la sesión actual continúe.
+export const changePassword = (apiBaseUrl: string, token: string, currentPassword: string, newPassword: string) =>
+  request<{ ok?: boolean; token?: string; tokenExpiresAt?: string }>(apiBaseUrl, "/auth/change-password", {
+    method: "POST",
+    token,
+    body: { currentPassword, newPassword },
+  });
+
 export const fetchTemplateInfo = (apiBaseUrl: string, token: string) =>
   request<Partial<TemplateInfo>>(apiBaseUrl, "/template-info", { token });
 
@@ -52,6 +62,19 @@ export const generateTabulacion = (apiBaseUrl: string, token: string, config: Ta
     token,
     body: { config, responseMode: "inline" },
   });
+
+// Prueba de confiabilidad (Alfa de Cronbach): Excel de una hoja con datos
+// simulados de alta consistencia interna.
+export interface CronbachConfig {
+  variable: string;
+  encuestados: number;
+  respuesta: number;
+  dimensiones: { nombre: string; items: number }[];
+  nivelAlfa: string;
+}
+
+export const generateCronbach = (apiBaseUrl: string, token: string, config: CronbachConfig) =>
+  request<CronbachResponse>(apiBaseUrl, "/cronbach", { method: "POST", token, body: { config } });
 
 // ── Usuarios (admin) ─────────────────────────────────────────────────────────
 export const listUsers = (apiBaseUrl: string, token: string) =>
@@ -72,6 +95,18 @@ export const deleteUser = (apiBaseUrl: string, token: string, userId: string) =>
 // Revoca la clave de API de la extensión de un usuario (solo admin).
 export const revokeUserApiKey = (apiBaseUrl: string, token: string, userId: string) =>
   request<{ ok?: boolean }>(apiBaseUrl, `/auth/users/${userId}/api-key`, { method: "DELETE", token });
+
+// Respaldo del almacén de usuarios (solo admin): con disco efímero en el
+// hosting, exportar/importar evita perder cuentas, claves y usos.
+export const getUsersBackup = (apiBaseUrl: string, token: string) =>
+  request<{ exportedAt: string; users: unknown[] }>(apiBaseUrl, "/auth/users/backup", { token });
+
+export const restoreUsersBackup = (apiBaseUrl: string, token: string, users: unknown[]) =>
+  request<{ ok?: boolean; restored?: number }>(apiBaseUrl, "/auth/users/restore", {
+    method: "POST",
+    token,
+    body: { users },
+  });
 
 // ── Clave de API (extensión Tutorica Forms) ──────────────────────────────────
 export interface ApiKeyInfo {

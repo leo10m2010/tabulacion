@@ -3,7 +3,7 @@
 import { NIVELES_CORRELACION } from "./config.js";
 
 // ── Simulacion de base de datos ──────────────────────────────────────────────
-const randn = () => {
+export const randn = () => {
   let u = 0;
   let v = 0;
   while (u === 0) u = Math.random();
