@@ -1,39 +1,25 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
   ArrowUpDown,
-  Building2,
-  CalendarPlus,
   ChartNoAxesCombined,
   Check,
-  CheckCircle2,
-  ChevronDown,
   ChevronRight,
-  Clock3,
   Download,
-  Eye,
-  EyeOff,
   FileSpreadsheet,
   HelpCircle,
   KeyRound,
   Loader2,
   LogOut,
-  Mail,
   Moon,
   Palette,
-  Server,
-  ShieldCheck,
   Sparkles,
   Sun,
-  Trash2,
-  UserRound,
   Users,
-  XCircle,
   Zap,
 } from "lucide-react";
-import { motion, animate, useInView, useMotionValue, useReducedMotion, useSpring } from "motion/react";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
@@ -46,21 +32,18 @@ import { cn } from "./lib/utils";
 import type {
   AppSection,
   AppView,
-  AuthLoginResponse,
   AuthUser,
-  AuthUsersResponse,
   DimensionDef,
   DownloadLinks,
   EstructuraDimension,
   GeneratedResult,
-  IndicadorDef,
-  InlineGenerateResponse,
   ItemDef,
   TabConfig,
   TemplateInfo,
   ThemeMode,
   WizardStep,
 } from "./lib/types";
+import * as api from "./lib/api";
 import { DEFAULT_API_BASE_URL, FALLBACK_CONFIG, LIST_GROUPS, themePalette } from "./lib/constants";
 import {
   base64ToUint8Array,
@@ -70,8 +53,6 @@ import {
   correlationInfo,
   csvToRows,
   defaultLevelName,
-  formatDateTime,
-  getSubscriptionLabel,
   normalizeList,
   parseIntSafe,
   resolveViewFromPath,
@@ -80,13 +61,15 @@ import {
   toStringValue,
   workbookToSheetRows,
 } from "./lib/helpers";
-import { springSoft } from "./components/motion-primitives";
 import { FieldHint, HierarchyEditor, ListEditorField, StepTip } from "./components/wizard-fields";
+import { LoginScreen } from "./components/LoginScreen";
 import { PreviewTable } from "./components/PreviewTable";
 import { PreviewCharts } from "./components/PreviewCharts";
 import { ThemePicker } from "./components/ThemePicker";
 import { WizardProgress } from "./components/WizardProgress";
 import { LandingPage } from "./components/LandingPage";
+import { FormsSection } from "./components/sections/FormsSection";
+import { UsersSection } from "./components/sections/UsersSection";
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
@@ -123,27 +106,6 @@ export default function App() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(() => Boolean(localStorage.getItem("authToken")));
   const [authError, setAuthError] = useState<string | null>(null);
-  const [loginEmail, setLoginEmail] = useState<string>(() => localStorage.getItem("loginEmail") ?? "");
-  const [loginPassword, setLoginPassword] = useState<string>("");
-  const [showLoginPassword, setShowLoginPassword] = useState(false);
-
-  const [managedUsers, setManagedUsers] = useState<AuthUser[]>([]);
-  const [usersStatusMessage, setUsersStatusMessage] = useState<string>("Sincroniza usuarios para ver el estado.");
-
-  // Clave de API del usuario (seccion Integraciones / Tutorica Forms).
-  const [apiKeyInfo, setApiKeyInfo] = useState<{ hasKey: boolean; last4: string | null; createdAt: string | null } | null>(null);
-  const [newApiKey, setNewApiKey] = useState<string | null>(null);
-  const [apiKeyBusy, setApiKeyBusy] = useState(false);
-  const [apiKeyCopied, setApiKeyCopied] = useState(false);
-  const [usersErrorMessage, setUsersErrorMessage] = useState<string | null>(null);
-  const [isUsersLoading, setIsUsersLoading] = useState(false);
-  const [newUserEmail, setNewUserEmail] = useState<string>("");
-  const [newUserPassword, setNewUserPassword] = useState<string>("");
-  const [newUserRole, setNewUserRole] = useState<"admin" | "user">("user");
-  const [newUserPlan, setNewUserPlan] = useState<string>("pro");
-  const [newUserDays, setNewUserDays] = useState<string>("30");
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [customDaysMap, setCustomDaysMap] = useState<Record<string, string>>({});
 
   const isAdmin = authUser?.role === "admin";
 
@@ -171,9 +133,7 @@ export default function App() {
   // Despierta la API apenas se abre la app: si el hosting suspende el servidor
   // por inactividad (arranque en frío), el login y la generación lo encuentran
   // ya caliente.
-  useEffect(() => {
-    fetch(`${apiBaseUrl.replace(/\/$/, "")}/health`).catch(() => {});
-  }, [apiBaseUrl]);
+  useEffect(() => { api.pingHealth(apiBaseUrl); }, [apiBaseUrl]);
 
   // Cronómetro de la generación para informar el progreso por etapas.
   useEffect(() => {
@@ -242,10 +202,9 @@ export default function App() {
     let isMounted = true;
     setAuthLoading(true);
     setAuthError(null);
-    fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/me`, { headers: { Authorization: `Bearer ${authToken}` } })
-      .then(async (res) => {
-        const payload = (await res.json()) as { user?: AuthUser; error?: string };
-        if (!res.ok || !payload.user) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
+    api.fetchMe(apiBaseUrl, authToken)
+      .then((payload) => {
+        if (!payload.user) throw new Error("Sesión inválida.");
         if (!isMounted) return;
         setAuthUser(payload.user);
       })
@@ -263,10 +222,8 @@ export default function App() {
   useEffect(() => {
     if (!authToken || !authUser) { setTemplateInfo(null); return; }
     let isMounted = true;
-    fetch(`${apiBaseUrl.replace(/\/$/, "")}/template-info`, { headers: { Authorization: `Bearer ${authToken}` } })
-      .then(async (res) => {
-        if (!res.ok) return;
-        const payload = (await res.json()) as Partial<TemplateInfo>;
+    api.fetchTemplateInfo(apiBaseUrl, authToken)
+      .then((payload) => {
         if (!isMounted) return;
         if (typeof payload.maxMuestra === "number" && typeof payload.maxItemsV1 === "number") {
           setTemplateInfo({
@@ -436,39 +393,16 @@ export default function App() {
     }
   };
 
-  const loadUsers = async () => {
-    if (!authToken || authUser?.role !== "admin") return;
-    setIsUsersLoading(true);
-    setUsersErrorMessage(null); setUsersStatusMessage("");
-    try {
-      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users`, { headers: { Authorization: `Bearer ${authToken}` } });
-      const payload = (await res.json()) as AuthUsersResponse;
-      if (!res.ok || !Array.isArray(payload.users)) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
-      setManagedUsers(payload.users);
-      setUsersErrorMessage(null); setUsersStatusMessage(`${payload.users.length} usuario(s) cargados.`);
-    } catch (err) {
-      setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo obtener usuarios.");
-    } finally {
-      setIsUsersLoading(false);
-    }
-  };
-
-  const handleLogin = async () => {
+  const handleLogin = async (emailRaw: string, password: string) => {
     setAuthError(null);
-    const email = loginEmail.trim();
-    if (!email || !loginPassword) { setAuthError("Completa email y contraseña."); return; }
+    const email = emailRaw.trim();
+    if (!email || !password) { setAuthError("Completa email y contraseña."); return; }
     setAuthLoading(true);
     try {
-      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password: loginPassword }),
-      });
-      const payload = (await res.json()) as AuthLoginResponse;
-      if (!res.ok || !payload.token || !payload.user) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
+      const payload = await api.login(apiBaseUrl, email, password);
+      if (!payload.token || !payload.user) throw new Error(payload.error ?? "Respuesta inválida del servidor.");
       setAuthToken(payload.token);
       setAuthUser(payload.user);
-      setLoginPassword("");
       localStorage.setItem("loginEmail", email);
       setStatusMessage("Sesión iniciada.");
     } catch (err) {
@@ -480,80 +414,10 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    setAuthToken(""); setAuthUser(null); setManagedUsers([]);
-    setAuthError(null); setUsersErrorMessage(null);
+    setAuthToken(""); setAuthUser(null);
+    setAuthError(null);
     setActiveSection("tabulacion"); setWizardStep(1);
     setStatusMessage("Sesión cerrada.");
-  };
-
-  const handleCreateUser = async () => {
-    setUsersErrorMessage(null); setUsersStatusMessage("");
-    if (!authToken) return;
-    const email = newUserEmail.trim();
-    if (!email || !newUserPassword) { setUsersErrorMessage("Email y contraseña son obligatorios."); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setUsersErrorMessage("El email no tiene un formato válido."); return; }
-    if (newUserPassword.length < 8) { setUsersErrorMessage("La contraseña debe tener al menos 8 caracteres."); return; }
-    const subscriptionDays = Number.parseInt(newUserDays, 10);
-    if (!Number.isFinite(subscriptionDays) || subscriptionDays <= 0) { setUsersErrorMessage("Los días de suscripción deben ser mayores a 0."); return; }
-    setIsUsersLoading(true);
-    try {
-      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
-        body: JSON.stringify({ email, password: newUserPassword, role: newUserRole, plan: newUserPlan, subscriptionDays }),
-      });
-      const payload = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
-      setNewUserEmail(""); setNewUserPassword(""); setNewUserRole("user"); setNewUserPlan("pro"); setNewUserDays("30");
-      setUsersErrorMessage(null); setUsersStatusMessage("Usuario creado correctamente.");
-      await loadUsers();
-    } catch (err) {
-      setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo crear el usuario.");
-    } finally {
-      setIsUsersLoading(false);
-    }
-  };
-
-  const patchManagedUser = async (userId: string, patch: Record<string, unknown>, successMessage: string) => {
-    if (!authToken) return;
-    if (userId === authUser?.id && "status" in patch) { setUsersErrorMessage("No puedes modificar tu propio estado."); return; }
-    setIsUsersLoading(true); setUsersErrorMessage(null); setUsersStatusMessage("");
-    try {
-      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users/${userId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
-        body: JSON.stringify(patch),
-      });
-      const payload = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
-      setUsersErrorMessage(null); setUsersStatusMessage(successMessage);
-      await loadUsers();
-    } catch (err) {
-      setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo actualizar el usuario.");
-    } finally {
-      setIsUsersLoading(false);
-    }
-  };
-
-  const deleteManagedUser = async (userId: string) => {
-    if (!authToken) return;
-    if (userId === authUser?.id) { setUsersErrorMessage("No puedes eliminar tu propia cuenta."); setConfirmDeleteId(null); return; }
-    setIsUsersLoading(true); setUsersErrorMessage(null); setUsersStatusMessage("");
-    setConfirmDeleteId(null);
-    try {
-      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/users/${userId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      const payload = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
-      setUsersErrorMessage(null); setUsersStatusMessage("Usuario eliminado.");
-      await loadUsers();
-    } catch (err) {
-      setUsersErrorMessage(err instanceof Error ? err.message : "No se pudo eliminar el usuario.");
-    } finally {
-      setIsUsersLoading(false);
-    }
   };
 
   const handleGenerate = async () => {
@@ -572,13 +436,7 @@ export default function App() {
           return val.trim() || `Variable ${i + 1}`;
         }),
       };
-      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
-        body: JSON.stringify({ config: resolvedConfig, responseMode: "inline" }),
-      });
-      const payload = (await res.json()) as InlineGenerateResponse;
-      if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
+      const payload = await api.generateTabulacion(apiBaseUrl, authToken, resolvedConfig);
       const correlationOk = typeof payload.correlation === "number" || payload.correlation === null;
       if (!correlationOk || !payload.baseCsv || !payload.excelBase64) {
         throw new Error("La API respondió sin los artefactos esperados.");
@@ -626,70 +484,6 @@ export default function App() {
         ? `El servidor está procesando (${generationElapsed}s)... puede tardar hasta 2 minutos, no cierres la página.`
         : `Generando tu Excel: estadísticos, baremos y gráficos (${generationElapsed}s)... ya falta poco.`;
 
-  // ── Clave de API (Integraciones) ────────────────────────────────────────────
-  const loadApiKey = async () => {
-    if (!authToken) return;
-    try {
-      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/api-key`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      const body = await res.json();
-      if (res.ok) setApiKeyInfo({ hasKey: Boolean(body.hasKey), last4: body.last4 ?? null, createdAt: body.createdAt ?? null });
-    } catch {
-      // Sin conexion: se reintenta al volver a entrar a la seccion.
-    }
-  };
-
-  const generateApiKey = async () => {
-    if (!authToken) return;
-    if (apiKeyInfo?.hasKey && !window.confirm("Regenerar la clave invalida la anterior en tu extensión. ¿Continuar?")) return;
-    setApiKeyBusy(true);
-    setNewApiKey(null);
-    setApiKeyCopied(false);
-    try {
-      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/api-key`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `Error HTTP ${res.status}`);
-      setNewApiKey(body.apiKey);
-      setApiKeyInfo({ hasKey: true, last4: body.last4 ?? null, createdAt: body.createdAt ?? null });
-    } catch (err) {
-      window.alert(err instanceof Error ? err.message : "No se pudo generar la clave.");
-    } finally {
-      setApiKeyBusy(false);
-    }
-  };
-
-  const revokeApiKey = async () => {
-    if (!authToken || !window.confirm("¿Revocar tu clave de API? La extensión dejará de funcionar hasta que generes una nueva.")) return;
-    setApiKeyBusy(true);
-    try {
-      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/auth/api-key`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      if (!res.ok) throw new Error(`Error HTTP ${res.status}`);
-      setNewApiKey(null);
-      setApiKeyInfo({ hasKey: false, last4: null, createdAt: null });
-    } catch (err) {
-      window.alert(err instanceof Error ? err.message : "No se pudo revocar la clave.");
-    } finally {
-      setApiKeyBusy(false);
-    }
-  };
-
-  const copyText = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setApiKeyCopied(true);
-      window.setTimeout(() => setApiKeyCopied(false), 2000);
-    } catch {
-      window.alert("No se pudo copiar; selecciona el texto manualmente.");
-    }
-  };
-
   const toggleTheme = () => setThemeMode((cur) => (cur === "dark" ? "light" : "dark"));
   const goToApp = () => { window.history.pushState({}, "", "/app"); setAppView("app"); };
   const goToLanding = () => { window.history.pushState({}, "", "/"); setAppView("landing"); };
@@ -706,90 +500,16 @@ export default function App() {
   // ── Render: Login ──────────────────────────────────────────────────────────
   if (!authUser && !authLoading) {
     return (
-      <div className="flex min-h-[100dvh] items-center justify-center bg-[radial-gradient(ellipse_at_top,hsl(var(--accent)/0.55)_0%,hsl(var(--background))_60%)] p-4 transition-colors">
-        <motion.div
-          className="w-full max-w-sm"
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={springSoft}
-        >
-          <div className="mb-6 text-center">
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-[0_14px_36px_-14px_hsl(var(--primary)/0.8)]">
-              <FileSpreadsheet className="h-6 w-6" />
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight">TesisTab</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Ingresa con tu cuenta para continuar</p>
-          </div>
-          <Card className="rounded-2xl border-border/70 shadow-[0_20px_70px_rgba(15,23,42,0.15)]">
-            <CardContent className="space-y-4 pt-6">
-              {authError && (
-                <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{authError}</div>
-              )}
-              <label className="block space-y-1.5">
-                <span className="text-sm font-medium">Correo electrónico</span>
-                {/* AUTOCOMPLETE: permite que el navegador recuerde el correo.
-                    TODO producción: cambiar a autoComplete="off" si se prefiere no guardar */}
-                <Input
-                  value={loginEmail}
-                  onChange={(e) => setLoginEmail(e.target.value)}
-                  placeholder="admin@tu-dominio.com"
-                  autoComplete="email"
-                  onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-                />
-              </label>
-              <label className="block space-y-1.5">
-                <span className="text-sm font-medium">Contraseña</span>
-                {/* AUTOCOMPLETE: permite que el navegador guarde la contraseña.
-                    TODO producción: cambiar a autoComplete="new-password" para desactivarlo */}
-                <div className="relative">
-                  <Input
-                    type={showLoginPassword ? "text" : "password"}
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="••••••••"
-                    autoComplete="current-password"
-                    onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowLoginPassword((v) => !v)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    aria-label={showLoginPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
-                  >
-                    {showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </label>
-              <Button className="h-11 w-full" onClick={handleLogin} disabled={authLoading}>
-                {authLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                Entrar
-              </Button>
-              {import.meta.env.DEV && (
-                <button
-                  onClick={() => { setLoginEmail("admin@tabulacion.local"); setLoginPassword("Admin12345!"); }}
-                  className="w-full rounded-lg border border-dashed border-border py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-all"
-                >
-                  Rellenar con datos de prueba
-                </button>
-              )}
-              <div className="flex items-center justify-between">
-                <button onClick={goToLanding} className="text-xs text-muted-foreground hover:text-foreground">← Volver al inicio</button>
-                <button onClick={toggleTheme} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-                  {themeMode === "dark" ? <><Sun className="h-3.5 w-3.5" />Modo claro</> : <><Moon className="h-3.5 w-3.5" />Modo oscuro</>}
-                </button>
-              </div>
-            </CardContent>
-          </Card>
-          {/* Input de API solo visible en dev local (VITE_API_BASE_URL no definida) */}
-          {import.meta.env.DEV && (
-            <div className="mt-4 space-y-1">
-              <p className="text-center text-xs text-muted-foreground">API: {apiBaseUrl}</p>
-              <Input value={apiBaseUrl} onChange={(e) => setApiBaseUrl(e.target.value)} placeholder="https://tu-api.com" className="text-xs" />
-            </div>
-          )}
-        </motion.div>
-      </div>
+      <LoginScreen
+        apiBaseUrl={apiBaseUrl}
+        onApiBaseUrlChange={setApiBaseUrl}
+        themeMode={themeMode}
+        onToggleTheme={toggleTheme}
+        onBackToLanding={goToLanding}
+        authError={authError}
+        authLoading={authLoading}
+        onLogin={handleLogin}
+      />
     );
   }
 
@@ -833,7 +553,7 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => { setActiveSection("forms"); loadApiKey(); }}
+            onClick={() => setActiveSection("forms")}
             className={cn(
               "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
               activeSection === "forms"
@@ -864,7 +584,7 @@ export default function App() {
             <>
               <p className="mb-2 mt-4 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Administración</p>
               <button
-                onClick={() => { setActiveSection("usuarios"); loadUsers(); }}
+                onClick={() => setActiveSection("usuarios")}
                 className={cn(
                   "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
                   activeSection === "usuarios"
@@ -944,7 +664,7 @@ export default function App() {
             Tabulación
           </button>
           <button
-            onClick={() => { setActiveSection("forms"); loadApiKey(); }}
+            onClick={() => setActiveSection("forms")}
             className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "forms" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
           >
             <KeyRound className="h-3.5 w-3.5" />
@@ -952,7 +672,7 @@ export default function App() {
           </button>
           {isAdmin && (
             <button
-              onClick={() => { setActiveSection("usuarios"); loadUsers(); }}
+              onClick={() => setActiveSection("usuarios")}
               className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "usuarios" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
             >
               <Users className="h-3.5 w-3.5" />
@@ -1613,279 +1333,12 @@ export default function App() {
 
           {/* ── Integraciones (clave de API + Tutorica Forms) ── */}
           {activeSection === "forms" && authUser && (
-            <div className="step-enter mx-auto max-w-3xl space-y-6">
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight">Forms</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Servicios incluidos con tu suscripción.</p>
-              </div>
-
-              <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-                <CardHeader>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        <Server className="h-4 w-4 text-primary" />
-                        Tutorica Forms
-                      </CardTitle>
-                      <CardDescription className="mt-1 max-w-[52ch]">
-                        Rellena tu encuesta de Google Forms automáticamente, con perfiles y distribuciones
-                        configurables, desde una extensión de Chrome conectada a tu cuenta.
-                      </CardDescription>
-                    </div>
-                    <Badge>Incluido en tu plan</Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                  <div className="rounded-xl border border-border bg-background/60 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold">Tu clave de API</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {apiKeyInfo === null
-                            ? "Cargando estado de tu clave..."
-                            : apiKeyInfo.hasKey
-                              ? `Clave activa terminada en ···${apiKeyInfo.last4} (creada el ${formatDateTime(apiKeyInfo.createdAt)})`
-                              : "Aún no tienes una clave. Genérala para conectar la extensión."}
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={generateApiKey} disabled={apiKeyBusy}>
-                          {apiKeyBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-                          {apiKeyInfo?.hasKey ? "Regenerar" : "Generar clave"}
-                        </Button>
-                        {apiKeyInfo?.hasKey && (
-                          <Button size="sm" variant="outline" onClick={revokeApiKey} disabled={apiKeyBusy}>
-                            Revocar
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-
-                    {newApiKey && (
-                      <div className="step-enter mt-4 rounded-lg border border-primary/40 bg-accent/60 p-3">
-                        <p className="text-xs font-semibold text-accent-foreground">
-                          Copia tu clave ahora: por seguridad no volverá a mostrarse.
-                        </p>
-                        <div className="mt-2 flex items-center gap-2">
-                          <code className="flex-1 overflow-x-auto whitespace-nowrap rounded-md border border-border bg-background px-3 py-2 font-mono text-xs">
-                            {newApiKey}
-                          </code>
-                          <Button size="sm" variant="outline" onClick={() => copyText(newApiKey)}>
-                            {apiKeyCopied ? <Check className="h-4 w-4 text-primary" /> : null}
-                            {apiKeyCopied ? "Copiada" : "Copiar"}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <p className="text-sm font-semibold">Cómo conectar la extensión</p>
-                    <ol className="mt-3 space-y-3 text-sm text-muted-foreground">
-                      {[
-                        <>
-                          Instala la extensión <strong className="text-foreground">Tutorica Forms</strong> desde la{" "}
-                          <a
-                            href="https://chromewebstore.google.com/detail/tutorica-forms/kdppbednjfajcjogdajmagfabidfjmem"
-                            target="_blank"
-                            rel="noreferrer"
-                            className="font-medium text-primary underline underline-offset-2 hover:opacity-80"
-                          >
-                            Chrome Web Store
-                          </a>.
-                        </>,
-                        <>
-                          Abre la extensión e <strong className="text-foreground">inicia sesión</strong> con tu correo y
-                          contraseña de TesisTab: tu clave de API se configura sola. (También puedes pegar una clave
-                          manual en "Avanzado".)
-                        </>,
-                        <>
-                          Verifica que la tarjeta de conexión del popup diga{" "}
-                          <strong className="text-foreground">Conectado</strong>.
-                        </>,
-                        <>Abre tu encuesta de Google Forms y configura el llenado desde el panel de la extensión.</>,
-                      ].map((paso, i) => (
-                        <li key={i} className="flex gap-3">
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
-                            {i + 1}
-                          </span>
-                          <span>{paso}</span>
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
-
-                  <p className="text-xs text-muted-foreground">
-                    La clave funciona mientras tu suscripción esté vigente. Si vence, la extensión mostrará
-                    "suscripción vencida" hasta que la renueves.
-                  </p>
-                </CardContent>
-              </Card>
-            </div>
+            <FormsSection apiBaseUrl={apiBaseUrl} authToken={authToken} />
           )}
 
           {/* ── Usuarios (admin) ── */}
-          {activeSection === "usuarios" && isAdmin && (
-            <div className="mx-auto max-w-3xl space-y-6">
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight">Gestión de usuarios</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Crea cuentas y controla el acceso por suscripción.</p>
-              </div>
-
-              <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Crear nuevo usuario</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block space-y-1.5">
-                      <span className="flex items-center gap-1.5 text-sm font-medium"><Mail className="h-3.5 w-3.5 text-muted-foreground" />Email</span>
-                      <Input value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} placeholder="usuario@dominio.com" />
-                    </label>
-                    <label className="block space-y-1.5">
-                      <span className="flex items-center gap-1.5 text-sm font-medium"><KeyRound className="h-3.5 w-3.5 text-muted-foreground" />Contraseña inicial</span>
-                      <Input type="password" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} placeholder="Mínimo 8 caracteres" />
-                    </label>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <label className="block space-y-1.5">
-                      <span className="flex items-center gap-1.5 text-sm font-medium"><UserRound className="h-3.5 w-3.5 text-muted-foreground" />Rol</span>
-                      <select
-                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        value={newUserRole}
-                        onChange={(e) => setNewUserRole(e.target.value as "admin" | "user")}
-                      >
-                        <option value="user">Usuario</option>
-                        <option value="admin">Administrador</option>
-                      </select>
-                    </label>
-                    <label className="block space-y-1.5">
-                      <span className="flex items-center gap-1.5 text-sm font-medium"><Sparkles className="h-3.5 w-3.5 text-muted-foreground" />Plan</span>
-                      <select
-                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        value={newUserPlan}
-                        onChange={(e) => setNewUserPlan(e.target.value)}
-                      >
-                        <option value="pro">Pro</option>
-                        <option value="business">Business</option>
-                      </select>
-                    </label>
-                    <label className="block space-y-1.5">
-                      <span className="flex items-center gap-1.5 text-sm font-medium"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" />Días de acceso</span>
-                      <Input value={newUserDays} onChange={(e) => setNewUserDays(e.target.value)} placeholder="30" />
-                    </label>
-                  </div>
-                  {usersErrorMessage && (
-                    <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{usersErrorMessage}</div>
-                  )}
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-muted-foreground">{usersStatusMessage}</p>
-                    <Button onClick={handleCreateUser} disabled={isUsersLoading}>
-                      {isUsersLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                      Crear usuario
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle>Usuarios registrados</CardTitle>
-                      <CardDescription>Gestiona el acceso y las suscripciones.</CardDescription>
-                    </div>
-                    <Button variant="outline" size="sm" onClick={loadUsers} disabled={isUsersLoading}>
-                      {isUsersLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                      Actualizar
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {managedUsers.length === 0 ? (
-                    <p className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-                      No hay usuarios cargados. Pulsa <strong>Actualizar</strong>.
-                    </p>
-                  ) : (
-                    managedUsers.map((user) => {
-                      const isSelf = user.id === authUser?.id;
-                      const customDays = customDaysMap[user.id] ?? "30";
-                      return (
-                        <div key={user.id} className="rounded-xl border border-border/60 bg-background/60 p-4">
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-semibold">{user.email}{isSelf && <span className="ml-2 text-xs text-muted-foreground">(tú)</span>}</p>
-                              <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                                {user.role === "admin" ? "Administrador" : "Usuario"} · Plan {user.plan} ·
-                                {user.status === "active"
-                                  ? <><CheckCircle2 className="h-3.5 w-3.5 text-green-500" /> Activo</>
-                                  : <><XCircle className="h-3.5 w-3.5 text-danger" /> Desactivado</>
-                                }
-                              </p>
-                              <p className="text-xs text-muted-foreground">{getSubscriptionLabel(user)}</p>
-                              <p className="text-xs text-muted-foreground">Último acceso: {formatDateTime(user.lastLoginAt)}</p>
-                            </div>
-                          </div>
-                          <div className="mt-3 flex flex-wrap items-center gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => patchManagedUser(user.id, { status: user.status === "active" ? "disabled" : "active" }, `Estado actualizado para ${user.email}.`)}
-                              disabled={isUsersLoading || isSelf}
-                              title={isSelf ? "No puedes modificar tu propio estado" : undefined}
-                            >
-                              {user.status === "active" ? "Desactivar" : "Activar"}
-                            </Button>
-                            <div className="flex items-center gap-1">
-                              <Input
-                                className="h-8 w-16 text-sm"
-                                value={customDays}
-                                onChange={(e) => setCustomDaysMap((prev) => ({ ...prev, [user.id]: e.target.value }))}
-                                placeholder="30"
-                              />
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => {
-                                  const days = Number.parseInt(customDays, 10);
-                                  if (!Number.isFinite(days) || days <= 0) { setUsersErrorMessage("Los días deben ser un número mayor a 0."); return; }
-                                  void patchManagedUser(user.id, { subscriptionDaysDelta: days }, `+${days} días para ${user.email}.`);
-                                }}
-                                disabled={isUsersLoading}
-                                title="Añadir días de suscripción"
-                              >
-                                <CalendarPlus className="h-3.5 w-3.5" />
-                                días
-                              </Button>
-                            </div>
-                            {confirmDeleteId === user.id ? (
-                              <div className="flex items-center gap-1.5 rounded-md border border-danger/40 bg-danger/10 px-2 py-1">
-                                <AlertTriangle className="h-3.5 w-3.5 text-danger" />
-                                <span className="text-xs text-danger">¿Eliminar?</span>
-                                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-danger hover:bg-danger/20" onClick={() => void deleteManagedUser(user.id)} disabled={isUsersLoading}>Sí</Button>
-                                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConfirmDeleteId(null)}>No</Button>
-                              </div>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="text-danger hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
-                                onClick={() => setConfirmDeleteId(user.id)}
-                                disabled={isUsersLoading || isSelf}
-                                title={isSelf ? "No puedes eliminar tu propia cuenta" : undefined}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Eliminar
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+          {activeSection === "usuarios" && isAdmin && authUser && (
+            <UsersSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
           )}
 
         </main>

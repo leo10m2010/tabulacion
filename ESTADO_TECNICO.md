@@ -1,13 +1,19 @@
 # Estado técnico del proyecto
 
-Actualizado: 2026-06-11.
+Actualizado: 2026-07-01.
 
 ## Resumen
 
-- Generación **100% por código** (`node_app/generator.js`): `xlsx-populate` construye celdas/fórmulas/estilos y un post-procesado con `jszip` deduplica estilos e inyecta los gráficos OOXML. **No existe plantilla**: `Tabulacion.xlsx` fue eliminada del repositorio.
+- Generación **100% por código** (`node_app/generator.js` orquesta módulos en `node_app/lib/`): `xlsx-populate` construye celdas/fórmulas/estilos y un post-procesado con `jszip` deduplica estilos e inyecta los gráficos OOXML. **No existe plantilla**: `Tabulacion.xlsx` fue eliminada del repositorio.
 - API HTTP propia (`node_app/server.js`) con auth por tokens, roles, suscripciones y rate limiting.
 - Frontend React/Vite en `frontend/` consumiendo la API (`POST /generate` en modo `inline`); envía la estructura jerárquica en `estructura_v1`/`estructura_v2`.
-- Suite de tests con `node:test` (`cd node_app && npm test`): 16 tests de generador y API.
+- Suite de tests con `node:test` (`cd node_app && npm test`): 22 tests de generador y API.
+
+## Refactor por módulos (2026-07-01)
+
+- `node_app/generator.js` (antes ~1,800 líneas) quedó como orquestador de ~70 líneas que **re-exporta la API pública** (los imports de server/tests/CLI no cambian). La lógica vive en `node_app/lib/`: `config.js` (normalización, límites, temas), `stats.js` (simulación, correlación, normalidad), `sheet-style.js` (estilos y utilidades), `narratives.js` (interpretaciones), `sheets.js` (las hojas + `buildWorkbook`) y `ooxml.js` (dedupe de estilos + gráficos).
+- `frontend/src/App.tsx` (antes ~1,800 líneas) bajó a ~1,280: `lib/api.ts` centraliza todas las llamadas HTTP; `components/LoginScreen.tsx`, `components/sections/UsersSection.tsx` y `components/sections/FormsSection.tsx` son autocontenidos (estado + API propios). App conserva el wizard de 3 pasos; la siguiente pasada natural es extraer los pasos del wizard.
+- Pendiente de refactor (baja prioridad, código estable): `forms/server.js` y la extensión (`content.js`).
 
 ## Migración a generador sin plantilla (2026-06-11)
 
