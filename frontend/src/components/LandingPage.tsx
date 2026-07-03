@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowRight, Building2, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, Loader2, Mail, MessageCircle, Moon, Sun, UserRound } from "lucide-react";
+import { ArrowRight, Building2, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, Loader2, MessageCircle, Moon, MousePointerClick, ShieldCheck, Sun, UserRound } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -25,6 +25,26 @@ export function LandingPage({
     const text = encodeURIComponent("Hola, me interesa el Plan Institucional de TesisTab.");
     window.open(`https://wa.me/${CONTACT_WHATSAPP}?text=${text}`, "_blank", "noopener");
   };
+  const goToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+
+  // Las 3 herramientas de la suite (la landing dejó de ser mono-producto).
+  const herramientas = {
+    tabulacion: {
+      nombre: "Tabulación",
+      desc: "Configura variables, dimensiones e ítems y descarga un Excel con formato de tesis: baremos, frecuencias, correlación, gráficos e interpretaciones narrativas bajo cada figura.",
+      stats: [["9", "hojas"], ["33", "gráficos"], ["100%", "fórmulas vivas"]] as const,
+    },
+    confiabilidad: {
+      nombre: "Confiabilidad",
+      desc: "La prueba de Alfa de Cronbach por variable: varianzas por ítem, α calculado en celda con fórmulas vivas e interpretación automática con semáforo de colores.",
+      stat: "α objetivo entre 0.70 y 0.97, a tu elección",
+    },
+    forms: {
+      nombre: "Forms",
+      desc: "Rellena tu encuesta de Google Forms automáticamente, con perfiles y distribuciones configurables, desde una extensión de Chrome conectada a tu cuenta.",
+      stat: "Funciona por usos: 1 uso = 1 corrida de llenado",
+    },
+  };
 
   const plans = useMemo(
     () => [
@@ -38,7 +58,7 @@ export function LandingPage({
         priceMonthlyPen: "S/ 109",
         priceYearlyPen: "S/ 1,090",
         description: "Ideal para quien trabaja su tesis de forma individual con asesor propio.",
-        highlights: ["1 acceso activo", "Generación de Excel y CSV", "Baremos y dimensiones configurables", "Soporte por correo"],
+        highlights: ["1 acceso activo", "Generación de Excel y CSV", "Prueba de confiabilidad (Alfa de Cronbach)", "Baremos y dimensiones configurables", "Soporte por correo"],
         cta: "Generar mi tabulación",
         featured: true,
       },
@@ -52,7 +72,7 @@ export function LandingPage({
         priceMonthlyPen: "S/ 485",
         priceYearlyPen: "S/ 4,850",
         description: "Para equipos que gestionan múltiples tesis con control administrativo.",
-        highlights: ["Hasta 20 accesos", "Panel de administrador", "Proyectos ilimitados", "Soporte prioritario"],
+        highlights: ["Hasta 20 accesos", "Panel de administrador", "Proyectos ilimitados", "Usos de Forms para el equipo", "Soporte prioritario"],
         cta: "Contáctanos",
         featured: false,
       },
@@ -103,6 +123,14 @@ export function LandingPage({
       a: "Sí. Configuras tus variables, dimensiones, indicadores e ítems, con la escala que use tu cuestionario (Likert de 3, 5, 7 o más opciones) y la cantidad de niveles de baremo que necesites.",
     },
     {
+      q: "¿Puedo validar la confiabilidad de mi instrumento?",
+      a: "Sí. El apartado Confiabilidad genera la prueba de Alfa de Cronbach por variable: una hoja de Excel con la matriz de respuestas, la varianza de cada ítem, el α calculado con fórmulas vivas y su interpretación automática según la escala de George y Mallery.",
+    },
+    {
+      q: "¿Qué es Forms y cómo funciona?",
+      a: "Tutorica Forms rellena tu encuesta de Google Forms automáticamente, con perfiles y distribuciones configurables, desde una extensión de Chrome conectada a tu cuenta. Funciona por usos: cada corrida de llenado consume 1 uso, independiente de tu suscripción de Tabulación.",
+    },
+    {
       q: "¿Cuánto tarda en generarse?",
       a: "La configuración guiada toma unos minutos y la generación del Excel entre uno y dos minutos. El archivo queda listo para descargar al instante.",
     },
@@ -150,6 +178,22 @@ export function LandingPage({
           </span>
           TesisTab
         </div>
+        <nav className="hidden items-center gap-6 text-sm md:flex" aria-label="Secciones de la página">
+          {[
+            ["herramientas", "Herramientas"],
+            ["como-funciona", "Cómo funciona"],
+            ["planes", "Planes"],
+            ["faq", "FAQ"],
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => goToSection(id)}
+              className="text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
         <div className="flex items-center gap-1.5">
           <Button variant="ghost" size="sm" onClick={onToggleTheme} aria-label={themeMode === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}>
             {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -173,10 +217,10 @@ export function LandingPage({
             Para tesis cuantitativas
           </motion.div>
           <motion.h1 variants={heroItem} className="mt-5 text-4xl font-bold leading-[1.06] tracking-tight md:text-[3.4rem] md:leading-[1.05]">
-            La tabulación de tu tesis, <span className="text-primary">lista en minutos.</span>
+            La estadística de tu tesis, <span className="text-primary">lista en minutos.</span>
           </motion.h1>
           <motion.p variants={heroItem} className="mt-5 max-w-[46ch] text-base text-muted-foreground md:text-lg">
-            Configura tu encuesta y descarga el Excel con baremos, frecuencias, gráficos e interpretaciones.
+            Tabula tu encuesta, valida tu instrumento con Alfa de Cronbach y descarga un Excel con fórmulas reales, gráficos e interpretaciones.
           </motion.p>
           <motion.div variants={heroItem} className="mt-8 flex flex-wrap items-center gap-3">
             <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
@@ -416,6 +460,101 @@ export function LandingPage({
         </motion.div>
       </section>
 
+      <section id="herramientas" className="border-t border-border py-14">
+        <Reveal>
+          <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Tres herramientas, un mismo flujo</h2>
+          <p className="mt-2 max-w-[52ch] text-sm text-muted-foreground">
+            De la encuesta al capítulo de resultados: recolecta respuestas, valida tu instrumento y tabula sin salir de TesisTab.
+          </p>
+        </Reveal>
+
+        <div className="mt-8 grid gap-5 lg:grid-cols-5">
+          {/* Tabulación: el producto principal ocupa la tarjeta grande */}
+          <Reveal className="lg:col-span-3">
+            <motion.div
+              whileHover={reduce ? undefined : { y: -4 }}
+              transition={springSoft}
+              className="flex h-full flex-col rounded-3xl border-2 border-primary/50 bg-accent/40 p-7 md:p-8"
+            >
+              <div className="flex items-center justify-between">
+                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_10px_28px_-10px_hsl(var(--primary)/0.7)]">
+                  <FileSpreadsheet className="h-5 w-5" />
+                </span>
+                <Badge>Producto principal</Badge>
+              </div>
+              <h3 className="mt-4 text-xl font-bold tracking-tight">{herramientas.tabulacion.nombre}</h3>
+              <p className="mt-2 max-w-[52ch] text-sm leading-relaxed text-muted-foreground">
+                {herramientas.tabulacion.desc}
+              </p>
+              <div className="mt-6 grid grid-cols-3 gap-3">
+                {herramientas.tabulacion.stats.map(([valor, etiqueta]) => (
+                  <div key={etiqueta} className="rounded-xl border border-border/70 bg-background/70 px-3 py-2.5">
+                    <p className="font-mono text-lg font-bold tabular-nums tracking-tight">{valor}</p>
+                    <p className="text-[11px] text-muted-foreground">{etiqueta}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-auto pt-6">
+                <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }} className="inline-block">
+                  <Button onClick={onOpenApp}>
+                    Generar mi tabulación
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </motion.div>
+              </div>
+            </motion.div>
+          </Reveal>
+
+          {/* Confiabilidad y Forms apiladas a la derecha */}
+          <div className="flex flex-col gap-5 lg:col-span-2">
+            <Reveal delay={0.1} className="flex-1">
+              <motion.div
+                whileHover={reduce ? undefined : { y: -4 }}
+                transition={springSoft}
+                className="flex h-full flex-col rounded-3xl border border-border bg-card p-6"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                    <ShieldCheck className="h-5 w-5" />
+                  </span>
+                  <Badge variant="muted">Nuevo</Badge>
+                </div>
+                <h3 className="mt-3.5 text-lg font-bold tracking-tight">{herramientas.confiabilidad.nombre}</h3>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{herramientas.confiabilidad.desc}</p>
+                <div className="mt-auto pt-4">
+                  <p className="font-mono text-xs text-muted-foreground">{herramientas.confiabilidad.stat}</p>
+                  <button onClick={onOpenApp} className="mt-2.5 inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
+                    Validar mi instrumento
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </motion.div>
+            </Reveal>
+
+            <Reveal delay={0.18} className="flex-1">
+              <motion.div
+                whileHover={reduce ? undefined : { y: -4 }}
+                transition={springSoft}
+                className="flex h-full flex-col rounded-3xl border border-border bg-card p-6"
+              >
+                <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                  <MousePointerClick className="h-5 w-5" />
+                </span>
+                <h3 className="mt-3.5 text-lg font-bold tracking-tight">{herramientas.forms.nombre}</h3>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{herramientas.forms.desc}</p>
+                <div className="mt-auto pt-4">
+                  <p className="font-mono text-xs text-muted-foreground">{herramientas.forms.stat}</p>
+                  <button onClick={onOpenApp} className="mt-2.5 inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
+                    Conectar la extensión
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </motion.div>
+            </Reveal>
+          </div>
+        </div>
+      </section>
+
       <section id="como-funciona" className="border-t border-border py-14">
         <Reveal>
           <h2 className="text-2xl font-bold tracking-tight md:text-3xl">De la encuesta al Excel en tres pasos</h2>
@@ -627,14 +766,15 @@ export function LandingPage({
               </span>
               TesisTab
             </div>
-            <p className="mt-3 max-w-[30ch] text-sm text-muted-foreground">
-              La tabulación estadística de tu tesis, lista en minutos.
+            <p className="mt-3 max-w-[32ch] text-sm text-muted-foreground">
+              Tabulación, confiabilidad y encuestas: la estadística de tu tesis, lista en minutos.
             </p>
           </div>
 
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Producto</p>
             <ul className="mt-4 space-y-3 text-sm">
+              <li><a href="#herramientas" className="text-muted-foreground hover:text-foreground">Herramientas</a></li>
               <li><a href="#como-funciona" className="text-muted-foreground hover:text-foreground">Cómo funciona</a></li>
               <li><a href="#incluye" className="text-muted-foreground hover:text-foreground">Qué incluye</a></li>
               <li><a href="#planes" className="text-muted-foreground hover:text-foreground">Planes y precios</a></li>

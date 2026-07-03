@@ -14,18 +14,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui
 import { Input } from "../ui/input";
 import { cn } from "../../lib/utils";
 import * as api from "../../lib/api";
+import { ALPHA_LEVELS } from "../../lib/constants";
 import { base64ToUint8Array, eid, parseIntSafe, workbookToSheetRows } from "../../lib/helpers";
 import type { AuthUser, TableRows } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { PreviewTable } from "../PreviewTable";
-
-// Niveles de alfa que la simulación puede alcanzar (mismos rangos que el
-// backend, escala de George y Mallery).
-const NIVELES_ALFA = [
-  { id: "excelente", nombre: "Excelente", rango: "α = 0.90 – 0.97" },
-  { id: "bueno", nombre: "Bueno", rango: "α = 0.80 – 0.89" },
-  { id: "aceptable", nombre: "Aceptable", rango: "α = 0.70 – 0.79" },
-];
+import { SubscriptionWarning } from "../SubscriptionWarning";
 
 const MAX_MUESTRA = 2000;
 const MAX_ITEMS = 60;
@@ -77,9 +71,6 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser }: {
   useEffect(() => () => {
     if (xlsxUrlRef.current) URL.revokeObjectURL(xlsxUrlRef.current);
   }, []);
-
-  const suscripcionVencida = authUser.role !== "admin"
-    && (!authUser.subscriptionEndsAt || Date.parse(authUser.subscriptionEndsAt) < Date.now());
 
   const totalItems = dims.reduce((acc, d) => acc + (parseIntSafe(d.items) ?? 0), 0);
   const n = parseIntSafe(encuestados) ?? 0;
@@ -147,15 +138,10 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser }: {
         </p>
       </div>
 
-      {suscripcionVencida && (
-        <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-sm">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <p className="text-amber-700 dark:text-amber-300">
-            Tu suscripción de Tabulación está vencida: la prueba de confiabilidad usa la misma suscripción.
-            Pide al administrador que recargue tus días.
-          </p>
-        </div>
-      )}
+      <SubscriptionWarning user={authUser}>
+        Tu suscripción de Tabulación está vencida: la prueba de confiabilidad usa la misma suscripción.
+        Pide al administrador que recargue tus días.
+      </SubscriptionWarning>
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>
@@ -232,7 +218,7 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser }: {
             <span className="text-sm font-medium text-foreground">Nivel de alfa deseado</span>
             <FieldHint text="La simulación ajusta la consistencia entre ítems para que el α de Cronbach caiga en el rango elegido." />
             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {NIVELES_ALFA.map((lvl) => {
+              {ALPHA_LEVELS.map((lvl) => {
                 const selected = nivelAlfa === lvl.id;
                 return (
                   <button

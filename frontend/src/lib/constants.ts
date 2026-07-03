@@ -51,6 +51,14 @@ export const FALLBACK_CONFIG: TabConfig = {
   metodoCorrelacion: "auto",
 };
 
+// Niveles de alfa de la prueba de confiabilidad. Deben coincidir con
+// NIVELES_ALFA de node_app/lib/cronbach.js.
+export const ALPHA_LEVELS = [
+  { id: "excelente", nombre: "Excelente", rango: "α = 0.90 – 0.97" },
+  { id: "bueno", nombre: "Bueno", rango: "α = 0.80 – 0.89" },
+  { id: "aceptable", nombre: "Aceptable", rango: "α = 0.70 – 0.79" },
+];
+
 // Niveles del control opcional de correlacion. Deben coincidir con
 // NIVELES_CORRELACION de node_app/lib/config.js.
 export const CORRELATION_LEVELS = [

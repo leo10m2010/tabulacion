@@ -553,6 +553,18 @@ const logActivity = (user, detail) => {
   ].slice(0, 30);
 };
 
+// Metricas de generacion por usuario (Excel de tabulacion o de confiabilidad;
+// el usuario dev sin store no se contabiliza).
+const registerGeneration = (authUser, detail) => {
+  const owner = users.find((item) => item.id === authUser.id);
+  if (!owner) return;
+  owner.generationsCount = (owner.generationsCount ?? 0) + 1;
+  owner.lastGenerationAt = new Date().toISOString();
+  owner.updatedAt = owner.lastGenerationAt;
+  logActivity(owner, detail);
+  writeUsers();
+};
+
 // ── Rate limiting de login (en memoria) ─────────────────────────────────────
 const loginAttempts = new Map();
 
@@ -975,16 +987,7 @@ const server = http.createServer(async (req, res) => {
 
       const artifacts = await generateArtifacts(config);
       const responseMode = String(payload?.responseMode ?? "links").toLowerCase();
-
-      // Metricas por usuario (el usuario dev sin store no se contabiliza).
-      const owner = users.find((item) => item.id === authUser.id);
-      if (owner) {
-        owner.generationsCount = (owner.generationsCount ?? 0) + 1;
-        owner.lastGenerationAt = new Date().toISOString();
-        owner.updatedAt = owner.lastGenerationAt;
-        logActivity(owner, "Generó un Excel");
-        writeUsers();
-      }
+      registerGeneration(authUser, "Generó un Excel");
 
       if (responseMode === "inline") {
         sendJson(res, 200, {
@@ -1036,15 +1039,7 @@ const server = http.createServer(async (req, res) => {
         ? payload.config
         : payload;
       const result = await generateCronbach(config);
-
-      const owner = users.find((item) => item.id === authUser.id);
-      if (owner) {
-        owner.generationsCount = (owner.generationsCount ?? 0) + 1;
-        owner.lastGenerationAt = new Date().toISOString();
-        owner.updatedAt = owner.lastGenerationAt;
-        logActivity(owner, `Generó una prueba de confiabilidad (α = ${result.alpha.toFixed(3)})`);
-        writeUsers();
-      }
+      registerGeneration(authUser, `Generó una prueba de confiabilidad (α = ${result.alpha.toFixed(3)})`);
 
       sendJson(res, 200, {
         ok: true,

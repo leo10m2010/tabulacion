@@ -10,6 +10,12 @@ Actualizado: 2026-07-01.
 - Suite de tests con `node:test` (`cd node_app && npm test`): 28 tests de generador y API.
 - Verificación de fórmulas: `python scripts/recalc.py archivo.xlsx` recalcula todas las fórmulas del Excel (librería `formulas`) y reporta celdas con error; `--show PATRON` imprime valores recalculados de celdas clave.
 
+## Landing multi-producto + limpieza (2026-07-02)
+
+- **Landing actualizada** (`LandingPage.tsx`): dejó de ser mono-producto. Hero con copy de suite ("La estadística de tu tesis"), nav de anclas en el header, y nueva sección `#herramientas` con grid asimétrico (bento): tarjeta grande de Tabulación (con mini-métricas 9 hojas / 33 gráficos / fórmulas vivas) + Confiabilidad (badge Nuevo) y Forms apiladas, CTAs alineados abajo. FAQ con 2 preguntas nuevas (confiabilidad y Forms), highlights de planes y footer actualizados.
+- **Refactors**: navegación de la app data-driven (`NAV_TOOLS` en `App.tsx` reemplaza 8 botones duplicados de sidebar+tabs móviles; las tabs móviles ahora hacen scroll horizontal); `SubscriptionWarning` compartido (App y CronbachSection); `ALPHA_LEVELS` en `lib/constants.ts` (junto a `CORRELATION_LEVELS`); `registerGeneration()` en `server.js` deduplica las métricas de `/generate` y `/cronbach`.
+- Pendiente conocido (sin cambios): extraer los pasos del wizard de `App.tsx` (~1,500 líneas) a componentes.
+
 ## Prueba de confiabilidad — Alfa de Cronbach (2026-07-02)
 
 - **Nuevo apartado "Confiabilidad"** en la web (`CronbachSection.tsx`, entre Tabulación y Forms): la prueba se hace **por variable** con los mismos datos del instrumento (nombre, dimensiones y cantidad de ítems) más el N de encuestados y el **nivel de alfa deseado** (excelente 0.90–0.97 / bueno 0.80–0.89 / aceptable 0.70–0.79, escala de George y Mallery).

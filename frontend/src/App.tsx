@@ -70,10 +70,18 @@ import { PreviewCharts } from "./components/PreviewCharts";
 import { ThemePicker } from "./components/ThemePicker";
 import { WizardProgress } from "./components/WizardProgress";
 import { LandingPage } from "./components/LandingPage";
+import { SubscriptionWarning } from "./components/SubscriptionWarning";
 import { AccountSection } from "./components/sections/AccountSection";
 import { CronbachSection } from "./components/sections/CronbachSection";
 import { FormsSection } from "./components/sections/FormsSection";
 import { UsersSection } from "./components/sections/UsersSection";
+
+// Herramientas del menú (sidebar y tabs móviles se dibujan desde aquí).
+const NAV_TOOLS: { id: AppSection; label: string; mobileLabel?: string; icon: typeof FileSpreadsheet }[] = [
+  { id: "tabulacion", label: "Tabulación", icon: FileSpreadsheet },
+  { id: "confiabilidad", label: "Confiabilidad", mobileLabel: "Alfa", icon: ShieldCheck },
+  { id: "forms", label: "Forms", icon: KeyRound },
+];
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
@@ -543,47 +551,22 @@ export default function App() {
         {/* Nav items */}
         <nav className="flex-1 space-y-1 overflow-y-auto p-3">
           <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Herramientas</p>
-          <button
-            onClick={() => { setActiveSection("tabulacion"); }}
-            className={cn(
-              "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
-              activeSection === "tabulacion"
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-            )}
-          >
-            <FileSpreadsheet className="h-4 w-4 shrink-0" />
-            Tabulación
-            {activeSection === "tabulacion" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
-          </button>
-
-          <button
-            onClick={() => setActiveSection("confiabilidad")}
-            className={cn(
-              "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
-              activeSection === "confiabilidad"
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-            )}
-          >
-            <ShieldCheck className="h-4 w-4 shrink-0" />
-            Confiabilidad
-            {activeSection === "confiabilidad" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
-          </button>
-
-          <button
-            onClick={() => setActiveSection("forms")}
-            className={cn(
-              "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
-              activeSection === "forms"
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-            )}
-          >
-            <KeyRound className="h-4 w-4 shrink-0" />
-            Forms
-            {activeSection === "forms" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
-          </button>
+          {NAV_TOOLS.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveSection(item.id)}
+              className={cn(
+                "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
+                activeSection === item.id
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+              )}
+            >
+              <item.icon className="h-4 w-4 shrink-0" />
+              {item.label}
+              {activeSection === item.id && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
+            </button>
+          ))}
 
           {/* Coming soon items */}
           {[
@@ -683,44 +666,24 @@ export default function App() {
         </header>
 
         {/* Mobile nav tabs */}
-        <div className="flex border-b border-border/60 bg-card/80 px-4 md:hidden">
-          <button
-            onClick={() => setActiveSection("tabulacion")}
-            className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "tabulacion" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
-          >
-            <FileSpreadsheet className="h-3.5 w-3.5" />
-            Tabulación
-          </button>
-          <button
-            onClick={() => setActiveSection("confiabilidad")}
-            className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "confiabilidad" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
-          >
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Alfa
-          </button>
-          <button
-            onClick={() => setActiveSection("forms")}
-            className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "forms" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
-          >
-            <KeyRound className="h-3.5 w-3.5" />
-            Forms
-          </button>
-          {isAdmin && (
+        <div className="flex overflow-x-auto border-b border-border/60 bg-card/80 px-4 md:hidden">
+          {[
+            ...NAV_TOOLS,
+            ...(isAdmin ? [{ id: "usuarios" as AppSection, label: "Usuarios", icon: Users }] : []),
+            { id: "cuenta" as AppSection, label: "Cuenta", icon: UserRound },
+          ].map((item) => (
             <button
-              onClick={() => setActiveSection("usuarios")}
-              className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "usuarios" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
+              key={item.id}
+              onClick={() => setActiveSection(item.id)}
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all",
+                activeSection === item.id ? "border-primary text-primary" : "border-transparent text-muted-foreground",
+              )}
             >
-              <Users className="h-3.5 w-3.5" />
-              Usuarios
+              <item.icon className="h-3.5 w-3.5" />
+              {"mobileLabel" in item && item.mobileLabel ? item.mobileLabel : item.label}
             </button>
-          )}
-          <button
-            onClick={() => setActiveSection("cuenta")}
-            className={cn("flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all", activeSection === "cuenta" ? "border-primary text-primary" : "border-transparent text-muted-foreground")}
-          >
-            <UserRound className="h-3.5 w-3.5" />
-            Cuenta
-          </button>
+          ))}
         </div>
 
         {/* Content */}
@@ -735,16 +698,10 @@ export default function App() {
               </div>
 
               {/* Tabulación exige suscripción vigente; Forms va por usos y sigue disponible. */}
-              {authUser.role !== "admin"
-                && (!authUser.subscriptionEndsAt || Date.parse(authUser.subscriptionEndsAt) < Date.now()) && (
-                <div className="mb-5 flex items-start gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-sm">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                  <p className="text-amber-700 dark:text-amber-300">
-                    Tu suscripción de Tabulación está vencida: no podrás generar el Excel hasta que el
-                    administrador recargue tus días. Forms sigue disponible con tus usos.
-                  </p>
-                </div>
-              )}
+              <SubscriptionWarning user={authUser}>
+                Tu suscripción de Tabulación está vencida: no podrás generar el Excel hasta que el
+                administrador recargue tus días. Forms sigue disponible con tus usos.
+              </SubscriptionWarning>
 
               <WizardProgress currentStep={wizardStep} />
 
