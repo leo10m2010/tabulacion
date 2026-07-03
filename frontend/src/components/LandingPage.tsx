@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowRight, Building2, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, Loader2, MessageCircle, Moon, MousePointerClick, ShieldCheck, Sun, UserRound } from "lucide-react";
+import { ArrowRight, Building2, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, Loader2, MessageCircle, Moon, Sun, UserRound } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import type { ThemeMode } from "../lib/types";
 import { AnimatedNumber, Reveal, TiltCard, springSoft } from "./motion-primitives";
+import { ToolsShowcase } from "./ToolsShowcase";
 
 export function LandingPage({
   themeMode,
@@ -26,25 +27,6 @@ export function LandingPage({
     window.open(`https://wa.me/${CONTACT_WHATSAPP}?text=${text}`, "_blank", "noopener");
   };
   const goToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
-
-  // Las 3 herramientas de la suite (la landing dejó de ser mono-producto).
-  const herramientas = {
-    tabulacion: {
-      nombre: "Tabulación",
-      desc: "Configura variables, dimensiones e ítems y descarga un Excel con formato de tesis: baremos, frecuencias, correlación, gráficos e interpretaciones narrativas bajo cada figura.",
-      stats: [["9", "hojas"], ["33", "gráficos"], ["100%", "fórmulas vivas"]] as const,
-    },
-    confiabilidad: {
-      nombre: "Confiabilidad",
-      desc: "La prueba de Alfa de Cronbach por variable: varianzas por ítem, α calculado en celda con fórmulas vivas e interpretación automática con semáforo de colores.",
-      stat: "α objetivo entre 0.70 y 0.97, a tu elección",
-    },
-    forms: {
-      nombre: "Forms",
-      desc: "Rellena tu encuesta de Google Forms automáticamente, con perfiles y distribuciones configurables, desde una extensión de Chrome conectada a tu cuenta.",
-      stat: "Funciona por usos: 1 uso = 1 corrida de llenado",
-    },
-  };
 
   const plans = useMemo(
     () => [
@@ -460,99 +442,18 @@ export function LandingPage({
         </motion.div>
       </section>
 
-      <section id="herramientas" className="border-t border-border py-14">
+      <section id="herramientas" className="border-t border-border py-16">
         <Reveal>
-          <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Tres herramientas, un mismo flujo</h2>
-          <p className="mt-2 max-w-[52ch] text-sm text-muted-foreground">
-            De la encuesta al capítulo de resultados: recolecta respuestas, valida tu instrumento y tabula sin salir de TesisTab.
+          <h2 className="max-w-[22ch] text-2xl font-bold tracking-tight md:text-3xl">
+            De la encuesta al capítulo de resultados
+          </h2>
+          <p className="mt-2 max-w-[54ch] text-sm text-muted-foreground">
+            Tres herramientas conectadas: recolecta las respuestas, valida tu instrumento y tabula con formato de tesis.
           </p>
         </Reveal>
-
-        <div className="mt-8 grid gap-5 lg:grid-cols-5">
-          {/* Tabulación: el producto principal ocupa la tarjeta grande */}
-          <Reveal className="lg:col-span-3">
-            <motion.div
-              whileHover={reduce ? undefined : { y: -4 }}
-              transition={springSoft}
-              className="flex h-full flex-col rounded-3xl border-2 border-primary/50 bg-accent/40 p-7 md:p-8"
-            >
-              <div className="flex items-center justify-between">
-                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_10px_28px_-10px_hsl(var(--primary)/0.7)]">
-                  <FileSpreadsheet className="h-5 w-5" />
-                </span>
-                <Badge>Producto principal</Badge>
-              </div>
-              <h3 className="mt-4 text-xl font-bold tracking-tight">{herramientas.tabulacion.nombre}</h3>
-              <p className="mt-2 max-w-[52ch] text-sm leading-relaxed text-muted-foreground">
-                {herramientas.tabulacion.desc}
-              </p>
-              <div className="mt-6 grid grid-cols-3 gap-3">
-                {herramientas.tabulacion.stats.map(([valor, etiqueta]) => (
-                  <div key={etiqueta} className="rounded-xl border border-border/70 bg-background/70 px-3 py-2.5">
-                    <p className="font-mono text-lg font-bold tabular-nums tracking-tight">{valor}</p>
-                    <p className="text-[11px] text-muted-foreground">{etiqueta}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-auto pt-6">
-                <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }} className="inline-block">
-                  <Button onClick={onOpenApp}>
-                    Generar mi tabulación
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </motion.div>
-              </div>
-            </motion.div>
-          </Reveal>
-
-          {/* Confiabilidad y Forms apiladas a la derecha */}
-          <div className="flex flex-col gap-5 lg:col-span-2">
-            <Reveal delay={0.1} className="flex-1">
-              <motion.div
-                whileHover={reduce ? undefined : { y: -4 }}
-                transition={springSoft}
-                className="flex h-full flex-col rounded-3xl border border-border bg-card p-6"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                    <ShieldCheck className="h-5 w-5" />
-                  </span>
-                  <Badge variant="muted">Nuevo</Badge>
-                </div>
-                <h3 className="mt-3.5 text-lg font-bold tracking-tight">{herramientas.confiabilidad.nombre}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{herramientas.confiabilidad.desc}</p>
-                <div className="mt-auto pt-4">
-                  <p className="font-mono text-xs text-muted-foreground">{herramientas.confiabilidad.stat}</p>
-                  <button onClick={onOpenApp} className="mt-2.5 inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
-                    Validar mi instrumento
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </motion.div>
-            </Reveal>
-
-            <Reveal delay={0.18} className="flex-1">
-              <motion.div
-                whileHover={reduce ? undefined : { y: -4 }}
-                transition={springSoft}
-                className="flex h-full flex-col rounded-3xl border border-border bg-card p-6"
-              >
-                <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                  <MousePointerClick className="h-5 w-5" />
-                </span>
-                <h3 className="mt-3.5 text-lg font-bold tracking-tight">{herramientas.forms.nombre}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{herramientas.forms.desc}</p>
-                <div className="mt-auto pt-4">
-                  <p className="font-mono text-xs text-muted-foreground">{herramientas.forms.stat}</p>
-                  <button onClick={onOpenApp} className="mt-2.5 inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
-                    Conectar la extensión
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </motion.div>
-            </Reveal>
-          </div>
-        </div>
+        <Reveal delay={0.1} className="mt-9">
+          <ToolsShowcase onOpenApp={onOpenApp} onVerIncluye={() => goToSection("incluye")} />
+        </Reveal>
       </section>
 
       <section id="como-funciona" className="border-t border-border py-14">

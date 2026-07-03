@@ -12,7 +12,8 @@ Actualizado: 2026-07-01.
 
 ## Landing multi-producto + limpieza (2026-07-02)
 
-- **Landing actualizada** (`LandingPage.tsx`): dejó de ser mono-producto. Hero con copy de suite ("La estadística de tu tesis"), nav de anclas en el header, y nueva sección `#herramientas` con grid asimétrico (bento): tarjeta grande de Tabulación (con mini-métricas 9 hojas / 33 gráficos / fórmulas vivas) + Confiabilidad (badge Nuevo) y Forms apiladas, CTAs alineados abajo. FAQ con 2 preguntas nuevas (confiabilidad y Forms), highlights de planes y footer actualizados.
+- **Landing actualizada** (`LandingPage.tsx`): dejó de ser mono-producto. Hero con copy de suite ("La estadística de tu tesis"), nav de anclas en el header, FAQ con 2 preguntas nuevas (confiabilidad y Forms), highlights de planes y footer actualizados.
+- **Sección `#herramientas` = showcase interactivo** (`ToolsShowcase.tsx`): tabs verticales con el flujo Recolecta → Valida → Tabula y un panel donde cada herramienta tiene su viñeta en vivo (formulario Likert respondiéndose, medidor de α con semáforo sobre el rango 0.50–1.00 y datos de una corrida real α=0.963, tabla baremada con interpretación narrativa). Auto-avanza cada 6 s con barra de progreso, clic fija la pestaña, `prefers-reduced-motion` desactiva el auto-avance. Verificado con capturas (Brave headless + puppeteer-core) en claro/oscuro y móvil.
 - **Refactors**: navegación de la app data-driven (`NAV_TOOLS` en `App.tsx` reemplaza 8 botones duplicados de sidebar+tabs móviles; las tabs móviles ahora hacen scroll horizontal); `SubscriptionWarning` compartido (App y CronbachSection); `ALPHA_LEVELS` en `lib/constants.ts` (junto a `CORRELATION_LEVELS`); `registerGeneration()` en `server.js` deduplica las métricas de `/generate` y `/cronbach`.
 - Pendiente conocido (sin cambios): extraer los pasos del wizard de `App.tsx` (~1,500 líneas) a componentes.
 
