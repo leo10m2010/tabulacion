@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
+import { MagicButton } from "./components/ui/magic-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";
@@ -1297,7 +1298,7 @@ export default function App() {
                       {errorMessage && (
                         <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{errorMessage}</div>
                       )}
-                      <Button
+                      <MagicButton
                         size="lg"
                         className="h-14 w-full text-base"
                         onClick={handleGenerate}
@@ -1314,7 +1315,7 @@ export default function App() {
                             Generar tabulación
                           </>
                         )}
-                      </Button>
+                      </MagicButton>
                       <p className="text-center text-xs text-muted-foreground">{generationProgressMessage}</p>
                     </CardContent>
                   </Card>

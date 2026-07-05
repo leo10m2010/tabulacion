@@ -10,6 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { MagicButton } from "../ui/magic-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
 import { cn } from "../../lib/utils";
@@ -248,7 +249,7 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser }: {
             <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</div>
           )}
 
-          <Button size="lg" className="h-12 w-full" onClick={handleGenerate} disabled={busy || issues.length > 0}>
+          <MagicButton size="lg" className="h-12 w-full" onClick={handleGenerate} disabled={busy || issues.length > 0}>
             {busy ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -260,7 +261,7 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser }: {
                 Generar prueba de confiabilidad
               </>
             )}
-          </Button>
+          </MagicButton>
         </CardContent>
       </Card>
 
