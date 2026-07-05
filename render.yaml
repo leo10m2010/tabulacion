@@ -64,3 +64,13 @@ services:
         value: "900"
       - key: MAX_BODY_BYTES
         value: "4194304"
+      # Tabulacion Descriptiva (IA): clave de OpenRouter (se define en el
+      # dashboard). El modelo y el timeout tienen defaults en el codigo
+      # (z-ai/glm-5.2, 300 s); se declaran aqui para poder cambiarlos sin
+      # tocar el codigo.
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: z-ai/glm-5.2
+      - key: OPENROUTER_TIMEOUT_MS
+        value: "300000"

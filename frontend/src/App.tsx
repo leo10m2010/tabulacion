@@ -20,6 +20,7 @@ import {
   Sun,
   UserRound,
   Users,
+  Wand2,
   Zap,
 } from "lucide-react";
 import { Badge } from "./components/ui/badge";
@@ -73,12 +74,14 @@ import { LandingPage } from "./components/LandingPage";
 import { SubscriptionWarning } from "./components/SubscriptionWarning";
 import { AccountSection } from "./components/sections/AccountSection";
 import { CronbachSection } from "./components/sections/CronbachSection";
+import { DescriptivaSection } from "./components/sections/DescriptivaSection";
 import { FormsSection } from "./components/sections/FormsSection";
 import { UsersSection } from "./components/sections/UsersSection";
 
 // Herramientas del menú (sidebar y tabs móviles se dibujan desde aquí).
 const NAV_TOOLS: { id: AppSection; label: string; mobileLabel?: string; icon: typeof FileSpreadsheet }[] = [
   { id: "tabulacion", label: "Tabulación", icon: FileSpreadsheet },
+  { id: "descriptiva", label: "Descriptiva", mobileLabel: "IA", icon: Wand2 },
   { id: "confiabilidad", label: "Confiabilidad", mobileLabel: "Alfa", icon: ShieldCheck },
   { id: "forms", label: "Forms", icon: KeyRound },
 ];
@@ -1478,6 +1481,10 @@ export default function App() {
           )}
 
           {/* ── Confiabilidad (Alfa de Cronbach) ── */}
+          {activeSection === "descriptiva" && authUser && (
+            <DescriptivaSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+          )}
+
           {activeSection === "confiabilidad" && authUser && (
             <CronbachSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
           )}

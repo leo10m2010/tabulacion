@@ -65,6 +65,36 @@ export interface CronbachResponse {
   error?: string;
 }
 
+// Tabulación Descriptiva (IA): el POST crea un job y el frontend hace polling
+// hasta recibir el Excel en base64.
+export interface DescriptivaResumen {
+  tituloEstudio: string;
+  tipoInstrumento: string;
+  nEncuestados: number;
+  preguntas: number;
+  conBaremo: boolean;
+  // "instrumento" = el cuestionario trae su propia escala (puntos/aciertos);
+  // "likert" = baremo construido por el sistema sobre la escala ordinal.
+  baremoOrigen?: "instrumento" | "likert" | null;
+}
+
+export interface DescriptivaStartResponse {
+  ok?: boolean;
+  jobId: string;
+  status: string;
+  error?: string;
+}
+
+export interface DescriptivaJobResponse {
+  ok?: boolean;
+  status: "processing" | "done" | "error";
+  error?: string | null;
+  warnings?: string[];
+  resumen?: DescriptivaResumen;
+  excelBase64?: string;
+  excelFileName?: string;
+}
+
 export interface TemplateInfo {
   maxMuestra: number;
   maxItemsV1: number;
@@ -125,5 +155,5 @@ export interface AuthUsersResponse {
 
 export type ThemeMode = "light" | "dark";
 export type AppView = "landing" | "app";
-export type AppSection = "tabulacion" | "confiabilidad" | "forms" | "usuarios" | "cuenta";
+export type AppSection = "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "usuarios" | "cuenta";
 export type WizardStep = 1 | 2 | 3;

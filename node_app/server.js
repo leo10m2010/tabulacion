@@ -13,6 +13,15 @@ import {
   generateArtifacts,
   generateCronbach,
 } from "./generator.js";
+import {
+  DEFAULT_N as DESCRIPTIVA_DEFAULT_N,
+  MAX_N as DESCRIPTIVA_MAX_N,
+  MIN_N as DESCRIPTIVA_MIN_N,
+  NIVELES_PREPONDERANCIA,
+  generateDescriptiva,
+  normalizeDescriptivaInput,
+} from "./lib/descriptiva/index.js";
+import { docxToMarkdown } from "./lib/descriptiva/docx.js";
 
 // Tutorica Forms (rellenador de Google Forms) corre en este mismo proceso: es
 // una app Express a la que se delegan las rutas /api/tesistab y /api/forms.
@@ -77,6 +86,12 @@ const LOGIN_WINDOW_MS = Number.parseInt(process.env.LOGIN_WINDOW_SECONDS ?? "900
 const results = new Map();
 let users = [];
 
+// Jobs de Tabulacion Descriptiva (IA): la llamada a OpenRouter puede tardar
+// minutos, asi que POST /descriptiva crea un job y el frontend hace polling.
+const descriptivaJobs = new Map();
+const DESCRIPTIVA_JOB_TTL_MS = Number.parseInt(process.env.DESCRIPTIVA_JOB_TTL_SECONDS ?? "1800", 10) * 1000;
+const DESCRIPTIVA_MAX_CONCURRENT = Number.parseInt(process.env.DESCRIPTIVA_MAX_CONCURRENT ?? "3", 10);
+
 class HttpError extends Error {
   constructor(statusCode, message) {
     super(message);
@@ -91,6 +106,12 @@ const cleanupExpired = () => {
   for (const [id, item] of results.entries()) {
     if (item.expiresAt <= now) {
       results.delete(id);
+    }
+  }
+  for (const [id, job] of descriptivaJobs.entries()) {
+    // Los jobs en curso no se borran aunque venzan: su promesa sigue viva.
+    if (job.expiresAt <= now && job.status !== "processing") {
+      descriptivaJobs.delete(id);
     }
   }
 };
@@ -1056,6 +1077,106 @@ const server = http.createServer(async (req, res) => {
         excelBase64: result.excelBuffer.toString("base64"),
         excelFileName: "Alfa_Cronbach.xlsx",
       });
+      return;
+    }
+
+    // ── Tabulacion Descriptiva (IA) ─────────────────────────────────────────
+    // Info de limites para el frontend (defaults de N y niveles).
+    if (req.method === "GET" && pathname === "/descriptiva/info") {
+      requireAuth(req);
+      sendJson(res, 200, {
+        ok: true,
+        defaultN: DESCRIPTIVA_DEFAULT_N,
+        minN: DESCRIPTIVA_MIN_N,
+        maxN: DESCRIPTIVA_MAX_N,
+        niveles: NIVELES_PREPONDERANCIA,
+      });
+      return;
+    }
+
+    // Crea el job: valida el input de inmediato (errores claros para el
+    // usuario) y deja la llamada a la IA corriendo en segundo plano.
+    if (req.method === "POST" && pathname === "/descriptiva") {
+      const authUser = requireAuth(req, { requireSubscription: true });
+      const payload = await parseJsonBody(req);
+
+      let input;
+      try {
+        input = normalizeDescriptivaInput(payload);
+        if (input.docxBase64) {
+          // La conversion es rapida y sus errores le sirven al usuario
+          // ("no es un Word valido"); se resuelve antes de crear el job.
+          input = { ...input, texto: await docxToMarkdown(input.docxBase64), docxBase64: "" };
+        }
+      } catch (err) {
+        throw new HttpError(400, err.message);
+      }
+
+      const active = [...descriptivaJobs.values()].filter((j) => j.status === "processing");
+      if (active.some((j) => j.ownerUserId === authUser.id)) {
+        throw new HttpError(409, "Ya tienes una generacion en curso; espera a que termine.");
+      }
+      if (active.length >= DESCRIPTIVA_MAX_CONCURRENT) {
+        throw new HttpError(429, "El servidor esta ocupado generando otras bases; intenta en un par de minutos.");
+      }
+
+      const id = crypto.randomUUID();
+      const job = {
+        id,
+        ownerUserId: authUser.id,
+        status: "processing",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + DESCRIPTIVA_JOB_TTL_MS,
+        result: null,
+        warnings: [],
+        error: null,
+      };
+      descriptivaJobs.set(id, job);
+
+      generateDescriptiva({ texto: input.texto, config: { n: input.n, nivel: input.nivel } })
+        .then((generated) => {
+          job.result = generated;
+          job.warnings = generated.warnings;
+          job.status = "done";
+          job.expiresAt = Date.now() + DESCRIPTIVA_JOB_TTL_MS;
+          registerGeneration(authUser, "Generó una tabulación descriptiva");
+        })
+        .catch((err) => {
+          // El detalle tecnico queda solo en el log del servidor.
+          // eslint-disable-next-line no-console
+          console.error(`[descriptiva] job ${id} fallo:`, err);
+          job.status = "error";
+          job.error = "Hubo un problema generando tu base de datos, intenta de nuevo.";
+          job.expiresAt = Date.now() + DESCRIPTIVA_JOB_TTL_MS;
+        });
+
+      sendJson(res, 202, { ok: true, jobId: id, status: job.status });
+      return;
+    }
+
+    // Polling del job; al completar entrega el Excel en base64.
+    const descriptivaJobRoute = pathname.match(/^\/descriptiva\/jobs\/([0-9a-fA-F-]+)$/);
+    if (req.method === "GET" && descriptivaJobRoute) {
+      const authUser = requireAuth(req);
+      const job = descriptivaJobs.get(descriptivaJobRoute[1]);
+      if (!job || (job.expiresAt <= Date.now() && job.status !== "processing")) {
+        throw new HttpError(404, "Generacion no encontrada o expirada.");
+      }
+      if (AUTH_REQUIRED && authUser.role !== "admin" && job.ownerUserId !== authUser.id) {
+        throw new HttpError(403, "No tienes acceso a esta generacion.");
+      }
+      if (job.status === "done") {
+        sendJson(res, 200, {
+          ok: true,
+          status: "done",
+          warnings: job.warnings,
+          resumen: job.result.resumen,
+          excelBase64: job.result.excelBuffer.toString("base64"),
+          excelFileName: "Tabulacion_descriptiva.xlsx",
+        });
+        return;
+      }
+      sendJson(res, 200, { ok: true, status: job.status, error: job.error });
       return;
     }
 

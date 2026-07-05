@@ -6,6 +6,8 @@ import type {
   AuthUser,
   AuthUsersResponse,
   CronbachResponse,
+  DescriptivaJobResponse,
+  DescriptivaStartResponse,
   InlineGenerateResponse,
   TabConfig,
   TemplateInfo,
@@ -75,6 +77,20 @@ export interface CronbachConfig {
 
 export const generateCronbach = (apiBaseUrl: string, token: string, config: CronbachConfig) =>
   request<CronbachResponse>(apiBaseUrl, "/cronbach", { method: "POST", token, body: { config } });
+
+// Tabulación Descriptiva (IA): crea un job en el servidor (la llamada a la IA
+// tarda minutos) y luego se consulta su estado hasta obtener el Excel.
+export interface DescriptivaInput {
+  texto?: string;
+  docxBase64?: string;
+  config: { n: number; nivel?: string };
+}
+
+export const startDescriptiva = (apiBaseUrl: string, token: string, input: DescriptivaInput) =>
+  request<DescriptivaStartResponse>(apiBaseUrl, "/descriptiva", { method: "POST", token, body: input });
+
+export const getDescriptivaJob = (apiBaseUrl: string, token: string, jobId: string) =>
+  request<DescriptivaJobResponse>(apiBaseUrl, `/descriptiva/jobs/${jobId}`, { token });
 
 // ── Usuarios (admin) ─────────────────────────────────────────────────────────
 export const listUsers = (apiBaseUrl: string, token: string) =>
