@@ -100,6 +100,67 @@ export const distributionFor = (pregunta, rows) => {
   };
 };
 
+// ── Aspecto organico de la base ──────────────────────────────────────────────
+// La IA genera filas con patrones mecanicos (alterna Masculino/Femenino fila
+// por fila, cicla grados...) y repartos exactamente parejos (30/30), que es lo
+// primero que delata una base inventada. Se baraja el orden de las filas y se
+// rompen los empates perfectos en preguntas independientes re-sorteando una
+// fraccion pequeña segun los pesos declarados. Nunca se tocan: el ancla, las
+// preguntas con dependencias (en cualquier direccion), ni las que tienen
+// puntos o respuesta correcta (cambiarian puntajes/aciertos).
+
+const esIndependientePura = (p, preguntas) => (p.tipo === "nominal_unica" || p.tipo === "ordinal_unica")
+  && Array.isArray(p.opciones) && p.opciones.length >= 2
+  && !p.es_ancla && !p.depende_de
+  && !preguntas.some((q) => q.depende_de === p.id)
+  && !Array.isArray(p.puntos_por_opcion)
+  && (p.respuesta_correcta === undefined || p.respuesta_correcta === null || p.respuesta_correcta === "");
+
+const pickWeighted = (opciones, pesos) => {
+  const w = Array.isArray(pesos) && pesos.length === opciones.length ? pesos.map(Number) : opciones.map(() => 1);
+  const total = w.reduce((a, b) => a + (Number.isFinite(b) && b > 0 ? b : 0), 0);
+  let r = Math.random() * (total || opciones.length);
+  for (let i = 0; i < opciones.length; i += 1) {
+    r -= Number.isFinite(w[i]) && w[i] > 0 ? w[i] : 1;
+    if (r <= 0) return String(opciones[i]);
+  }
+  return String(opciones[opciones.length - 1]);
+};
+
+export const organicizeRows = (data) => {
+  const rows = data.datos_simulados;
+
+  // 1) Barajar las filas (Fisher-Yates): rompe la alternacion visible y
+  // dispersa los perfiles duplicados que agrega la reconciliacion.
+  for (let i = rows.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [rows[i], rows[j]] = [rows[j], rows[i]];
+  }
+
+  // 2) Romper repartos sospechosamente parejos (max-min <= 1 entre todas las
+  // categorias) en las preguntas independientes puras.
+  for (const p of data.preguntas) {
+    if (!esIndependientePura(p, data.preguntas)) continue;
+    const counts = () => p.opciones.map((op) => rows.filter((r) => String(r[p.id]) === String(op)).length);
+    let c = counts();
+    if (Math.max(...c) - Math.min(...c) > 1) continue;
+
+    const rerolls = Math.max(2, Math.round(rows.length * 0.08));
+    for (let k = 0; k < rerolls; k += 1) {
+      const row = rows[Math.floor(Math.random() * rows.length)];
+      row[p.id] = pickWeighted(p.opciones, p.pesos);
+    }
+    // Garantia: si el azar volvio a dejarlo parejo, mueve una respuesta.
+    c = counts();
+    if (Math.max(...c) - Math.min(...c) <= 1) {
+      const desde = String(p.opciones[c.indexOf(Math.max(...c))]);
+      const hacia = p.opciones.map(String).find((op) => op !== desde);
+      const row = rows.find((r) => String(r[p.id]) === desde);
+      if (row && hacia) row[p.id] = hacia;
+    }
+  }
+};
+
 // ── Capa condicional (baremo) ────────────────────────────────────────────────
 
 export const classify = (baremo, value) => {

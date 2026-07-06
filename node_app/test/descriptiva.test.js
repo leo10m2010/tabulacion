@@ -5,7 +5,7 @@ import XlsxPopulate from "xlsx-populate";
 import { validateSimulation } from "../lib/descriptiva/validate.js";
 import {
   baremoDistribution, computeAciertos, computeLikertPuntajes, computePuntajes,
-  detectLikertBaremo, distributionFor, pairMultiColumns,
+  detectLikertBaremo, distributionFor, organicizeRows, pairMultiColumns,
 } from "../lib/descriptiva/compute.js";
 import { stripCodeFences } from "../lib/descriptiva/openrouter.js";
 import { reconcileRowCount } from "../lib/descriptiva/index.js";
@@ -250,6 +250,43 @@ test("COUNTIF escapa comodines de Excel en las opciones", async () => {
   }
   assert.ok(found, "debe existir la formula COUNTIF de la opcion con comodines");
   assert.ok(found.includes("~?"), `el ? debe ir escapado como ~? (formula: ${found})`);
+});
+
+test("organicize: rompe la alternacion mecanica y el reparto 50/50 del genero", () => {
+  const data = fixtureIndependiente(60);
+  // Simular el patron tipico de la IA: genero perfectamente alternado (30/30).
+  data.metadata.n_encuestados = 60;
+  data.datos_simulados = Array.from({ length: 60 }, (_, i) => ({
+    p1_edad: 12 + (i % 6),
+    p2_genero: i % 2 === 0 ? "Masculino" : "Femenino",
+    p3_frecuencia: ["Siempre", "A veces", "Nunca"][i % 3],
+    p4_tipo__gaseosa: i % 2,
+    p4_tipo__jugo: (i + 1) % 2,
+    p4_tipo__energizante: i % 3 === 0 ? 1 : 0,
+  }));
+  organicizeRows(data);
+
+  const rows = data.datos_simulados;
+  assert.equal(rows.length, 60);
+  // El reparto de genero ya no es perfectamente parejo (30/30 ni 31/29 exacto por empate).
+  const masculinos = rows.filter((r) => r.p2_genero === "Masculino").length;
+  assert.ok(Math.abs(masculinos - (60 - masculinos)) > 1, `genero sigue parejo: ${masculinos}/${60 - masculinos}`);
+  // Todos los valores siguen siendo opciones validas.
+  assert.ok(rows.every((r) => ["Masculino", "Femenino"].includes(r.p2_genero)));
+  // Ya no esta perfectamente alternado fila a fila.
+  const alternado = rows.every((r, i) => r.p2_genero === (i % 2 === 0 ? rows[0].p2_genero : rows[1].p2_genero))
+    && rows[0].p2_genero !== rows[1].p2_genero;
+  assert.equal(alternado, false, "el genero sigue alternando mecanicamente");
+});
+
+test("organicize: no toca el ancla ni preguntas con dependencias, puntos o respuesta correcta", () => {
+  const data = fixturePuntaje(10);
+  const antes = data.datos_simulados.map((r) => `${r.p1_imc}|${r.p2_actividad}`).sort();
+  organicizeRows(data);
+  // p1_imc es ancla y tiene puntos; p2_actividad tiene puntos y depende del
+  // ancla: solo puede cambiar el ORDEN de las filas, nunca los valores.
+  const despues = data.datos_simulados.map((r) => `${r.p1_imc}|${r.p2_actividad}`).sort();
+  assert.deepEqual(despues, antes);
 });
 
 // ── Baremo Likert generado por el sistema ───────────────────────────────────

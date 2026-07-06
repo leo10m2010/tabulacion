@@ -7,7 +7,7 @@ import { docxToMarkdown } from "./docx.js";
 import { requestSimulationJson } from "./openrouter.js";
 import { validateSimulation } from "./validate.js";
 import {
-  computeAciertos, computeLikertPuntajes, computePuntajes, detectLikertBaremo,
+  computeAciertos, computeLikertPuntajes, computePuntajes, detectLikertBaremo, organicizeRows,
 } from "./compute.js";
 import { buildDescriptivaWorkbook } from "./workbook.js";
 
@@ -94,6 +94,9 @@ export const generateDescriptiva = async (payload, options = {}) => {
   }
 
   reconcileRowCount(data, input.n, warnings);
+  // Antes de calcular nada: barajar filas y romper repartos perfectamente
+  // parejos, para que la base se vea organica (no "generada").
+  organicizeRows(data);
 
   // Capa de clasificacion. Regla de negocio:
   // - Si el instrumento trae su PROPIA escala de medicion (puntos o
