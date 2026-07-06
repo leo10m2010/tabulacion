@@ -31,8 +31,11 @@ export const validateSimulation = (data) => {
   const n = Number(metadata.n_encuestados);
   if (!Number.isInteger(n) || n <= 0) {
     errors.push(`metadata.n_encuestados invalido: ${metadata.n_encuestados}`);
-  } else if (datos.length !== n) {
-    errors.push(`datos_simulados tiene ${datos.length} filas pero metadata.n_encuestados es ${n}`);
+  } else if (datos.length < Math.ceil(n / 2)) {
+    // Los LLM no cuentan filas con exactitud (visto en produccion: pide 60 y
+    // entrega 65-72). El conteo exacto lo reconcilia el orquestador
+    // (recorta/completa); solo un deficit grave amerita reintentar.
+    errors.push(`datos_simulados tiene solo ${datos.length} filas de las ${n} pedidas (menos de la mitad)`);
   }
 
   // Preguntas bien formadas.

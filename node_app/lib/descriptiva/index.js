@@ -43,6 +43,33 @@ export const normalizeDescriptivaInput = (payload) => {
   return { texto, docxBase64, n, nivel };
 };
 
+// La IA no cuenta filas con exactitud (pide 60 y entrega 65-72): en vez de
+// reintentar (reincide y duplica costo), el sistema reconcilia a exactamente
+// N. Sobran -> se recortan; faltan -> se completan duplicando perfiles ya
+// simulados (cada fila es internamente coherente y en encuestas reales los
+// perfiles repetidos son normales). El deficit grave (<50%) ya lo rechazo la
+// validacion antes de llegar aqui.
+export const reconcileRowCount = (data, n, warnings) => {
+  const rows = data.datos_simulados;
+  if (rows.length === n) {
+    data.metadata.n_encuestados = n;
+    return;
+  }
+  if (rows.length > n) {
+    warnings.push(`La IA entregó ${rows.length} encuestados; se conservaron los ${n} solicitados.`);
+    data.datos_simulados = rows.slice(0, n);
+  } else {
+    const faltan = n - rows.length;
+    for (let i = 0; i < faltan; i += 1) {
+      rows.push({ ...rows[Math.floor(Math.random() * rows.length)] });
+    }
+    warnings.push(
+      `La IA entregó ${n - faltan} encuestados; se completaron ${faltan} duplicando perfiles simulados para alcanzar N=${n}.`,
+    );
+  }
+  data.metadata.n_encuestados = n;
+};
+
 export const generateDescriptiva = async (payload, options = {}) => {
   const input = normalizeDescriptivaInput(payload);
   const warnings = [];
@@ -65,6 +92,8 @@ export const generateDescriptiva = async (payload, options = {}) => {
   if (attempts.length > 1) {
     warnings.push("La IA necesito un reintento para entregar un JSON valido.");
   }
+
+  reconcileRowCount(data, input.n, warnings);
 
   // Capa de clasificacion. Regla de negocio:
   // - Si el instrumento trae su PROPIA escala de medicion (puntos o

@@ -8,6 +8,7 @@ import {
   detectLikertBaremo, distributionFor, pairMultiColumns,
 } from "../lib/descriptiva/compute.js";
 import { stripCodeFences } from "../lib/descriptiva/openrouter.js";
+import { reconcileRowCount } from "../lib/descriptiva/index.js";
 import { buildDescriptivaWorkbook } from "../lib/descriptiva/workbook.js";
 import { postProcessWorkbook } from "../lib/ooxml.js";
 import { CHART_THEMES } from "../lib/config.js";
@@ -132,10 +133,30 @@ test("fixtures validas pasan sin errores", () => {
   assert.deepEqual(validateSimulation(fixtureConocimiento()), []);
 });
 
-test("detecta n_encuestados inconsistente", () => {
+test("deficit grave de filas (menos de la mitad) si es error de validacion", () => {
   const data = fixtureIndependiente();
-  data.metadata.n_encuestados = 99;
+  data.metadata.n_encuestados = 99; // 12 filas de 99 pedidas
   assert.ok(validateSimulation(data).some((e) => e.includes("99")));
+});
+
+test("desvio moderado de filas NO es error: lo reconcilia el orquestador", () => {
+  const sobran = fixtureIndependiente(12);
+  sobran.metadata.n_encuestados = 10; // entrego 12, pedimos 10
+  assert.deepEqual(validateSimulation(sobran), []);
+  const warnings = [];
+  reconcileRowCount(sobran, 10, warnings);
+  assert.equal(sobran.datos_simulados.length, 10);
+  assert.equal(sobran.metadata.n_encuestados, 10);
+  assert.equal(warnings.length, 1);
+
+  const faltan = fixtureIndependiente(12);
+  const warnings2 = [];
+  reconcileRowCount(faltan, 15, warnings2);
+  assert.equal(faltan.datos_simulados.length, 15);
+  // Las filas agregadas son clones de perfiles existentes (coherentes).
+  const clon = faltan.datos_simulados[14];
+  assert.ok(faltan.datos_simulados.slice(0, 12).some((r) => JSON.stringify(r) === JSON.stringify(clon)));
+  assert.equal(warnings2.length, 1);
 });
 
 test("detecta fila sin respuesta y valor fuera de opciones", () => {

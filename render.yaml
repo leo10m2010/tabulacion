@@ -72,5 +72,7 @@ services:
         sync: false
       - key: OPENROUTER_MODEL
         value: z-ai/glm-5.2
+      # 10 min: la generacion real con N=60 tarda ~4 min; con N altos escala
+      # casi linealmente con las filas.
       - key: OPENROUTER_TIMEOUT_MS
-        value: "300000"
+        value: "600000"

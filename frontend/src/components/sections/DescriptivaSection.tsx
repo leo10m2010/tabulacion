@@ -36,7 +36,9 @@ const NIVELES = [
 ] as const;
 
 const POLL_INTERVAL_MS = 5000;
-const POLL_TIMEOUT_MS = 6 * 60 * 1000;
+// Margen sobre el timeout del backend (10 min): la generacion real con N=60
+// tarda ~4 min y escala con el numero de filas pedidas.
+const POLL_TIMEOUT_MS = 12 * 60 * 1000;
 
 // Fases que se muestran durante la espera (el job real corre en el servidor;
 // los umbrales siguen el orden y los tiempos típicos de la generación).

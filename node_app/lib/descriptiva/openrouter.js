@@ -57,6 +57,12 @@ const callOpenRouter = async ({ messages, model, apiKey, timeoutMs }) => {
         messages,
         // Temperatura baja: maxima consistencia entre corridas.
         temperature: 0.4,
+        // GLM-5.2 es un modelo razonador: sin tope explicito, el razonamiento
+        // puede comerse el presupuesto de salida y dejar el JSON vacio o
+        // truncado. Se fija un max_tokens holgado (el modelo soporta 131k) y
+        // se limita el esfuerzo de razonamiento: la tarea es mecanica.
+        max_tokens: Number.parseInt(process.env.OPENROUTER_MAX_TOKENS ?? "110000", 10),
+        reasoning: { effort: "low" },
         response_format: { type: "json_object" },
       }),
     });
@@ -65,11 +71,15 @@ const callOpenRouter = async ({ messages, model, apiKey, timeoutMs }) => {
       const detail = payload?.error?.message ?? `HTTP ${res.status}`;
       throw new Error(`OpenRouter respondio con error: ${detail}`);
     }
-    const content = payload?.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new Error("OpenRouter devolvio una respuesta sin contenido.");
-    }
-    return { content, usage: payload.usage ?? null };
+    const choice = payload?.choices?.[0];
+    const content = typeof choice?.message?.content === "string" ? choice.message.content : "";
+    // El contenido vacio NO se lanza aqui: el caller lo trata como intento
+    // fallido reintentable (un hipo del proveedor no debe matar el job).
+    return {
+      content,
+      usage: payload?.usage ?? null,
+      finishReason: choice?.finish_reason ?? choice?.native_finish_reason ?? "desconocido",
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -95,7 +105,7 @@ export const requestSimulationJson = async ({ questionnaire, configLine, validat
   }
   const model = options.model ?? process.env.OPENROUTER_MODEL ?? DEFAULT_MODEL;
   const timeoutMs = options.timeoutMs
-    ?? Number.parseInt(process.env.OPENROUTER_TIMEOUT_MS ?? "300000", 10);
+    ?? Number.parseInt(process.env.OPENROUTER_TIMEOUT_MS ?? "600000", 10);
 
   // El user message es unicamente el cuestionario; la configuracion (N,
   // nivel) va como linea final con el formato que el prompt maestro define.
@@ -106,26 +116,30 @@ export const requestSimulationJson = async ({ questionnaire, configLine, validat
   const attempts = [];
   let userMessage = userContent;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const { content, usage } = await callOpenRouter({
+    const { content, usage, finishReason } = await callOpenRouter({
       messages: [buildSystemMessage(), { role: "user", content: userMessage }],
       model,
       apiKey,
       timeoutMs,
     });
 
-    const cleaned = stripCodeFences(content);
     let data = null;
     let failure = null;
-    try {
-      data = JSON.parse(cleaned);
-    } catch (err) {
-      failure = `JSON.parse fallo: ${err.message}`;
-    }
-    if (data && validate) {
-      const errors = validate(data);
-      if (errors.length > 0) {
-        failure = `Validacion estructural fallo: ${errors.join(" | ")}`;
-        data = null;
+    if (!content.trim()) {
+      failure = `respuesta sin contenido (finish_reason: ${finishReason})`;
+    } else {
+      const cleaned = stripCodeFences(content);
+      try {
+        data = JSON.parse(cleaned);
+      } catch (err) {
+        failure = `JSON.parse fallo: ${err.message} (finish_reason: ${finishReason})`;
+      }
+      if (data && validate) {
+        const errors = validate(data);
+        if (errors.length > 0) {
+          failure = `Validacion estructural fallo: ${errors.join(" | ")}`;
+          data = null;
+        }
       }
     }
 
@@ -137,7 +151,8 @@ export const requestSimulationJson = async ({ questionnaire, configLine, validat
     // Log tecnico completo en servidor (nunca llega al usuario final).
     // eslint-disable-next-line no-console
     console.error(
-      `[descriptiva] intento ${attempt} fallido (${failure}). Respuesta cruda:\n${content.slice(0, 4000)}`,
+      `[descriptiva] intento ${attempt} fallido (${failure}). `
+      + `usage=${JSON.stringify(usage)}. Respuesta cruda:\n${content.slice(0, 4000)}`,
     );
     userMessage = `${userContent}\n\n---\nAVISO: tu respuesta anterior no fue un JSON valido o completo `
       + `(${failure}). Responde UNICAMENTE con el JSON descrito en el Paso 7, sin texto adicional, `
