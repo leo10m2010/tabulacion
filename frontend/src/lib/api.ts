@@ -6,6 +6,7 @@ import type {
   AuthUser,
   AuthUsersResponse,
   CronbachResponse,
+  DescriptivaInfo,
   DescriptivaJobResponse,
   DescriptivaStartResponse,
   InlineGenerateResponse,
@@ -85,6 +86,9 @@ export interface DescriptivaInput {
   docxBase64?: string;
   config: { n: number; nivel?: string };
 }
+
+export const getDescriptivaInfo = (apiBaseUrl: string, token: string) =>
+  request<DescriptivaInfo>(apiBaseUrl, "/descriptiva/info", { token });
 
 export const startDescriptiva = (apiBaseUrl: string, token: string, input: DescriptivaInput) =>
   request<DescriptivaStartResponse>(apiBaseUrl, "/descriptiva", { method: "POST", token, body: input });

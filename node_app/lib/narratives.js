@@ -2,13 +2,15 @@
 // Con base simulada se redactan con los porcentajes reales; sin datos se
 // emite un texto guia para que el tesista complete.
 
-const fmtPct = (x) => `${(x * 100).toFixed(2)}%`;
+// Exportados: la tabulacion descriptiva (lib/descriptiva/compute.js) redacta
+// sus interpretaciones con estos mismos helpers.
+export const fmtPct = (x) => `${(x * 100).toFixed(2)}%`;
 
-const sortShares = (counts, labels, total) => labels
+export const sortShares = (counts, labels, total) => labels
   .map((label, i) => ({ label, count: counts[i], share: total > 0 ? counts[i] / total : 0 }))
   .sort((a, b) => b.share - a.share);
 
-const joinShares = (shares, verb, max = 3) => {
+export const joinShares = (shares, verb, max = 3) => {
   const top = shares.slice(0, max).filter((s) => s.count > 0);
   const parts = top.map((s, i) => `el ${fmtPct(s.share)}${i === 0 ? ` ${verb}` : ""} "${s.label}"`);
   if (parts.length > 1) {

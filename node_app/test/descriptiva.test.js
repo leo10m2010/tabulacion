@@ -5,7 +5,7 @@ import XlsxPopulate from "xlsx-populate";
 import { validateSimulation } from "../lib/descriptiva/validate.js";
 import {
   baremoDistribution, computeAciertos, computeLikertPuntajes, computePuntajes,
-  detectLikertBaremo, distributionFor,
+  detectLikertBaremo, distributionFor, pairMultiColumns,
 } from "../lib/descriptiva/compute.js";
 import { stripCodeFences } from "../lib/descriptiva/openrouter.js";
 import { buildDescriptivaWorkbook } from "../lib/descriptiva/workbook.js";
@@ -196,6 +196,41 @@ test("aciertos y porcentaje contra respuesta_correcta", () => {
   assert.equal(computed[1].clasificacion, "Conocimiento bajo");
 });
 
+test("multirrespuesta: columnas fuera de orden se emparejan por slug, no por posicion", () => {
+  const pregunta = {
+    id: "p5_redes", texto: "¿Qué redes usas?", tipo: "multirrespuesta",
+    opciones: ["Facebook", "Instagram", "TikTok"],
+  };
+  // La IA emite las claves en un orden distinto al de las opciones.
+  const rows = Array.from({ length: 10 }, (_, i) => ({
+    p5_redes__tiktok: 1,                 // TikTok siempre marcada
+    p5_redes__facebook: i < 3 ? 1 : 0,   // Facebook 3 veces
+    p5_redes__instagram: i < 6 ? 1 : 0,  // Instagram 6 veces
+  }));
+  const cols = pairMultiColumns(pregunta, rows[0]);
+  assert.deepEqual(cols, ["p5_redes__facebook", "p5_redes__instagram", "p5_redes__tiktok"]);
+  const dist = distributionFor(pregunta, rows);
+  assert.deepEqual(dist.counts, [3, 6, 10]); // alineado con [Facebook, Instagram, TikTok]
+});
+
+test("COUNTIF escapa comodines de Excel en las opciones", async () => {
+  const data = fixtureIndependiente(12);
+  data.preguntas[1].opciones = ["Otros (¿cuál?)", "Ninguno *"];
+  data.datos_simulados = data.datos_simulados.map((row, i) => ({
+    ...row, p2_genero: i % 2 === 0 ? "Otros (¿cuál?)" : "Ninguno *",
+  }));
+  const { workbook } = await buildDescriptivaWorkbook(data, null, null);
+  const res = workbook.sheet("Resultados");
+  // Busca la formula COUNTIF de la pregunta 2 y verifica el escape con ~.
+  let found = null;
+  for (let r = 1; r < 120 && !found; r += 1) {
+    const f = res.cell(r, 3).formula();
+    if (typeof f === "string" && f.includes("cuál")) found = f;
+  }
+  assert.ok(found, "debe existir la formula COUNTIF de la opcion con comodines");
+  assert.ok(found.includes("~?"), `el ? debe ir escapado como ~? (formula: ${found})`);
+});
+
 // ── Baremo Likert generado por el sistema ───────────────────────────────────
 
 const ESCALA_LIKERT = ["Nunca", "A veces", "Casi siempre", "Siempre"];
@@ -260,6 +295,26 @@ test("prohibido: menos de 3 items con la misma escala no genera baremo", () => {
   data.preguntas[3].opciones = ["Bajo", "Medio", "Alto"];
   data.preguntas[4].opciones = ["Malo", "Regular", "Bueno"];
   assert.equal(detectLikertBaremo(data), null);
+});
+
+test("escala Likert listada de mayor a menor invierte los codigos", () => {
+  const data = fixtureLikert();
+  const descendente = ["Siempre", "Casi siempre", "A veces", "Nunca"];
+  data.preguntas = data.preguntas.map((p) => (p.tipo === "ordinal_unica" ? { ...p, opciones: [...descendente] } : p));
+  data.datos_simulados = data.datos_simulados.map(() => ({
+    p1_edad: 30, p2_item: "Siempre", p3_item: "Siempre", p4_item: "Siempre", p5_item: "Siempre",
+  }));
+  const likert = detectLikertBaremo(data);
+  assert.equal(likert.invertida, true);
+  const computed = computeLikertPuntajes(likert, data.datos_simulados);
+  // "Siempre" (indice 0) debe valer el codigo maximo (4): 4 items * 4 = 16 -> Alto.
+  assert.equal(computed[0].puntaje_total, 16);
+  assert.equal(computed[0].clasificacion, "Alto");
+});
+
+test("escala ascendente (Nunca->Siempre) no se invierte", () => {
+  const likert = detectLikertBaremo(fixtureLikert());
+  assert.equal(likert.invertida, false);
 });
 
 test("si el instrumento ya trae su propia escala, no se genera baremo Likert", () => {

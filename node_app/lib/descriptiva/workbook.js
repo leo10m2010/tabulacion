@@ -10,9 +10,8 @@ import {
 } from "../sheet-style.js";
 import { resetAxisIds } from "../ooxml.js";
 import {
-  baremoDistribution, distributionFor, narrativeBaremo, narrativePregunta,
+  baremoDistribution, distributionFor, narrativeBaremo, narrativePregunta, pairMultiColumns,
 } from "./compute.js";
-import { multiColumnsOf } from "./validate.js";
 
 const BASE_SHEET = "Base de datos";
 const RESULTS_SHEET = "Resultados";
@@ -20,7 +19,10 @@ const BAREMO_SHEET = "Baremo";
 const CHART_W = 6;
 const CHART_H = 14;
 
-const escCriteria = (text) => String(text).replace(/"/g, '""');
+// Criterio literal para COUNTIF: ademas de doblar comillas hay que escapar
+// los comodines de Excel (?, *, ~) con "~", o una opcion como "Otros (¿cuál?)"
+// contaria filas por patron en vez de por igualdad.
+const escCriteria = (text) => String(text).replace(/"/g, '""').replace(/[~*?]/g, "~$&");
 
 // Plan de columnas de la hoja base: una por pregunta de respuesta unica, una
 // binaria por opcion de multirrespuesta y, al final, las calculadas por el
@@ -30,7 +32,9 @@ const buildColumnPlan = (data, computed) => {
   const plan = [];
   for (const p of data.preguntas) {
     if (p.tipo === "multirrespuesta") {
-      const cols = multiColumnsOf(p, firstRow);
+      // Emparejadas por slug (no por posicion): el orden de las claves del
+      // JSON de la IA no garantiza el orden de las opciones.
+      const cols = pairMultiColumns(p, firstRow);
       cols.forEach((key, i) => plan.push({
         key,
         id: key,
@@ -255,7 +259,8 @@ const addBaremoSheet = (sheet, data, plan, baseRange, computed, startNumero, bar
     sheet.cell(row + 1 + i, C0 + 1).value(String(r.categoria)).style(ST_CELL_LEFT);
   });
   const notaBaremo = modo === "likert"
-    ? `Baremo construido por el sistema: suma de ${baremo.itemIds.length} ítems ordinales (códigos 1 a ${baremo.escala.length}) con cortes por intervalos equivalentes.`
+    ? `Baremo construido por el sistema: suma de ${baremo.itemIds.length} ítems ordinales (códigos 1 a ${baremo.escala.length}`
+      + `${baremo.invertida ? ", invertidos porque la escala está listada de mayor a menor" : ""}) con cortes por intervalos equivalentes.`
     : `Variable base: ${baremo.variable_base} (rangos definidos por el instrumento).`;
   sheet.cell(row + 1 + baremo.rangos.length, C0).style(ST_NOTE).value(notaBaremo);
   row += baremo.rangos.length + 3;

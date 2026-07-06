@@ -78,6 +78,16 @@ export interface DescriptivaResumen {
   baremoOrigen?: "instrumento" | "likert" | null;
 }
 
+// Límites vigentes del servidor (GET /descriptiva/info): la UI los consume
+// para no duplicar constantes que luego se desfasan.
+export interface DescriptivaInfo {
+  ok?: boolean;
+  defaultN: number;
+  minN: number;
+  maxN: number;
+  niveles: string[];
+}
+
 export interface DescriptivaStartResponse {
   ok?: boolean;
   jobId: string;

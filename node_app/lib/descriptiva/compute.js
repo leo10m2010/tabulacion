@@ -3,9 +3,42 @@
 // IA (ni puntaje_total ni clasificacion de las filas): todo se recalcula aqui
 // para que el Excel sea internamente consistente si o si.
 import { computeNiveles } from "../sheet-style.js";
+import { fmtPct, joinShares, sortShares } from "../narratives.js";
 import { multiColumnsOf } from "./validate.js";
 
-const fmtPct = (x) => `${(x * 100).toFixed(2)}%`;
+// Slug comparable: minusculas, sin tildes, no-alfanumerico -> _ (mismo espiritu
+// que la abreviacion {id}__{opcion_abreviada} que pide el prompt).
+const slugify = (text) => String(text).toLowerCase()
+  .normalize("NFD").replace(/[̀-ͯ]/g, "")
+  .replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+
+// Empareja cada opcion de multirrespuesta con su columna binaria por similitud
+// de slug: el orden de las claves del JSON de la IA NO esta garantizado, asi
+// que confiar en la posicion puede cruzar etiquetas con conteos ajenos. Las
+// opciones que no logran match caen al orden posicional restante.
+export const pairMultiColumns = (pregunta, firstRow) => {
+  const cols = multiColumnsOf(pregunta, firstRow);
+  const sufijos = cols.map((c) => slugify(c.slice(pregunta.id.length + 2)));
+  const usadas = new Set();
+  const pareadas = pregunta.opciones.map((op) => {
+    const slug = slugify(op);
+    let mejor = -1;
+    let mejorScore = 0;
+    sufijos.forEach((suf, i) => {
+      if (usadas.has(i) || !suf) return;
+      let score = 0;
+      if (suf === slug) score = 3;
+      else if (slug.startsWith(suf) || suf.startsWith(slug)) score = 2;
+      else if (slug.includes(suf) || suf.includes(slug)) score = 1;
+      if (score > mejorScore) { mejorScore = score; mejor = i; }
+    });
+    if (mejor >= 0) { usadas.add(mejor); return cols[mejor]; }
+    return null;
+  });
+  const restantes = cols.filter((_, i) => !usadas.has(i));
+  let r = 0;
+  return pareadas.map((c) => c ?? restantes[r++]);
+};
 
 // ── Distribuciones por pregunta ──────────────────────────────────────────────
 
@@ -46,7 +79,7 @@ export const distributionFor = (pregunta, rows) => {
     return { ...d, N, multi: false, totalPct: 1 };
   }
   if (pregunta.tipo === "multirrespuesta") {
-    const cols = multiColumnsOf(pregunta, rows[0]);
+    const cols = pairMultiColumns(pregunta, rows[0]);
     const counts = cols.map((col) => rows.filter((r) => Number(r[col]) === 1).length);
     return {
       labels: pregunta.opciones.map(String),
@@ -147,15 +180,30 @@ export const detectLikertBaremo = (data) => {
     generado: true,
     itemIds: items.map((p) => p.id),
     escala,
+    invertida: esEscalaDescendente(escala),
   };
 };
 
+// Anclas tipicas de intensidad para detectar la direccion de la escala. Si el
+// instrumento lista las opciones de mayor a menor (Siempre -> Nunca), los
+// codigos se invierten para que puntaje alto = mayor intensidad; si no, el
+// baremo Bajo/Medio/Alto saldria al reves.
+const ANCLAS_ALTAS = ["siempre", "totalmente de acuerdo", "muy de acuerdo", "mucho", "muy alto", "muy bueno", "excelente", "muy frecuentemente", "muy satisfecho"];
+const ANCLAS_BAJAS = ["nunca", "jamas", "totalmente en desacuerdo", "muy en desacuerdo", "nada", "muy bajo", "muy malo", "deficiente", "muy insatisfecho"];
+const esAncla = (opcion, anclas) => {
+  const s = slugify(opcion).replace(/_/g, " ");
+  return anclas.some((a) => s === a || s.startsWith(`${a} `));
+};
+const esEscalaDescendente = (escala) => esAncla(escala[0], ANCLAS_ALTAS) && esAncla(escala[escala.length - 1], ANCLAS_BAJAS);
+
 // Puntaje por encuestado del baremo Likert: suma de los codigos 1..k de la
-// opcion marcada en cada item del grupo, clasificada por los cortes.
+// opcion marcada en cada item del grupo (invertidos si la escala esta listada
+// de mayor a menor), clasificada por los cortes.
 export const computeLikertPuntajes = (likert, rows) => rows.map((row) => {
   let total = 0;
   for (const id of likert.itemIds) {
-    total += likert.escala.indexOf(String(row[id])) + 1;
+    const idx = likert.escala.indexOf(String(row[id]));
+    total += likert.invertida ? likert.escala.length - idx : idx + 1;
   }
   return { puntaje_total: total, clasificacion: classify(likert, total) };
 });
@@ -171,24 +219,10 @@ export const baremoDistribution = (baremo, computedRows) => {
   };
 };
 
-// ── Interpretaciones por plantilla (estilo lib/narratives.js) ────────────────
-
-const sortShares = (labels, counts, total) => labels
-  .map((label, i) => ({ label, count: counts[i], share: total > 0 ? counts[i] / total : 0 }))
-  .sort((a, b) => b.share - a.share);
-
-const joinShares = (shares, verb, max = 3) => {
-  const top = shares.slice(0, max).filter((s) => s.count > 0);
-  const parts = top.map((s, i) => `el ${fmtPct(s.share)}${i === 0 ? ` ${verb}` : ""} "${s.label}"`);
-  if (parts.length > 1) {
-    const last = parts.pop();
-    return `${parts.join(", ")} y ${last}`;
-  }
-  return parts[0] ?? "";
-};
+// ── Interpretaciones por plantilla (helpers compartidos de narratives.js) ────
 
 export const narrativePregunta = (tablaN, texto, dist) => {
-  const shares = sortShares(dist.labels, dist.counts, dist.N);
+  const shares = sortShares(dist.counts, dist.labels, dist.N);
   if (dist.multi) {
     const top = shares.filter((s) => s.count > 0).slice(0, 3)
       .map((s) => `"${s.label}" (${fmtPct(s.share)})`).join(", ");
@@ -202,7 +236,7 @@ export const narrativePregunta = (tablaN, texto, dist) => {
 };
 
 export const narrativeBaremo = (tablaN, tipo, titulo, dist) => {
-  const shares = sortShares(dist.labels, dist.counts, dist.N);
+  const shares = sortShares(dist.counts, dist.labels, dist.N);
   const seguido = shares.slice(1).filter((s) => s.count > 0)
     .map((s) => `"${s.label}" con el ${fmtPct(s.share)}`)
     .join(" y ");

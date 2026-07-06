@@ -90,7 +90,16 @@ let users = [];
 // minutos, asi que POST /descriptiva crea un job y el frontend hace polling.
 const descriptivaJobs = new Map();
 const DESCRIPTIVA_JOB_TTL_MS = Number.parseInt(process.env.DESCRIPTIVA_JOB_TTL_SECONDS ?? "1800", 10) * 1000;
+// Un job terminado retiene el Excel en memoria (contenedor de 512 MB): se le
+// da un TTL corto propio, y aun mas corto una vez que el cliente lo descargo.
+const DESCRIPTIVA_DONE_TTL_MS = Number.parseInt(process.env.DESCRIPTIVA_DONE_TTL_SECONDS ?? "600", 10) * 1000;
+const DESCRIPTIVA_SERVED_TTL_MS = 120 * 1000;
 const DESCRIPTIVA_MAX_CONCURRENT = Number.parseInt(process.env.DESCRIPTIVA_MAX_CONCURRENT ?? "3", 10);
+
+// Un job cuenta como "en curso" solo dentro de su TTL: si su promesa quedara
+// colgada, no debe bloquear al usuario (409) para siempre.
+const isDescriptivaJobActive = (job) => job.status === "processing"
+  && Date.now() - job.createdAt < DESCRIPTIVA_JOB_TTL_MS;
 
 class HttpError extends Error {
   constructor(statusCode, message) {
@@ -109,8 +118,10 @@ const cleanupExpired = () => {
     }
   }
   for (const [id, job] of descriptivaJobs.entries()) {
-    // Los jobs en curso no se borran aunque venzan: su promesa sigue viva.
-    if (job.expiresAt <= now && job.status !== "processing") {
+    // A los jobs en curso se les da un margen extra (su promesa puede seguir
+    // viva), pero pasado 2x TTL se consideran zombis y se eliminan.
+    const hardExpiry = job.status === "processing" ? job.expiresAt + DESCRIPTIVA_JOB_TTL_MS : job.expiresAt;
+    if (hardExpiry <= now) {
       descriptivaJobs.delete(id);
     }
   }
@@ -1108,11 +1119,16 @@ const server = http.createServer(async (req, res) => {
           // ("no es un Word valido"); se resuelve antes de crear el job.
           input = { ...input, texto: await docxToMarkdown(input.docxBase64), docxBase64: "" };
         }
+        // Validar aqui (no dentro del job): el usuario recibe el mensaje
+        // accionable como 400 inmediato, no el error generico del polling.
+        if (input.texto.trim().length < 30) {
+          throw new Error("El cuestionario es demasiado corto; pega el instrumento completo.");
+        }
       } catch (err) {
         throw new HttpError(400, err.message);
       }
 
-      const active = [...descriptivaJobs.values()].filter((j) => j.status === "processing");
+      const active = [...descriptivaJobs.values()].filter(isDescriptivaJobActive);
       if (active.some((j) => j.ownerUserId === authUser.id)) {
         throw new HttpError(409, "Ya tienes una generacion en curso; espera a que termine.");
       }
@@ -1138,8 +1154,15 @@ const server = http.createServer(async (req, res) => {
           job.result = generated;
           job.warnings = generated.warnings;
           job.status = "done";
-          job.expiresAt = Date.now() + DESCRIPTIVA_JOB_TTL_MS;
-          registerGeneration(authUser, "Generó una tabulación descriptiva");
+          job.expiresAt = Date.now() + DESCRIPTIVA_DONE_TTL_MS;
+          // El registro de metricas nunca debe voltear un job exitoso a
+          // error (writeUsers toca disco y puede fallar).
+          try {
+            registerGeneration(authUser, "Generó una tabulación descriptiva");
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error(`[descriptiva] job ${id}: no se pudo registrar la generacion:`, err);
+          }
         })
         .catch((err) => {
           // El detalle tecnico queda solo en el log del servidor.
@@ -1147,7 +1170,7 @@ const server = http.createServer(async (req, res) => {
           console.error(`[descriptiva] job ${id} fallo:`, err);
           job.status = "error";
           job.error = "Hubo un problema generando tu base de datos, intenta de nuevo.";
-          job.expiresAt = Date.now() + DESCRIPTIVA_JOB_TTL_MS;
+          job.expiresAt = Date.now() + DESCRIPTIVA_DONE_TTL_MS;
         });
 
       sendJson(res, 202, { ok: true, jobId: id, status: job.status });
@@ -1174,6 +1197,9 @@ const server = http.createServer(async (req, res) => {
           excelBase64: job.result.excelBuffer.toString("base64"),
           excelFileName: "Tabulacion_descriptiva.xlsx",
         });
+        // Ya entregado: acortar la vida del buffer en memoria (el cliente
+        // aun puede re-consultar un par de minutos, p. ej. tras un remount).
+        job.expiresAt = Math.min(job.expiresAt, Date.now() + DESCRIPTIVA_SERVED_TTL_MS);
         return;
       }
       sendJson(res, 200, { ok: true, status: job.status, error: job.error });

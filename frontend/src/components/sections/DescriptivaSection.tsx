@@ -27,7 +27,7 @@ import { AnimatedNumber, springSoft } from "../motion-primitives";
 
 const DEFAULT_N = 60;
 const MIN_N = 10;
-const MAX_N = 200;
+const MAX_N = 400;
 const NIVELES = [
   { id: "", label: "Automático", hint: "La IA decide según el instrumento" },
   { id: "ALTO", label: "Alto", hint: "Problemática muy marcada" },
@@ -84,14 +84,30 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DescriptivaResult | null>(null);
+  // Límites vigentes del servidor; los hardcodeados son solo el fallback
+  // hasta que /descriptiva/info responde (así no se desfasan al cambiarlos).
+  const [limits, setLimits] = useState({ defaultN: DEFAULT_N, minN: MIN_N, maxN: MAX_N });
   const xlsxUrlRef = useRef<string | null>(null);
   const pollRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Evita setState tras desmontar: la limpieza cancela el timeout pendiente,
+  // pero una petición de polling ya en vuelo resuelve igual.
+  const aliveRef = useRef(true);
 
   useEffect(() => () => {
+    aliveRef.current = false;
     if (xlsxUrlRef.current) URL.revokeObjectURL(xlsxUrlRef.current);
     if (pollRef.current) window.clearTimeout(pollRef.current);
   }, []);
+
+  useEffect(() => {
+    api.getDescriptivaInfo(apiBaseUrl, authToken)
+      .then((info) => {
+        if (!aliveRef.current) return;
+        setLimits({ defaultN: info.defaultN, minN: info.minN, maxN: info.maxN });
+      })
+      .catch(() => {}); // sin red o sin permiso: se quedan los defaults
+  }, [apiBaseUrl, authToken]);
 
   // Cronómetro de la espera (solo mientras el job corre).
   useEffect(() => {
@@ -101,13 +117,13 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
     return () => window.clearInterval(timer);
   }, [phase]);
 
-  const n = parseIntSafe(nStr) ?? DEFAULT_N;
+  const n = parseIntSafe(nStr) ?? limits.defaultN;
   const issues: string[] = [];
   if (!docxFile && texto.trim().length > 0 && texto.trim().length < 30) {
     issues.push("El cuestionario pegado es demasiado corto; pega el instrumento completo.");
   }
-  if (n < MIN_N || n > MAX_N) {
-    issues.push(`El número de encuestados debe estar entre ${MIN_N} y ${MAX_N}.`);
+  if (n < limits.minN || n > limits.maxN) {
+    issues.push(`El número de encuestados debe estar entre ${limits.minN} y ${limits.maxN}.`);
   }
   const canGenerate = (texto.trim().length >= 30 || docxFile !== null) && issues.length === 0;
 
@@ -148,7 +164,9 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
       warnings,
       xlsxUrl,
       fileName,
-      previewRows: parsed.data.Resultados ?? parsed.data[parsed.names[0] ?? ""] ?? [],
+      // La hoja base trae valores reales; "Resultados" usa fórmulas vivas sin
+      // valor cacheado y SheetJS las leería como celdas vacías.
+      previewRows: parsed.data["Base de datos"] ?? parsed.data[parsed.names[0] ?? ""] ?? [],
       generatedAt: new Date().toISOString(),
     });
     setPhase("idle");
@@ -158,6 +176,7 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
     pollRef.current = window.setTimeout(async () => {
       try {
         const job = await api.getDescriptivaJob(apiBaseUrl, authToken, jobId);
+        if (!aliveRef.current) return;
         if (job.status === "done" && job.excelBase64 && job.resumen) {
           await finishWithExcel(
             job.excelBase64,
@@ -175,6 +194,7 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
         }
         pollJob(jobId, startedAt);
       } catch (err) {
+        if (!aliveRef.current) return;
         setError(err instanceof Error ? err.message : "No se pudo generar la tabulación descriptiva.");
         setPhase("idle");
       }
@@ -354,7 +374,7 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
                       <span className="text-sm font-medium">Encuestados a simular</span>
                       <Input className="mt-1.5 font-mono tabular-nums" value={nStr} onChange={(e) => setNStr(e.target.value)} placeholder={String(DEFAULT_N)} />
                     </label>
-                    <FieldHint text={`Por defecto ${DEFAULT_N}. Entre ${MIN_N} y ${MAX_N}; con valores altos la generación tarda más.`} />
+                    <FieldHint text={`Por defecto ${limits.defaultN}. Entre ${limits.minN} y ${limits.maxN}; con valores altos la generación tarda más.`} />
                   </div>
                   <div>
                     <span className="text-sm font-medium">Nivel de preponderancia</span>
@@ -540,7 +560,7 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
               </a>
 
               <div>
-                <p className="mb-3 text-sm font-medium">Vista previa de los resultados</p>
+                <p className="mb-3 text-sm font-medium">Vista previa de la base de datos</p>
                 <PreviewTable rows={result.previewRows} maxRows={14} />
               </div>
             </CardContent>

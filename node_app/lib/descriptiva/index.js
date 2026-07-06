@@ -16,7 +16,10 @@ import { buildDescriptivaWorkbook } from "./workbook.js";
 // flujo web; el usuario puede subirlo desde la configuracion avanzada).
 export const DEFAULT_N = 60;
 export const MIN_N = 10;
-export const MAX_N = 200;
+// Tope alineado a muestras reales de tesis (hasta ~400 encuestados). Con N
+// altos la respuesta de la IA es muy larga: el timeout de OpenRouter y el
+// aviso de la UI ya lo contemplan.
+export const MAX_N = 400;
 export const NIVELES_PREPONDERANCIA = ["ALTO", "MODERADO", "LEVE"];
 
 export const normalizeDescriptivaInput = (payload) => {
@@ -84,6 +87,11 @@ export const generateDescriptiva = async (payload, options = {}) => {
         `El instrumento no trae baremo propio, pero es medible con escala Likert: se construyó una clasificación `
         + `Bajo/Medio/Alto sumando ${baremoLikert.itemIds.length} ítems ordinales (escala 1 a ${baremoLikert.escala.length}).`,
       );
+      if (baremoLikert.invertida) {
+        warnings.push(
+          "La escala está listada de mayor a menor intensidad: los códigos se invirtieron para que un puntaje alto refleje mayor intensidad.",
+        );
+      }
     }
   }
   if (computed) {
