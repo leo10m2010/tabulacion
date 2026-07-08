@@ -22,6 +22,7 @@ import {
   normalizeDescriptivaInput,
 } from "./lib/descriptiva/index.js";
 import { docxToMarkdown } from "./lib/descriptiva/docx.js";
+import { generateTitulos, normalizeTitulosInput } from "./lib/titulos/index.js";
 
 // Tutorica Forms (rellenador de Google Forms) corre en este mismo proceso: es
 // una app Express a la que se delegan las rutas /api/tesistab y /api/forms.
@@ -101,6 +102,19 @@ const DESCRIPTIVA_MAX_CONCURRENT = Number.parseInt(process.env.DESCRIPTIVA_MAX_C
 const isDescriptivaJobActive = (job) => job.status === "processing"
   && Date.now() - job.createdAt < DESCRIPTIVA_JOB_TTL_MS;
 
+// Jobs del Generador de Titulos de Investigacion (IA): mismo patron que
+// Tabulacion Descriptiva (la llamada a OpenRouter con web_search puede tardar
+// varios minutos, asi que POST /titulos crea un job y el frontend hace
+// polling).
+const titulosJobs = new Map();
+const TITULOS_JOB_TTL_MS = Number.parseInt(process.env.TITULOS_JOB_TTL_SECONDS ?? "1800", 10) * 1000;
+const TITULOS_DONE_TTL_MS = Number.parseInt(process.env.TITULOS_DONE_TTL_SECONDS ?? "600", 10) * 1000;
+const TITULOS_SERVED_TTL_MS = 120 * 1000;
+const TITULOS_MAX_CONCURRENT = Number.parseInt(process.env.TITULOS_MAX_CONCURRENT ?? "3", 10);
+
+const isTitulosJobActive = (job) => job.status === "processing"
+  && Date.now() - job.createdAt < TITULOS_JOB_TTL_MS;
+
 class HttpError extends Error {
   constructor(statusCode, message) {
     super(message);
@@ -123,6 +137,12 @@ const cleanupExpired = () => {
     const hardExpiry = job.status === "processing" ? job.expiresAt + DESCRIPTIVA_JOB_TTL_MS : job.expiresAt;
     if (hardExpiry <= now) {
       descriptivaJobs.delete(id);
+    }
+  }
+  for (const [id, job] of titulosJobs.entries()) {
+    const hardExpiry = job.status === "processing" ? job.expiresAt + TITULOS_JOB_TTL_MS : job.expiresAt;
+    if (hardExpiry <= now) {
+      titulosJobs.delete(id);
     }
   }
 };
@@ -1200,6 +1220,95 @@ const server = http.createServer(async (req, res) => {
         // Ya entregado: acortar la vida del buffer en memoria (el cliente
         // aun puede re-consultar un par de minutos, p. ej. tras un remount).
         job.expiresAt = Math.min(job.expiresAt, Date.now() + DESCRIPTIVA_SERVED_TTL_MS);
+        return;
+      }
+      sendJson(res, 200, { ok: true, status: job.status, error: job.error });
+      return;
+    }
+
+    // ── Generador de Titulos de Investigacion (IA) ──────────────────────────
+    // Formulario de una sola pantalla (NO chat): valida el input de inmediato
+    // (errores claros para el usuario) y deja la llamada a la IA (con
+    // busqueda web) corriendo en segundo plano.
+    if (req.method === "POST" && pathname === "/titulos") {
+      const authUser = requireAuth(req, { requireSubscription: true });
+      const payload = await parseJsonBody(req);
+
+      let input;
+      try {
+        input = normalizeTitulosInput(payload);
+      } catch (err) {
+        throw new HttpError(400, err.message);
+      }
+
+      const active = [...titulosJobs.values()].filter(isTitulosJobActive);
+      if (active.some((j) => j.ownerUserId === authUser.id)) {
+        throw new HttpError(409, "Ya tienes una generacion de titulos en curso; espera a que termine.");
+      }
+      if (active.length >= TITULOS_MAX_CONCURRENT) {
+        throw new HttpError(429, "El servidor esta ocupado generando otros titulos; intenta en un par de minutos.");
+      }
+
+      const id = crypto.randomUUID();
+      const job = {
+        id,
+        ownerUserId: authUser.id,
+        status: "processing",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + TITULOS_JOB_TTL_MS,
+        result: null,
+        error: null,
+      };
+      titulosJobs.set(id, job);
+
+      generateTitulos(input)
+        .then((generated) => {
+          job.result = generated;
+          job.status = "done";
+          job.expiresAt = Date.now() + TITULOS_DONE_TTL_MS;
+          // El registro de metricas nunca debe voltear un job exitoso a
+          // error (writeUsers toca disco y puede fallar).
+          try {
+            registerGeneration(authUser, "Generó títulos de investigación");
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error(`[titulos] job ${id}: no se pudo registrar la generacion:`, err);
+          }
+        })
+        .catch((err) => {
+          // El detalle tecnico queda solo en el log del servidor.
+          // eslint-disable-next-line no-console
+          console.error(`[titulos] job ${id} fallo:`, err);
+          job.status = "error";
+          job.error = "Hubo un problema generando tus títulos, intenta de nuevo.";
+          job.expiresAt = Date.now() + TITULOS_DONE_TTL_MS;
+        });
+
+      sendJson(res, 202, { ok: true, jobId: id, status: job.status });
+      return;
+    }
+
+    // Polling del job; al completar entrega el markdown con los 3 titulos.
+    const titulosJobRoute = pathname.match(/^\/titulos\/jobs\/([0-9a-fA-F-]+)$/);
+    if (req.method === "GET" && titulosJobRoute) {
+      const authUser = requireAuth(req);
+      const job = titulosJobs.get(titulosJobRoute[1]);
+      if (!job || (job.expiresAt <= Date.now() && job.status !== "processing")) {
+        throw new HttpError(404, "Generacion no encontrada o expirada.");
+      }
+      if (AUTH_REQUIRED && authUser.role !== "admin" && job.ownerUserId !== authUser.id) {
+        throw new HttpError(403, "No tienes acceso a esta generacion.");
+      }
+      if (job.status === "done") {
+        sendJson(res, 200, {
+          ok: true,
+          status: "done",
+          contenido: job.result.contenido,
+          webSearchRequests: job.result.webSearchRequests ?? null,
+        });
+        // Ya entregado: acortar la vida del contenido en memoria (el cliente
+        // aun puede re-consultar un par de minutos, p. ej. tras un remount).
+        job.expiresAt = Math.min(job.expiresAt, Date.now() + TITULOS_SERVED_TTL_MS);
         return;
       }
       sendJson(res, 200, { ok: true, status: job.status, error: job.error });

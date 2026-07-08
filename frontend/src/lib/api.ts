@@ -12,6 +12,8 @@ import type {
   InlineGenerateResponse,
   TabConfig,
   TemplateInfo,
+  TitulosJobResponse,
+  TitulosStartResponse,
 } from "./types";
 
 interface RequestOptions {
@@ -95,6 +97,24 @@ export const startDescriptiva = (apiBaseUrl: string, token: string, input: Descr
 
 export const getDescriptivaJob = (apiBaseUrl: string, token: string, jobId: string) =>
   request<DescriptivaJobResponse>(apiBaseUrl, `/descriptiva/jobs/${jobId}`, { token });
+
+// Generador de Títulos de Investigación (IA): formulario de una sola
+// pantalla (universidad, carrera, lugar, número de variables y año
+// opcional). El backend crea un job (GLM-5.2 + búsqueda web puede tardar
+// minutos) y aquí se hace polling hasta recibir el markdown final.
+export interface TitulosInput {
+  universidad: string;
+  carrera: string;
+  lugar: string;
+  numero_variables: "1" | "2";
+  anio?: string;
+}
+
+export const startTitulos = (apiBaseUrl: string, token: string, input: TitulosInput) =>
+  request<TitulosStartResponse>(apiBaseUrl, "/titulos", { method: "POST", token, body: input });
+
+export const getTitulosJob = (apiBaseUrl: string, token: string, jobId: string) =>
+  request<TitulosJobResponse>(apiBaseUrl, `/titulos/jobs/${jobId}`, { token });
 
 // ── Usuarios (admin) ─────────────────────────────────────────────────────────
 export const listUsers = (apiBaseUrl: string, token: string) =>

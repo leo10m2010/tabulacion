@@ -23,7 +23,6 @@ import {
   Wand2,
   Zap,
 } from "lucide-react";
-import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { MagicButton } from "./components/ui/magic-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
@@ -77,6 +76,7 @@ import { AccountSection } from "./components/sections/AccountSection";
 import { CronbachSection } from "./components/sections/CronbachSection";
 import { DescriptivaSection } from "./components/sections/DescriptivaSection";
 import { FormsSection } from "./components/sections/FormsSection";
+import { TitulosSection } from "./components/sections/TitulosSection";
 import { UsersSection } from "./components/sections/UsersSection";
 
 // Herramientas del menú (sidebar y tabs móviles se dibujan desde aquí).
@@ -85,6 +85,7 @@ const NAV_TOOLS: { id: AppSection; label: string; mobileLabel?: string; icon: ty
   { id: "descriptiva", label: "Descriptiva", mobileLabel: "IA", icon: Wand2 },
   { id: "confiabilidad", label: "Confiabilidad", mobileLabel: "Alfa", icon: ShieldCheck },
   { id: "forms", label: "Forms", icon: KeyRound },
+  { id: "titulos", label: "Generador de Títulos", mobileLabel: "Títulos", icon: Lightbulb },
 ];
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
@@ -570,20 +571,6 @@ export default function App() {
               {item.label}
               {activeSection === item.id && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
             </button>
-          ))}
-
-          {/* Coming soon items */}
-          {[
-            { label: "Generador de títulos", icon: Lightbulb },
-          ].map((item) => (
-            <div
-              key={item.label}
-              className="flex w-full cursor-not-allowed items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground/50"
-            >
-              <item.icon className="h-4 w-4 shrink-0" />
-              {item.label}
-              <Badge variant="muted" className="ml-auto text-[9px] px-1.5 py-0">Pronto</Badge>
-            </div>
           ))}
 
           {isAdmin && (
@@ -1493,6 +1480,11 @@ export default function App() {
           {/* ── Integraciones (clave de API + Tutorica Forms) ── */}
           {activeSection === "forms" && authUser && (
             <FormsSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+          )}
+
+          {/* ── Generador de Títulos de Investigación (IA) ── */}
+          {activeSection === "titulos" && authUser && (
+            <TitulosSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
           )}
 
           {/* ── Usuarios (admin) ── */}

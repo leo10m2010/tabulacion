@@ -105,6 +105,24 @@ export interface DescriptivaJobResponse {
   excelFileName?: string;
 }
 
+// Generador de Títulos de Investigación (IA): formulario de una sola
+// pantalla (NO chat). El POST crea un job (GLM-5.2 + búsqueda web puede
+// tardar minutos) y el frontend hace polling hasta recibir el markdown.
+export interface TitulosStartResponse {
+  ok?: boolean;
+  jobId: string;
+  status: string;
+  error?: string;
+}
+
+export interface TitulosJobResponse {
+  ok?: boolean;
+  status: "processing" | "done" | "error";
+  error?: string | null;
+  contenido?: string;
+  webSearchRequests?: number | null;
+}
+
 export interface TemplateInfo {
   maxMuestra: number;
   maxItemsV1: number;
@@ -165,5 +183,5 @@ export interface AuthUsersResponse {
 
 export type ThemeMode = "light" | "dark";
 export type AppView = "landing" | "app";
-export type AppSection = "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "usuarios" | "cuenta";
+export type AppSection = "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "titulos" | "usuarios" | "cuenta";
 export type WizardStep = 1 | 2 | 3;
