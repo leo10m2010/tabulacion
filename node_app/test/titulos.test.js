@@ -1,5 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+
+// Los tests nunca deben usar claves reales del entorno: la pre-busqueda
+// (Brave/Firecrawl) solo se activa cuando un test la inyecta por options.
+process.env.BRAVE_API_KEY = "";
+process.env.FIRECRAWL_API_KEY = "";
 import JSZip from "jszip";
 import { loadTitulosPrompts, buildSystemPrompt } from "../lib/titulos/prompt.js";
 import { resolveRepositoryDomain } from "../lib/titulos/universities.js";

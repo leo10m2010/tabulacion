@@ -1,5 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+
+// Los tests nunca deben usar claves reales del entorno: la pre-busqueda
+// (Brave/Firecrawl) solo se activa cuando un test la inyecta por options.
+process.env.BRAVE_API_KEY = "";
+process.env.FIRECRAWL_API_KEY = "";
 import { extractReferenceUrls, verifyUrls } from "../lib/titulos/verify.js";
 import { generateTitulos } from "../lib/titulos/index.js";
 
@@ -45,13 +50,12 @@ test("extractReferenceUrls sin URLs devuelve array vacio", () => {
 
 // ── verifyUrls ───────────────────────────────────────────────────────────────
 
-// Mock de fetch por URL: cada entrada define la respuesta (o error) para
-// HEAD y, si aplica, para el fallback GET.
+// Mock de fetch por URL: cada entrada define status, cuerpo (para 2xx) o
+// error. verifyUrls usa GET directo (necesita el cuerpo para detectar muros
+// anti-bot que devuelven 200 a todo).
 const buildFetchMock = (byUrl) => async (url, opts) => {
-  const entry = byUrl[url];
-  if (!entry) throw new Error(`URL no mockeada: ${url}`);
-  const behavior = opts.method === "HEAD" ? entry.head : entry.get;
-  if (!behavior) throw new Error(`sin comportamiento para ${opts.method} en ${url}`);
+  const behavior = byUrl[url];
+  if (!behavior) throw new Error(`URL no mockeada: ${url}`);
   if (behavior.throw) throw behavior.throw;
   if (behavior.timeout) {
     // simula timeout: espera a que el AbortController del caller aborte.
@@ -59,40 +63,47 @@ const buildFetchMock = (byUrl) => async (url, opts) => {
       opts.signal.addEventListener("abort", () => reject(new Error("aborted")));
     });
   }
-  return { status: behavior.status };
+  return {
+    status: behavior.status,
+    text: async () => behavior.body ?? "<html><title>Tesis</title></html>",
+  };
 };
 
-test("verifyUrls clasifica 200 como real", async () => {
+test("verifyUrls clasifica 200 con cuerpo normal como real", async () => {
   const url = "https://hdl.handle.net/20.500.12692/real1";
-  const fetchImpl = buildFetchMock({ [url]: { head: { status: 200 } } });
+  const fetchImpl = buildFetchMock({ [url]: { status: 200 } });
   const result = await verifyUrls([url], { fetchImpl, timeoutMs: 100 });
-  assert.deepEqual(result, { reales: [url], inventadas: [], noVerificables: [] });
+  assert.deepEqual(result, { reales: [url], inventadas: [], noVerificables: [], sospechosas: [] });
+});
+
+test("verifyUrls clasifica 200 con muro anti-bot como sospechosa (caso RENATI)", async () => {
+  const url = "https://renati.sunedu.gob.pe/handle/sunedu/3222203";
+  const fetchImpl = buildFetchMock({
+    [url]: { status: 200, body: "<html><title>Making sure you're not a bot!</title></html>" },
+  });
+  const result = await verifyUrls([url], { fetchImpl, timeoutMs: 100 });
+  assert.deepEqual(result.sospechosas, [url]);
+  assert.deepEqual(result.reales, []);
 });
 
 test("verifyUrls clasifica 302 (redirect manual) como real sin seguir la redireccion", async () => {
   const url = "https://hdl.handle.net/20.500.12692/redirige";
-  const fetchImpl = buildFetchMock({ [url]: { head: { status: 302 } } });
+  const fetchImpl = buildFetchMock({ [url]: { status: 302 } });
   const result = await verifyUrls([url], { fetchImpl, timeoutMs: 100 });
   assert.deepEqual(result.reales, [url]);
 });
 
-test("verifyUrls clasifica 404 como inventada", async () => {
-  const url = "https://hdl.handle.net/20.500.12692/noexiste";
-  const fetchImpl = buildFetchMock({ [url]: { head: { status: 404 } } });
-  const result = await verifyUrls([url], { fetchImpl, timeoutMs: 100 });
-  assert.deepEqual(result.inventadas, [url]);
-});
-
-test("verifyUrls clasifica 410 como inventada", async () => {
-  const url = "https://hdl.handle.net/20.500.12692/eliminado";
-  const fetchImpl = buildFetchMock({ [url]: { head: { status: 410 } } });
-  const result = await verifyUrls([url], { fetchImpl, timeoutMs: 100 });
-  assert.deepEqual(result.inventadas, [url]);
+test("verifyUrls clasifica 404 y 410 como inventadas", async () => {
+  const url404 = "https://hdl.handle.net/20.500.12692/noexiste";
+  const url410 = "https://hdl.handle.net/20.500.12692/eliminado";
+  const fetchImpl = buildFetchMock({ [url404]: { status: 404 }, [url410]: { status: 410 } });
+  const result = await verifyUrls([url404, url410], { fetchImpl, timeoutMs: 100 });
+  assert.deepEqual(new Set(result.inventadas), new Set([url404, url410]));
 });
 
 test("verifyUrls clasifica 403 como no verificable (bloqueo de bots, no evidencia de invencion)", async () => {
   const url = "https://repositorio.udh.edu.pe/handle/bloqueado";
-  const fetchImpl = buildFetchMock({ [url]: { head: { status: 403 } } });
+  const fetchImpl = buildFetchMock({ [url]: { status: 403 } });
   const result = await verifyUrls([url], { fetchImpl, timeoutMs: 100 });
   assert.deepEqual(result.noVerificables, [url]);
 });
@@ -101,34 +112,23 @@ test("verifyUrls clasifica timeout/error de red como no verificable", async () =
   const urlTimeout = "https://repositorio.lento.pe/handle/1";
   const urlError = "https://repositorio.caido.pe/handle/2";
   const fetchImpl = buildFetchMock({
-    [urlTimeout]: { head: { timeout: true }, get: { timeout: true } },
-    [urlError]: { head: { throw: new Error("network error") }, get: { throw: new Error("network error") } },
+    [urlTimeout]: { timeout: true },
+    [urlError]: { throw: new Error("network error") },
   });
   const result = await verifyUrls([urlTimeout, urlError], { fetchImpl, timeoutMs: 20 });
   assert.deepEqual(new Set(result.noVerificables), new Set([urlTimeout, urlError]));
 });
 
-test("verifyUrls hace fallback de HEAD a GET si HEAD devuelve 405", async () => {
-  const url = "https://repositorio.udh.edu.pe/handle/sologet";
-  const fetchImpl = buildFetchMock({
-    [url]: { head: { status: 405 }, get: { status: 200 } },
-  });
-  const result = await verifyUrls([url], { fetchImpl, timeoutMs: 100 });
-  assert.deepEqual(result.reales, [url]);
-});
-
-test("verifyUrls hace fallback de HEAD a GET si HEAD falla por error de red", async () => {
-  const url = "https://repositorio.udh.edu.pe/handle/head-falla";
-  const fetchImpl = buildFetchMock({
-    [url]: { head: { throw: new Error("HEAD no soportado") }, get: { status: 200 } },
-  });
+test("verifyUrls tolera respuestas 2xx sin cuerpo legible (se mantienen reales)", async () => {
+  const url = "https://repositorio.udh.edu.pe/handle/sin-body";
+  const fetchImpl = async () => ({ status: 200 }); // sin .text()
   const result = await verifyUrls([url], { fetchImpl, timeoutMs: 100 });
   assert.deepEqual(result.reales, [url]);
 });
 
 test("verifyUrls procesa multiples URLs en paralelo con concurrencia limitada", async () => {
   const urls = Array.from({ length: 8 }, (_, i) => `https://hdl.handle.net/20.500.12692/${i}`);
-  const byUrl = Object.fromEntries(urls.map((u) => [u, { head: { status: 200 } }]));
+  const byUrl = Object.fromEntries(urls.map((u) => [u, { status: 200 }]));
   const fetchImpl = buildFetchMock(byUrl);
   const result = await verifyUrls(urls, { fetchImpl, timeoutMs: 100, concurrency: 5 });
   assert.equal(result.reales.length, 8);
@@ -233,6 +233,81 @@ test("generateTitulos con URL inventada (404) hace reintento correctivo y devuel
     assert.ok(segundoIntentoMessages[3].content.includes(REFERENCIA_INVENTADA));
     assert.equal(result.contenido, contenidoCorregido.trim());
     assert.deepEqual(result.fuentes, { reales: 2, noVerificables: 0 });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("URL tras muro anti-bot que vino de la pre-busqueda se acepta por procedencia (sin reintento)", async () => {
+  const originalFetch = global.fetch;
+  const URL_RENATI = "https://renati.sunedu.gob.pe/handle/sunedu/1234567";
+  const contenido = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, URL_RENATI);
+  let openRouterCalls = 0;
+  global.fetch = async (url) => {
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      openRouterCalls += 1;
+      return { ok: true, json: async () => openRouterOk(contenido) };
+    }
+    if (url === URL_RENATI) {
+      return { status: 200, text: async () => "<title>Making sure you're not a bot!</title>" };
+    }
+    return { status: 200, text: async () => "<title>Tesis</title>" };
+  };
+  try {
+    const result = await generateTitulos({ ...validInput(), carrera: "Derecho" }, {
+      apiKey: "test-key",
+      websearch: {
+        braveApiKey: "brave-key",
+        firecrawlApiKey: null,
+        delayMs: 0,
+        // La pre-busqueda devuelve exactamente la URL de RENATI: procedencia.
+        fetchImpl: async () => ({
+          status: 200,
+          json: async () => ({ web: { results: [{ title: "Tesis RENATI", url: URL_RENATI, description: "d" }] } }),
+        }),
+      },
+    });
+    assert.equal(openRouterCalls, 1);
+    assert.deepEqual(result.fuentes, { reales: 2, noVerificables: 0 });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("URL tras muro anti-bot que Brave no conoce se trata como inventada y dispara el reintento", async () => {
+  const originalFetch = global.fetch;
+  const URL_RENATI_FALSA = "https://renati.sunedu.gob.pe/handle/sunedu/7777777";
+  const URL_OTRA = "https://repositorio.otro.edu.pe/handle/1/1";
+  const contenidoInicial = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, URL_RENATI_FALSA);
+  const contenidoCorregido = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, URL_OTRA);
+  let openRouterCalls = 0;
+  global.fetch = async (url) => {
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      openRouterCalls += 1;
+      return { ok: true, json: async () => openRouterOk(openRouterCalls === 1 ? contenidoInicial : contenidoCorregido) };
+    }
+    if (url === URL_RENATI_FALSA) {
+      return { status: 200, text: async () => "<title>Making sure you're not a bot!</title>" };
+    }
+    return { status: 200, text: async () => "<title>Tesis</title>" };
+  };
+  try {
+    const result = await generateTitulos({ ...validInput(), carrera: "Economía" }, {
+      apiKey: "test-key",
+      websearch: {
+        braveApiKey: "brave-key",
+        firecrawlApiKey: null,
+        delayMs: 0,
+        // Brave nunca devuelve la URL falsa (ni en pre-busqueda ni en el
+        // contraste): la sospechosa se degrada a inventada.
+        fetchImpl: async () => ({
+          status: 200,
+          json: async () => ({ web: { results: [{ title: "Otra tesis", url: URL_OTRA, description: "d" }] } }),
+        }),
+      },
+    });
+    assert.equal(openRouterCalls, 2);
+    assert.equal(result.contenido, contenidoCorregido.trim());
   } finally {
     global.fetch = originalFetch;
   }

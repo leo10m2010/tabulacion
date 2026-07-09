@@ -8,8 +8,8 @@ import {
   requestTitulos, buildBaseUserContent, stripToolCallMarkup, TITULO_MARKER_RE,
 } from "./openrouter.js";
 import { buildTitulosDocx } from "./docx.js";
-import { extractReferenceUrls, verifyUrls } from "./verify.js";
-import { gatherSearchContext } from "./websearch.js";
+import { extractReferenceUrls, verifyUrls, normalizeUrlForMatch } from "./verify.js";
+import { gatherSearchContext, braveUrlCheck } from "./websearch.js";
 
 // Limpieza final del contenido: quita markup de tool_call filtrado como texto
 // (defensa en profundidad: requestTitulos ya lo hace, pero esta funcion
@@ -81,12 +81,38 @@ const buildCorrectionUserContent = (urlsInventadas) => "Verifique las URLs de tu
   + "objetivos, planteamiento del problema, metodología e hipótesis si corresponde) y conserva el mismo "
   + "formato completo de tu respuesta anterior, comenzando directamente con **TÍTULO 1**.";
 
-// Verifica las URLs citadas como antecedentes en el contenido y clasifica el
-// resultado. Se usa tanto en el intento inicial como en el reintento
-// correctivo.
-const verifyContentSources = async (contenido) => {
+// Verifica las URLs citadas como antecedentes en el contenido. Las
+// "sospechosas" (2xx pero detras de un muro anti-bot, p. ej. RENATI, que
+// devuelve 200 a cualquier handle exista o no) se resuelven en dos pasos:
+// 1. Procedencia: si la URL aparecio en los resultados de la pre-busqueda
+//    del sistema, es real por construccion.
+// 2. Contraste en Brave: si el indice del buscador conoce la URL exacta es
+//    real; si no aparece, se trata como inventada (el reintento correctivo
+//    la reemplaza). Sin clave o con Brave caido queda como no verificable.
+const verifyContentSources = async (contenido, { provenance, websearchOptions }) => {
   const urls = extractReferenceUrls(contenido);
-  return verifyUrls(urls);
+  const { reales, inventadas, noVerificables, sospechosas } = await verifyUrls(urls);
+
+  for (const url of sospechosas) {
+    if (provenance.has(normalizeUrlForMatch(url))) {
+      reales.push(url);
+      continue;
+    }
+    // Secuencial a proposito (limite de 1 consulta/seg del plan gratis).
+    // eslint-disable-next-line no-await-in-loop
+    const found = await braveUrlCheck(url, websearchOptions);
+    if (found === true) reales.push(url);
+    else if (found === false) inventadas.push(url);
+    else noVerificables.push(url);
+  }
+  if (sospechosas.length > 0) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[titulos] ${sospechosas.length} URL(s) tras muro anti-bot resueltas por procedencia/Brave.`,
+    );
+  }
+
+  return { reales, inventadas, noVerificables };
 };
 
 // Genera los 3 titulos: valida, arma el system prompt final y llama a la IA.
@@ -130,7 +156,11 @@ export const generateTitulos = async (payload, options = {}) => {
   let content = primerIntento.content;
   let webSearchRequests = primerIntento.webSearchRequests;
   let contenido = cleanTitulosContent(content);
-  let { reales, inventadas, noVerificables } = await verifyContentSources(contenido);
+  // Procedencia: URLs que el sistema mismo obtuvo en la pre-busqueda (reales
+  // por construccion) — resuelven las "sospechosas" sin gastar cuota.
+  const provenance = new Set(extractReferenceUrls(searchContext ?? "").map(normalizeUrlForMatch));
+  const verifyOpts = { provenance, websearchOptions: options.websearch ?? {} };
+  let { reales, inventadas, noVerificables } = await verifyContentSources(contenido, verifyOpts);
 
   if (inventadas.length > 0) {
     // eslint-disable-next-line no-console
@@ -157,7 +187,7 @@ export const generateTitulos = async (payload, options = {}) => {
     content = reintento.content;
     webSearchRequests = reintento.webSearchRequests ?? webSearchRequests;
     contenido = cleanTitulosContent(content);
-    ({ reales, inventadas, noVerificables } = await verifyContentSources(contenido));
+    ({ reales, inventadas, noVerificables } = await verifyContentSources(contenido, verifyOpts));
 
     if (inventadas.length > 0) {
       throw new Error(

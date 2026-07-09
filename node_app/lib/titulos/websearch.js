@@ -10,6 +10,8 @@
 // La herramienta openrouter:web_search se mantiene como complemento acotado
 // (el prompt le permite pocas busquedas adicionales si le falta algo).
 
+import { normalizeUrlForMatch } from "./verify.js";
+
 const BRAVE_URL = "https://api.search.brave.com/res/v1/web/search";
 const FIRECRAWL_URL = "https://api.firecrawl.dev/v1/search";
 
@@ -132,6 +134,36 @@ export const searchWithFallback = async (query, options = {}) => {
   }
 
   return [];
+};
+
+// Contraste de una URL contra el indice de Brave: para dominios con muro
+// anti-bot (RENATI devuelve 200 a TODO, exista o no el handle) el unico modo
+// barato de saber si una URL citada existe es preguntarle a un buscador.
+// Devuelve true (el indice conoce la URL exacta), false (no aparece: muy
+// probablemente inventada) o null (sin clave o Brave fallo: no se castiga).
+export const braveUrlCheck = async (url, options = {}) => {
+  const braveKey = options.braveApiKey ?? process.env.BRAVE_API_KEY;
+  if (!braveKey) return null;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 15000;
+  const query = String(url).replace(/^https?:\/\//, "");
+  const cacheKey = `urlcheck:${query}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached.found;
+
+  try {
+    const delayMs = options.delayMs ?? 1100;
+    if (delayMs > 0) await sleep(delayMs); // respeta 1 consulta/seg del plan gratis
+    const results = await braveSearch(query, { apiKey: braveKey, count: 10, timeoutMs, fetchImpl });
+    const target = normalizeUrlForMatch(url);
+    const found = results.some((r) => normalizeUrlForMatch(r.url) === target);
+    cacheSet(cacheKey, { found });
+    return found;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(`[titulos] braveUrlCheck fallo para "${url}": ${err.message}.`);
+    return null;
+  }
 };
 
 // Consultas fijas del job: cubren universidad, nacional (ALICIA/RENATI) e

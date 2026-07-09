@@ -17,6 +17,7 @@ import {
   ShadingType,
   Table,
   TableCell,
+  TableLayoutType,
   TableRow,
   TextRun,
   WidthType,
@@ -160,9 +161,17 @@ const heading2Paragraph = (numero, texto) => new Paragraph({
   children: [makeRun(`${numero}. ${texto}`, { bold: true, size: SIZE_HEADING2, color: AZUL_OSCURO })],
 });
 
+// Anchos ABSOLUTOS en twips (layout fijo). Los anchos en porcentaje sin
+// layout fijo se colapsan en Word Online y otros visores (las columnas
+// quedaban de un caracter de ancho, con el texto en vertical). Ancho util
+// A4: 210mm - 2x25mm de margen = 160mm ~= 9072 twips; 30%/70%.
+const TABLE_WIDTH_DXA = 9072;
+const COL_CLAVE_DXA = 2722;
+const COL_VALOR_DXA = 6350;
+
 // Celda de tabla con bordes finos grises; `isKey` aplica negrita + sombreado.
-const tableCell = (text, { isKey = false, widthPct } = {}) => new TableCell({
-  width: { size: widthPct, type: WidthType.PERCENTAGE },
+const tableCell = (text, { isKey = false, widthDxa } = {}) => new TableCell({
+  width: { size: widthDxa, type: WidthType.DXA },
   shading: isKey ? { type: ShadingType.CLEAR, fill: SHADING_CLAVE } : undefined,
   margins: { top: 100, bottom: 100, left: 150, right: 150 },
   borders: {
@@ -178,11 +187,13 @@ const tableCell = (text, { isKey = false, widthPct } = {}) => new TableCell({
 });
 
 const buildMethodTable = (rows) => new Table({
-  width: { size: 100, type: WidthType.PERCENTAGE },
+  width: { size: TABLE_WIDTH_DXA, type: WidthType.DXA },
+  layout: TableLayoutType.FIXED,
+  columnWidths: [COL_CLAVE_DXA, COL_VALOR_DXA],
   rows: rows.map(([clave, valor]) => new TableRow({
     children: [
-      tableCell(clave, { isKey: true, widthPct: 30 }),
-      tableCell(valor, { widthPct: 70 }),
+      tableCell(clave, { isKey: true, widthDxa: COL_CLAVE_DXA }),
+      tableCell(valor, { widthDxa: COL_VALOR_DXA }),
     ],
   })),
 });

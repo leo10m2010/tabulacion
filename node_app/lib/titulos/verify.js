@@ -43,20 +43,44 @@ const DEFAULT_CONCURRENCY = 5;
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
   + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 TesisTab/1.0";
 
-// Hace un solo request HTTP con timeout y sin seguir redirecciones (para
-// poder distinguir 3xx explicitamente). Devuelve { status } o { error } si
-// hubo timeout/error de red.
-const fetchWithTimeout = async (url, { method, timeoutMs, fetchImpl }) => {
+// Muros anti-bot que devuelven 200 para CUALQUIER ruta, exista o no
+// (verificado en produccion: RENATI responde "Making sure you're not a bot!"
+// con 200 tanto para handles reales como inventados). Un 200 con estas
+// señales NO prueba que la URL exista: se clasifica "sospechosa" y el caller
+// la resuelve por procedencia (pre-busqueda) o contraste en Brave.
+const BOT_CHALLENGE_MARKERS = [
+  // RENATI (Anubis) escribe "you&#39;re not a bot" con entidad HTML: se usa
+  // el fragmento sin apostrofe para que coincida con ambas variantes.
+  "not a bot",
+  "just a moment",
+  "checking your browser",
+  "verifying you are human",
+  "verificando que eres humano",
+  "enable javascript and cookies",
+];
+
+// Normalizacion para comparar URLs entre fuentes (respuesta de la IA vs
+// resultados de busqueda): minusculas, https, sin slash final.
+export const normalizeUrlForMatch = (url) => String(url ?? "")
+  .trim()
+  .toLowerCase()
+  .replace(/^http:\/\//, "https://")
+  .replace(/\/+$/, "");
+
+// Hace un GET con timeout y sin seguir redirecciones (para distinguir 3xx
+// explicitamente). Devuelve { status, res } o { error } si hubo timeout o
+// error de red.
+const fetchWithTimeout = async (url, { timeoutMs, fetchImpl }) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetchImpl(url, {
-      method,
+      method: "GET",
       redirect: "manual",
       signal: controller.signal,
       headers: { "User-Agent": USER_AGENT },
     });
-    return { status: res.status };
+    return { status: res.status, res };
   } catch (err) {
     return { error: err };
   } finally {
@@ -64,24 +88,30 @@ const fetchWithTimeout = async (url, { method, timeoutMs, fetchImpl }) => {
   }
 };
 
-// Clasifica una URL como "real" (2xx/3xx), "inventada" (404/410) o
-// "noVerificable" (403, 429, 5xx, timeout, error de red). Intenta HEAD
-// primero; si el servidor responde 405/501 (metodo no soportado) o hay un
-// error de red en el HEAD, reintenta con GET antes de resolver.
+// Clasifica una URL:
+// - "real": 3xx (el recurso redirige, existe) o 2xx sin señales anti-bot.
+// - "sospechosa": 2xx pero el cuerpo es un muro anti-bot (no prueba nada).
+// - "inventada": 404/410 (el servidor confirma que no existe).
+// - "noVerificable": 403/429/5xx, timeout o error de red.
+// Se usa GET directo (no HEAD): para los 2xx hay que inspeccionar el cuerpo.
 const classifyUrl = async (url, { timeoutMs, fetchImpl }) => {
-  let outcome = await fetchWithTimeout(url, { method: "HEAD", timeoutMs, fetchImpl });
-
-  const needsGetFallback = outcome.error
-    || outcome.status === 405
-    || outcome.status === 501;
-  if (needsGetFallback) {
-    outcome = await fetchWithTimeout(url, { method: "GET", timeoutMs, fetchImpl });
-  }
-
+  const outcome = await fetchWithTimeout(url, { timeoutMs, fetchImpl });
   if (outcome.error) return "noVerificable";
-  const { status } = outcome;
-  if (status >= 200 && status < 400) return "real";
+  const { status, res } = outcome;
+  if (status >= 300 && status < 400) return "real";
   if (status === 404 || status === 410) return "inventada";
+  if (status >= 200 && status < 300) {
+    let body = "";
+    try {
+      body = String(await res.text()).slice(0, 30000).toLowerCase();
+    } catch {
+      // Sin cuerpo legible no hay señales anti-bot que evaluar: se mantiene
+      // el criterio clasico (2xx = real).
+      return "real";
+    }
+    if (BOT_CHALLENGE_MARKERS.some((marker) => body.includes(marker))) return "sospechosa";
+    return "real";
+  }
   return "noVerificable";
 };
 
@@ -111,13 +141,15 @@ export const verifyUrls = async (urls, options = {}) => {
   const reales = [];
   const inventadas = [];
   const noVerificables = [];
+  const sospechosas = [];
 
   await runWithConcurrency(urls, concurrency, async (url) => {
     const clasificacion = await classifyUrl(url, { timeoutMs, fetchImpl });
     if (clasificacion === "real") reales.push(url);
     else if (clasificacion === "inventada") inventadas.push(url);
+    else if (clasificacion === "sospechosa") sospechosas.push(url);
     else noVerificables.push(url);
   });
 
-  return { reales, inventadas, noVerificables };
+  return { reales, inventadas, noVerificables, sospechosas };
 };
