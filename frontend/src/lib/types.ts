@@ -121,6 +121,8 @@ export interface TitulosJobResponse {
   error?: string | null;
   contenido?: string;
   webSearchRequests?: number | null;
+  docxBase64?: string;
+  docxFileName?: string;
 }
 
 export interface TemplateInfo {

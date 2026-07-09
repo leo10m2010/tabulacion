@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import JSZip from "jszip";
 import { loadTitulosPrompts, interpolate, buildSystemPrompt } from "../lib/titulos/prompt.js";
 import { resolveRepositoryDomain, buildAllowedDomains } from "../lib/titulos/universities.js";
-import { normalizeTitulosInput, generateTitulos } from "../lib/titulos/index.js";
+import { normalizeTitulosInput, generateTitulos, cleanTitulosContent } from "../lib/titulos/index.js";
+import { buildTitulosDocx } from "../lib/titulos/docx.js";
 
 // ── Parsing del .md ─────────────────────────────────────────────────────────
 
@@ -156,6 +158,96 @@ test("rechaza anio con formato o rango invalido", () => {
   assert.throws(() => normalizeTitulosInput({ ...validInput(), anio: "abcd" }), /año/i);
 });
 
+// ── cleanTitulosContent (defensa contra narracion de la IA) ────────────────
+
+const NARRACION_REAL = "Voy a realizar las búsquedas en repositorios académicos antes de proponer "
+  + "los títulos. Realizaré varias búsquedas simultáneas.Voy a realizar búsquedas adicionales para "
+  + "encontrar más tesis relacionadas...Con base en los resultados de las búsquedas realizadas... he "
+  + "identificado las variables más frecuentes...\n\n1. **Sistema de control interno**...\n\nA "
+  + "continuación, presento las tres propuestas de título...\n\n---\n\n**TÍTULO 1**\n"
+  + "\"Sistema de control interno en...\"\n\n**1. PROBLEMA Y PROPÓSITO A ABORDAR**\n...";
+
+test("cleanTitulosContent descarta la narracion previa y empieza en **TÍTULO 1**", () => {
+  const out = cleanTitulosContent(NARRACION_REAL);
+  assert.ok(out.startsWith("**TÍTULO 1**"));
+  assert.ok(!out.includes("Voy a realizar"));
+});
+
+test("cleanTitulosContent sin marcador devuelve el contenido intacto", () => {
+  const sinMarcador = "Aquí no hay ningún título desarrollado, solo texto suelto.";
+  assert.equal(cleanTitulosContent(sinMarcador), sinMarcador);
+});
+
+test("cleanTitulosContent tolera TÍTULO 1 sin espacio y sin tilde", () => {
+  assert.ok(cleanTitulosContent("ruido previo **TITULO1** resto").startsWith("**TITULO1**"));
+});
+
+// ── buildTitulosDocx (zip .docx valido con el contenido esperado) ──────────
+
+const CONTENIDO_EJEMPLO = `**TÍTULO 1**
+"Sistema de control interno en la gestión administrativa del Hospital X, Huánuco, 2026"
+
+**1. PROBLEMA Y PROPÓSITO A ABORDAR**
+Existe un vacío de conocimiento respecto al sistema de control interno.
+
+**2. OBJETIVOS**
+Objetivo General:
+Determinar el nivel de sistema de control interno en la gestión administrativa.
+
+Objetivos Específicos:
+- Describir el nivel de la dimensión 1.
+- Describir el nivel de la dimensión 2.
+
+**3. PLANTEAMIENTO DEL PROBLEMA**
+Problema General:
+¿Cuál es el nivel de sistema de control interno?
+
+**4. ESTRATEGIA METODOLÓGICA**
+| Tipo | Básica |
+| Enfoque | Cuantitativo |
+| Nivel | Descriptivo |
+
+**5. REFERENCIAS Y ANTECEDENTES**
+Antecedentes nacionales:
+1. Pérez, J. (2023). *Control interno y gestión*. Universidad de Huánuco. http://repositorio.udh.edu.pe/123
+
+---
+
+**TÍTULO 2**
+"Otro título de ejemplo, Huánuco, 2026"
+
+**1. PROBLEMA Y PROPÓSITO A ABORDAR**
+Otro parrafo de contexto.
+`;
+
+const inputEjemplo = {
+  universidad: "Universidad de Huánuco",
+  carrera: "Enfermería",
+  lugar: "Huánuco",
+  numeroVariables: "1",
+  anio: "2026",
+};
+
+test("buildTitulosDocx devuelve un Buffer que es un zip .docx valido con el contenido esperado", async () => {
+  const buffer = await buildTitulosDocx({ contenido: CONTENIDO_EJEMPLO, input: inputEjemplo });
+  assert.ok(Buffer.isBuffer(buffer));
+
+  const zip = await JSZip.loadAsync(buffer);
+  assert.ok(zip.file("word/document.xml"), "el .docx debe traer word/document.xml");
+  const xml = await zip.file("word/document.xml").async("string");
+
+  assert.ok(xml.includes("TÍTULO 1"));
+  assert.ok(xml.includes("TÍTULO 2"));
+  assert.ok(xml.includes("Objetivo General"));
+  assert.ok(xml.includes("Propuestas de T"));
+});
+
+test("buildTitulosDocx nunca lanza con contenido vacio, sin marcador o con solo texto plano", async () => {
+  await assert.doesNotReject(() => buildTitulosDocx({ contenido: "", input: inputEjemplo }));
+  await assert.doesNotReject(() => buildTitulosDocx({ contenido: "texto suelto sin estructura", input: inputEjemplo }));
+  await assert.doesNotReject(() => buildTitulosDocx({ contenido: undefined, input: {} }));
+});
+
 // ── generateTitulos (mockea fetch, nunca llama a OpenRouter real) ──────────
 
 test("generateTitulos llama a OpenRouter una vez y devuelve el contenido", async () => {
@@ -167,7 +259,7 @@ test("generateTitulos llama a OpenRouter una vez y devuelve el contenido", async
       ok: true,
       json: async () => ({
         choices: [{ message: { content: "**TÍTULO 1**\n..." }, finish_reason: "stop" }],
-        usage: { server_tool_use: { web_search_requests: 3 } },
+        usage: { server_tool_use_details: { web_search_requests: 3 } },
       }),
     };
   };
@@ -183,8 +275,38 @@ test("generateTitulos llama a OpenRouter una vez y devuelve el contenido", async
       ["alicia.concytec.gob.pe", "renati.sunedu.gob.pe", "repositorio.udh.edu.pe"],
     );
     assert.ok(!("response_format" in calls[0].body));
+    // El mensaje de usuario debe blindar contra narracion de la IA.
+    assert.ok(calls[0].body.messages[1].content.includes("ÚNICAMENTE"));
     assert.equal(result.contenido, "**TÍTULO 1**\n...");
     assert.equal(result.webSearchRequests, 3);
+    assert.ok(Buffer.isBuffer(result.docxBuffer));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateTitulos lee web_search_requests desde server_tool_use_details con fallback a server_tool_use", async () => {
+  const originalFetch = global.fetch;
+  try {
+    global.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "**TÍTULO 1**\n..." }, finish_reason: "stop" }],
+        usage: { server_tool_use_details: { web_search_requests: 5 } },
+      }),
+    });
+    const conDetails = await generateTitulos(validInput(), { apiKey: "test-key" });
+    assert.equal(conDetails.webSearchRequests, 5);
+
+    global.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "**TÍTULO 1**\n..." }, finish_reason: "stop" }],
+        usage: { server_tool_use: { web_search_requests: 7 } },
+      }),
+    });
+    const conFallback = await generateTitulos(validInput(), { apiKey: "test-key" });
+    assert.equal(conFallback.webSearchRequests, 7);
   } finally {
     global.fetch = originalFetch;
   }

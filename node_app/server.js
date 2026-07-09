@@ -1305,6 +1305,8 @@ const server = http.createServer(async (req, res) => {
           status: "done",
           contenido: job.result.contenido,
           webSearchRequests: job.result.webSearchRequests ?? null,
+          docxBase64: job.result.docxBuffer.toString("base64"),
+          docxFileName: "Titulos_de_investigacion.docx",
         });
         // Ya entregado: acortar la vida del contenido en memoria (el cliente
         // aun puede re-consultar un par de minutos, p. ej. tras un remount).

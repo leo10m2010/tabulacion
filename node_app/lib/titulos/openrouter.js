@@ -5,6 +5,21 @@
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 export const DEFAULT_MODEL = "z-ai/glm-5.2";
 
+// Mensaje user base (sin el historial de reintento correctivo). Se exporta
+// para que index.js pueda reconstruir el mismo mensaje al armar el historial
+// completo (system + user original + assistant + user de correccion) cuando
+// la verificacion de fuentes detecta antecedentes inventados.
+export const buildBaseUserContent = () => "Genera los 3 títulos según los datos proporcionados. Tu respuesta debe "
+  + "contener ÚNICAMENTE los tres títulos desarrollados según la plantilla, comenzando directamente "
+  + "con **TÍTULO 1**. No narres tus búsquedas, no incluyas introducciones, resúmenes de "
+  + "variables encontradas, comentarios ni despedidas.\n\n"
+  + "IMPORTANTE - AUTENTICIDAD DE FUENTES: los antecedentes de cada título deben provenir "
+  + "EXCLUSIVAMENTE de los resultados reales de la búsqueda web que realices; cita la URL "
+  + "exactamente tal como aparece en el resultado de búsqueda, sin modificarla. Está PROHIBIDO "
+  + "inventar o \"recordar\" autores, años, títulos de tesis o URLs que no hayan aparecido "
+  + "efectivamente en los resultados de tus búsquedas. Si no encuentras suficientes antecedentes "
+  + "reales, realiza más búsquedas adicionales en vez de completar con datos supuestos.";
+
 const callOpenRouter = async ({
   messages, tools, model, apiKey, timeoutMs, maxTokens,
 }) => {
@@ -75,10 +90,17 @@ export const requestTitulos = async ({ systemPrompt, allowedDomains, options = {
   };
   if (allowedDomains) searchParameters.allowed_domains = allowedDomains;
 
-  const messages = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: "Genera los 3 títulos según los datos proporcionados." },
-  ];
+  // messages/extraMessages permite al llamador (index.js) inyectar un
+  // historial previo (system + user original + assistant con la respuesta
+  // anterior + user con la correccion) para el reintento correctivo cuando la
+  // verificacion de URLs detecta antecedentes inventados. Si no se pasa, se
+  // arma el par system/user de siempre.
+  const messages = Array.isArray(options.messages) && options.messages.length > 0
+    ? options.messages
+    : [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: buildBaseUserContent() },
+    ];
   const tools = [{ type: "openrouter:web_search", parameters: searchParameters }];
 
   let lastFinishReason = "desconocido";
@@ -87,7 +109,11 @@ export const requestTitulos = async ({ systemPrompt, allowedDomains, options = {
       messages, tools, model, apiKey, timeoutMs, maxTokens,
     });
     lastFinishReason = finishReason;
-    const webSearchRequests = usage?.server_tool_use?.web_search_requests ?? null;
+    // OpenRouter devuelve el conteo en server_tool_use_details (verificado en
+    // produccion); se conserva server_tool_use como fallback por compatibilidad.
+    const webSearchRequests = usage?.server_tool_use_details?.web_search_requests
+      ?? usage?.server_tool_use?.web_search_requests
+      ?? null;
     // Monitoreo de costo: Exa/Parallel cobran ~$4 por 1000 resultados.
     // eslint-disable-next-line no-console
     console.log(

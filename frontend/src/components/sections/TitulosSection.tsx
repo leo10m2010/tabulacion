@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Check, Copy, GraduationCap, Sparkles } from "lucide-react";
+import { ArrowDownToLine, Check, Copy, GraduationCap, Sparkles } from "lucide-react";
 import { Button } from "../ui/button";
 import { MagicButton } from "../ui/magic-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
 import { cn } from "../../lib/utils";
 import * as api from "../../lib/api";
+import { base64ToUint8Array } from "../../lib/helpers";
 import type { AuthUser } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { SubscriptionWarning } from "../SubscriptionWarning";
@@ -83,8 +84,10 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser }: {
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [contenido, setContenido] = useState<string | null>(null);
+  const [docx, setDocx] = useState<{ url: string; fileName: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const pollRef = useRef<number | null>(null);
+  const docxUrlRef = useRef<string | null>(null);
   // Evita setState tras desmontar: la limpieza cancela el timeout pendiente,
   // pero una petición de polling ya en vuelo resuelve igual.
   const aliveRef = useRef(true);
@@ -92,6 +95,7 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser }: {
   useEffect(() => () => {
     aliveRef.current = false;
     if (pollRef.current) window.clearTimeout(pollRef.current);
+    if (docxUrlRef.current) URL.revokeObjectURL(docxUrlRef.current);
   }, []);
 
   // Cronómetro de la espera (solo mientras el job corre).
@@ -123,6 +127,16 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser }: {
         if (!aliveRef.current) return;
         if (job.status === "done" && job.contenido) {
           setContenido(job.contenido);
+          if (job.docxBase64) {
+            const docxBytes = base64ToUint8Array(job.docxBase64);
+            const url = URL.createObjectURL(new Blob(
+              [docxBytes.buffer as ArrayBuffer],
+              { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+            ));
+            if (docxUrlRef.current) URL.revokeObjectURL(docxUrlRef.current);
+            docxUrlRef.current = url;
+            setDocx({ url, fileName: job.docxFileName ?? "Titulos_de_investigacion.docx" });
+          }
           setPhase("idle");
           return;
         }
@@ -144,6 +158,9 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser }: {
   const handleGenerate = async () => {
     setError(null);
     setContenido(null);
+    if (docxUrlRef.current) URL.revokeObjectURL(docxUrlRef.current);
+    docxUrlRef.current = null;
+    setDocx(null);
     setCopied(false);
     if (!canGenerate) return;
     setPhase("working");
@@ -273,8 +290,9 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser }: {
               value={anio}
               onChange={(e) => setAnio(e.target.value)}
               disabled={phase === "working"}
-              placeholder="Año actual si lo dejas vacío"
+              placeholder={String(new Date().getFullYear())}
             />
+            <FieldHint text="Opcional: si lo dejas vacío, se usa el año actual." />
           </label>
 
           {issues.length > 0 && (
@@ -364,10 +382,22 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser }: {
                   <Check className="h-5 w-5" />
                   Propuestas de título listas
                 </CardTitle>
-                <Button size="sm" variant="outline" onClick={copyAll}>
-                  {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
-                  {copied ? "Copiado" : "Copiar todo"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={copyAll}>
+                    {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copied ? "Copiado" : "Copiar todo"}
+                  </Button>
+                  {docx && (
+                    <a
+                      href={docx.url}
+                      download={docx.fileName}
+                      className="inline-flex h-8 items-center justify-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground shadow-glow transition duration-150 hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px active:scale-[0.985]"
+                    >
+                      <ArrowDownToLine className="h-3.5 w-3.5" />
+                      Descargar Word
+                    </a>
+                  )}
+                </div>
               </div>
               <CardDescription>
                 Revisa antecedentes y variables: son propuestas de partida, no reemplazan tu criterio ni el de tu asesor.
