@@ -3,6 +3,15 @@
 // Plantilla A correlacional, Seccion 4 = Plantilla B descriptiva); se extrae
 // por marcadores de encabezado + fences de codigo, nunca se copia el texto a
 // mano en JS (asi el .md se puede editar sin tocar codigo).
+//
+// IMPORTANTE (cache de prompt): el system prompt es ESTATICO — no se
+// interpola ningun dato del cliente. Los datos van en el mensaje user
+// ("DATOS DEL ESTUDIANTE", ver openrouter.js). Con el prefijo identico en
+// todas las solicitudes, el cache implicito del proveedor (cached_tokens)
+// aplica entre clientes distintos y abarata los tokens de entrada. Las
+// plantillas conservan sus placeholders literales ({{anio}}, [lugar]): el
+// modelo los reemplaza segun las instrucciones del PASO 3, y el codigo
+// valida que no quede "{{" en la respuesta final.
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -52,37 +61,19 @@ export const loadTitulosPrompts = () => {
   return cached;
 };
 
-// Reemplazo global simple (split/join, sin regex): las claves de interpolar
-// son fijas y no traen caracteres especiales de regex.
-export const interpolate = (template, vars) => {
-  let out = template;
-  for (const [key, value] of Object.entries(vars)) {
-    out = out.split(`{{${key}}}`).join(String(value));
-  }
-  return out;
-};
-
 export const currentYear = () => new Date().getFullYear();
 
-// Arma el system prompt final: interpola los placeholders del prompt de
-// sistema y le adjunta SOLO la plantilla que corresponde segun
-// numero_variables ("2" = Plantilla A correlacional con hipotesis; "1" =
-// Plantilla B descriptiva, sin hipotesis). Si el anio viene vacio, se usa el
-// anio actual del sistema ANTES de interpolar.
-export const buildSystemPrompt = ({ universidad, carrera, lugar, numeroVariables, anio }) => {
+// Arma el system prompt final ESTATICO: instrucciones + SOLO la plantilla
+// que corresponde segun numero_variables ("2" = Plantilla A correlacional
+// con hipotesis; "1" = Plantilla B descriptiva, sin hipotesis). Solo existen
+// dos variantes posibles del system prompt, ambas 100% cacheables.
+export const buildSystemPrompt = (numeroVariables) => {
   const { systemPrompt, plantillaA, plantillaB } = loadTitulosPrompts();
-  const anioFinal = String(anio ?? "").trim() || String(currentYear());
-  const vars = {
-    universidad, carrera, lugar, numero_variables: numeroVariables, anio: anioFinal,
-  };
-
-  const interpolatedSystem = interpolate(systemPrompt, vars);
   const esCorrelacional = numeroVariables === "2";
   const plantilla = esCorrelacional ? plantillaA : plantillaB;
-  const interpolatedPlantilla = interpolate(plantilla, vars);
   const etiqueta = esCorrelacional
     ? "PLANTILLA A — estructura obligatoria de cada título:"
     : "PLANTILLA B — estructura obligatoria de cada título:";
 
-  return `${interpolatedSystem}\n\n${etiqueta}\n\n${interpolatedPlantilla}`;
+  return `${systemPrompt}\n\n${etiqueta}\n\n${plantilla}`;
 };

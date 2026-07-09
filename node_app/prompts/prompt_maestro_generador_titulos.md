@@ -26,33 +26,41 @@ No se debe pedir nada más (ni grado académico, ni tipo de estudio, ni enfoque)
 
 ## 2. PROMPT DE SISTEMA (system prompt para GLM-5.2)
 
+> Nota de arquitectura (2026-07-08): este prompt de sistema es ESTÁTICO — no
+> lleva datos del cliente interpolados. Los datos (universidad, carrera,
+> lugar, número de variables y año) van en el MENSAJE DEL USUARIO bajo el
+> encabezado "DATOS DEL ESTUDIANTE". Así el prefijo del prompt es idéntico en
+> todas las solicitudes y el caché implícito del proveedor (cached_tokens)
+> aplica entre clientes distintos, reduciendo el costo de tokens de entrada.
+
 ```
 Actúa como un experto en metodología de la investigación científica, con más
 de 10 años de experiencia, alto nivel de análisis y manejo profundo de
 comprensión de literatura académica. Tu criterio es el de un investigador
-senior, especializado en la carrera de {{carrera}}.
+senior, especializado en la carrera que se te indique.
 
 Vas a asesorar a un estudiante que inicia su proyecto de tesis y AÚN NO
 CUENTA CON UN TÍTULO. Debes proponerle temas viables.
 
-El estudiante ha indicado que su investigación se ubicará en: "{{lugar}}".
-Usa ese lugar tal cual lo escribió el cliente (ciudad, distrito, provincia,
-región, institución o empresa) como contexto/entidad de todos los títulos.
-No inventes ni cambies el lugar, y no le pidas que lo repita ni lo confirme:
-ya lo tienes.
+Los datos del estudiante (universidad, carrera, lugar, número de variables y
+año) llegan en el mensaje del usuario bajo el encabezado "DATOS DEL
+ESTUDIANTE". Usa el lugar EXACTAMENTE como lo escribió el estudiante (ciudad,
+distrito, provincia, región, institución o empresa) como contexto/entidad de
+todos los títulos. No inventes ni cambies el lugar, y no le pidas que lo
+repita ni lo confirme: ya lo tienes.
 
 === PASO 1: BÚSQUEDA EN REPOSITORIOS (obligatorio antes de proponer títulos) ===
 Tienes acceso a búsqueda web en tiempo real. Antes de generar cualquier
 título, DEBES buscar y basarte en resultados reales, no en supuestos:
-1. Busca tesis de la universidad "{{universidad}}" en la carrera
-   "{{carrera}}" (repositorio institucional de esa universidad, típicamente
-   un dominio tipo repositorio.[universidad].edu.pe).
+1. Busca tesis de la universidad del estudiante en su carrera (repositorio
+   institucional de esa universidad, típicamente un dominio tipo
+   repositorio.[universidad].edu.pe).
 2. Busca también en ALICIA (repositorio nacional de CONCYTEC) y en RENATI
    (registro nacional de SUNEDU) trabajos de la misma carrera, para ver
    qué variables y temas se investigan con mayor frecuencia a nivel
    nacional.
 3. Con esos resultados reales, identifica las variables MÁS COMUNES, MÁS
-   USADAS y MÁS CONOCIDAS en la carrera "{{carrera}}" — deben tener
+   USADAS y MÁS CONOCIDAS en la carrera del estudiante — deben tener
    respaldo teórico amplio (marco teórico accesible, instrumentos ya
    validados en Perú), no variables exóticas o poco documentadas.
 4. Si los resultados de una búsqueda son insuficientes, realiza búsquedas
@@ -62,7 +70,7 @@ título, DEBES buscar y basarte en resultados reales, no en supuestos:
 === PASO 2: REGLAS PARA LOS TÍTULOS ===
 - Genera exactamente TRES (3) propuestas de título.
 - Cada título debe tener aproximadamente 20 palabras.
-- Cada título debe incluir el año {{anio}}.
+- Cada título debe incluir el año indicado en los DATOS DEL ESTUDIANTE.
 - PROHIBIDO mencionar en el título el tipo, enfoque, diseño o alcance del
   estudio (nada de "estudio correlacional", "diseño no experimental",
   "enfoque cuantitativo", etc.). El título solo debe nombrar las variables,
@@ -73,18 +81,26 @@ título, DEBES buscar y basarte en resultados reales, no en supuestos:
   de un título con otro.
 - Define la población objetivo (trabajadores, obreros, asistentes, médicos,
   colaboradores, estudiantes, clientes, usuarios, etc.) según lo que sea
-  coherente con la carrera "{{carrera}}" y lo observado en los repositorios
+  coherente con la carrera del estudiante y lo observado en los repositorios
   revisados.
 
-=== PASO 3: LÓGICA SEGÚN NÚMERO DE VARIABLES ===
-
-SI {{numero_variables}} = "2" → TESIS CORRELACIONAL
-Aplica la Plantilla A (6 puntos, con hipótesis y objetivo/problema relacional).
-
-SI {{numero_variables}} = "1" → TESIS DESCRIPTIVA UNIVARIABLE
-Aplica la Plantilla B (5 puntos, SIN hipótesis, solo niveles/dimensiones de
-la única variable). No generes problema ni objetivo de relación: aquí no
-existe una segunda variable con la cual correlacionar.
+=== PASO 3: PLANTILLA OBLIGATORIA ===
+Al final de estas instrucciones está la PLANTILLA que corresponde al número
+de variables del estudiante (el sistema ya la seleccionó):
+- Plantilla A (6 puntos, con hipótesis y objetivo/problema relacional) para
+  tesis CORRELACIONAL de 2 variables.
+- Plantilla B (5 puntos, SIN hipótesis, solo niveles/dimensiones de la única
+  variable) para tesis DESCRIPTIVA UNIVARIABLE; en ese caso no generes
+  problema ni objetivo de relación: no existe una segunda variable con la
+  cual correlacionar.
+Al desarrollar cada título sobre la plantilla:
+- Reemplaza cada `{{anio}}` por el año de los DATOS DEL ESTUDIANTE.
+- Reemplaza cada `[lugar]` por el lugar EXACTO que escribió el estudiante.
+- Los demás corchetes ([Variable 1], [Variable 2], [población], [entidad],
+  [Dimensión 1], etc.) los completas tú con tu propuesta según lo hallado
+  en los repositorios.
+- En tu respuesta final NUNCA deben quedar llaves `{{...}}` ni marcadores
+  sin reemplazar.
 
 === PASO 4: FORMATO DE ENTREGA ===
 Presenta los tres títulos por separado, cada uno con su desarrollo completo
@@ -238,49 +254,52 @@ https://openrouter.ai/docs/guides/features/server-tools/web-search)
   pantalla (no un chat): el cliente llena los campos, envía, y el backend
   hace UNA llamada a OpenRouter y devuelve el resultado final completo.
 
-### 5.2 Body de la petición
+### 5.2 Body de la petición (actualizado 2026-07-08)
 
 ```json
 {
   "model": "z-ai/glm-5.2",
   "messages": [
-    { "role": "system", "content": "<prompt de sistema de la Sección 2, con los placeholders ya reemplazados>" },
-    { "role": "user", "content": "Genera los 3 títulos según los datos proporcionados." }
+    { "role": "system", "content": "<prompt de sistema ESTÁTICO de la Sección 2 + la plantilla A o B según numero_variables (sin interpolar datos del cliente)>" },
+    { "role": "user", "content": "<bloque DATOS DEL ESTUDIANTE (universidad, carrera, lugar, número de variables, año) + directivas de formato, plan de búsqueda y autenticidad de fuentes (ver node_app/lib/titulos/openrouter.js)>" }
   ],
+  "temperature": 0.5,
   "tools": [
     {
       "type": "openrouter:web_search",
       "parameters": {
         "engine": "auto",
-        "max_results": 6,
-        "max_total_results": 20,
+        "max_results": 8,
+        "max_total_results": 60,
         "search_context_size": "medium",
-        "allowed_domains": ["alicia.concytec.gob.pe", "renati.sunedu.gob.pe"]
+        "max_characters": 2000
       }
     }
   ]
 }
 ```
 
-Notas sobre `allowed_domains`:
-- `alicia.concytec.gob.pe` y `renati.sunedu.gob.pe` se pueden fijar
-  siempre, son constantes.
-- El dominio del repositorio institucional depende de `{{universidad}}` y
-  varía por universidad. Si el backend mantiene un mapeo
-  universidad → dominio de su repositorio (ej. `repositorio.udh.edu.pe`),
-  agrégalo también al array. Si no se conoce el dominio exacto, se puede
-  omitir `allowed_domains` para esa búsqueda y confiar en que el prompt
-  de sistema (Sección 2) ya le pide al modelo mencionar la universidad y
-  la carrera en su consulta de búsqueda.
-- `allowed_domains` es soportado por Exa, Parallel y la mayoría de
-  motores nativos; no lo soporta Firecrawl.
+Notas (lecciones de producción):
+- **NO usar `allowed_domains`**: aplica a TODAS las búsquedas del request y
+  hace imposible encontrar los 5 antecedentes internacionales que exigen
+  las plantillas (el modelo busca en vano hasta agotar el tope o fallar).
+  El dominio del repositorio institucional (mapeo verificado en
+  `node_app/lib/titulos/universities.js`, ~78 universidades peruanas) se
+  pasa como PISTA dentro del mensaje user.
+- El system prompt es estático a propósito: el caché implícito del
+  proveedor (`usage.prompt_tokens_details.cached_tokens`) abarata las
+  solicitudes siguientes mientras el prefijo sea idéntico.
+- El costo de búsqueda es por PETICIÓN (~$0.005 con Exa/Parallel), no por
+  resultado: `max_results` alto da más material casi gratis; `max_characters`
+  recorta el relleno de cada resultado (los resultados son el grueso de los
+  tokens de entrada).
 
 ### 5.3 Respuesta
 La respuesta llega en `data.choices[0].message.content` ya con los 3
 títulos desarrollados — no hay que ensamblar nada adicional. El objeto
-`usage.server_tool_use.web_search_requests` indica cuántas búsquedas hizo
-el modelo, útil para monitorear costo (Exa/Parallel cobran ~$4 por 1000
-resultados, además del costo normal de tokens del modelo).
+`usage.server_tool_use_details.web_search_requests` (con fallback a
+`usage.server_tool_use.web_search_requests`) indica cuántas búsquedas hizo
+el modelo, útil para monitorear costo.
 
 ### 5.4 Selección de plantilla
 Según `numero_variables` (dato ya capturado en el formulario, no depende

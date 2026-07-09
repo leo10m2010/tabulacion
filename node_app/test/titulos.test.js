@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import JSZip from "jszip";
-import { loadTitulosPrompts, interpolate, buildSystemPrompt } from "../lib/titulos/prompt.js";
-import { resolveRepositoryDomain, buildAllowedDomains } from "../lib/titulos/universities.js";
+import { loadTitulosPrompts, buildSystemPrompt } from "../lib/titulos/prompt.js";
+import { resolveRepositoryDomain } from "../lib/titulos/universities.js";
 import { normalizeTitulosInput, generateTitulos, cleanTitulosContent } from "../lib/titulos/index.js";
+import { stripToolCallMarkup, buildBaseUserContent } from "../lib/titulos/openrouter.js";
 import { buildTitulosDocx } from "../lib/titulos/docx.js";
 
 // ── Parsing del .md ─────────────────────────────────────────────────────────
@@ -33,54 +34,49 @@ test("el system prompt trae el paso de busqueda obligatoria en repositorios", ()
   assert.ok(systemPrompt.includes("PASO 1: BÚSQUEDA EN REPOSITORIOS"));
 });
 
-// ── interpolate ──────────────────────────────────────────────────────────────
-
-test("interpolate reemplaza todos los placeholders, incluso repetidos", () => {
-  const out = interpolate("{{a}} y {{b}}, otra vez {{a}}.", { a: "X", b: "Y" });
-  assert.equal(out, "X y Y, otra vez X.");
-});
-
-// ── buildSystemPrompt: seleccion de plantilla + interpolacion ───────────────
+// ── buildSystemPrompt: estatico (cacheable) + seleccion de plantilla ────────
 
 test("numero_variables=2 adjunta la Plantilla A (con HIPOTESIS) y NO la B", () => {
-  const prompt = buildSystemPrompt({
-    universidad: "Universidad de Huánuco",
-    carrera: "Enfermería",
-    lugar: "Huánuco",
-    numeroVariables: "2",
-    anio: "2026",
-  });
+  const prompt = buildSystemPrompt("2");
   assert.ok(prompt.includes("PLANTILLA A — estructura obligatoria"));
   assert.ok(prompt.includes("HIPÓTESIS"));
-  assert.ok(prompt.includes("Huánuco"));
-  assert.ok(prompt.includes("Enfermería"));
-  assert.ok(prompt.includes("2026"));
+  assert.ok(!prompt.includes("PLANTILLA B — estructura obligatoria"));
 });
 
 test("numero_variables=1 adjunta la Plantilla B (sin HIPOTESIS) y NO la A", () => {
-  const prompt = buildSystemPrompt({
-    universidad: "Universidad César Vallejo",
-    carrera: "Psicología",
-    lugar: "Trujillo",
-    numeroVariables: "1",
-    anio: "2026",
-  });
+  const prompt = buildSystemPrompt("1");
   assert.ok(prompt.includes("PLANTILLA B — estructura obligatoria"));
   assert.ok(!prompt.includes("HIPÓTESIS"));
-  assert.ok(prompt.includes("Trujillo"));
 });
 
-test("anio vacio usa el anio actual del sistema antes de interpolar", () => {
-  const prompt = buildSystemPrompt({
+test("el system prompt es estatico: sin datos de cliente, con placeholders literales", () => {
+  // Sin interpolacion: el prefijo es identico entre solicitudes (cache).
+  const prompt = buildSystemPrompt("2");
+  assert.ok(prompt.includes("{{anio}}"));
+  assert.ok(prompt.includes("DATOS DEL ESTUDIANTE"));
+  assert.ok(!prompt.includes("{{carrera}}"));
+  assert.ok(!prompt.includes("{{universidad}}"));
+  // Dos llamadas producen exactamente el mismo texto.
+  assert.equal(prompt, buildSystemPrompt("2"));
+});
+
+// ── buildBaseUserContent: datos del cliente en el mensaje user ──────────────
+
+test("el mensaje user lleva los DATOS DEL ESTUDIANTE y las directivas", () => {
+  const content = buildBaseUserContent("repositorio.udh.edu.pe", {
     universidad: "Universidad de Huánuco",
     carrera: "Enfermería",
     lugar: "Huánuco",
     numeroVariables: "2",
-    anio: "",
+    anio: "2026",
   });
-  const anioActual = String(new Date().getFullYear());
-  assert.ok(prompt.includes(anioActual));
-  assert.ok(!prompt.includes("{{anio}}"));
+  assert.ok(content.startsWith("DATOS DEL ESTUDIANTE:"));
+  assert.ok(content.includes("Enfermería"));
+  assert.ok(content.includes("Huánuco"));
+  assert.ok(content.includes("2026"));
+  assert.ok(content.includes("correlacional, Plantilla A"));
+  assert.ok(content.includes("repositorio.udh.edu.pe"));
+  assert.ok(content.includes("PLAN DE BÚSQUEDA"));
 });
 
 // ── Mapeo universidad -> dominio ────────────────────────────────────────────
@@ -91,19 +87,26 @@ test("resuelve dominio por nombre completo y por sigla, tolerando tildes/mayuscu
   assert.equal(resolveRepositoryDomain("universidad cesar vallejo"), "repositorio.ucv.edu.pe");
   assert.equal(resolveRepositoryDomain("UCV"), "repositorio.ucv.edu.pe");
   assert.equal(resolveRepositoryDomain("Universidad Nacional Mayor de San Marcos"), "cybertesis.unmsm.edu.pe");
+  assert.equal(resolveRepositoryDomain("Universidad Nacional de Trujillo"), "repositorio.unitru.edu.pe");
+  assert.equal(resolveRepositoryDomain("Universidad Señor de Sipán"), "repositorio.uss.edu.pe");
+  assert.equal(resolveRepositoryDomain("Pontificia Universidad Católica del Perú"), "tesis.pucp.edu.pe");
+});
+
+test("distingue universidades con nombres parecidos", () => {
+  // Piura: la nacional y la privada comparten "de piura".
+  assert.equal(resolveRepositoryDomain("Universidad Nacional de Piura"), "repositorio.unp.edu.pe");
+  assert.equal(resolveRepositoryDomain("Universidad de Piura"), "pirhua.udep.edu.pe");
+  // San Martin: la nacional (Tarapoto) y la de Porres (Lima).
+  assert.equal(resolveRepositoryDomain("Universidad de San Martín de Porres"), "repositorio.usmp.edu.pe");
+  assert.equal(resolveRepositoryDomain("Universidad Nacional de San Martín"), "repositorio.unsm.edu.pe");
+  // La sigla UNAP es del Altiplano (dueno de unap.edu.pe); Iquitos va por nombre.
+  assert.equal(resolveRepositoryDomain("UNAP"), "repositorio.unap.edu.pe");
+  assert.equal(resolveRepositoryDomain("Universidad Nacional de la Amazonía Peruana"), "repositorio.unapiquitos.edu.pe");
 });
 
 test("sin match conocido, resolveRepositoryDomain devuelve null", () => {
-  assert.equal(resolveRepositoryDomain("Universidad Nacional de Trujillo"), null);
+  assert.equal(resolveRepositoryDomain("Universidad de Springfield"), null);
   assert.equal(resolveRepositoryDomain(""), null);
-});
-
-test("buildAllowedDomains: con match agrega alicia+renati+dominio; sin match, null", () => {
-  assert.deepEqual(
-    buildAllowedDomains("Universidad de Huánuco"),
-    ["alicia.concytec.gob.pe", "renati.sunedu.gob.pe", "repositorio.udh.edu.pe"],
-  );
-  assert.equal(buildAllowedDomains("Universidad Nacional de Trujillo"), null);
 });
 
 // ── normalizeTitulosInput (validacion 400) ──────────────────────────────────
@@ -128,7 +131,7 @@ test("acepta numero_variables como numero (no solo string)", () => {
   assert.equal(out.numeroVariables, "1");
 });
 
-test("anio ausente/vacio se acepta y queda vacio (el default lo aplica buildSystemPrompt)", () => {
+test("anio ausente/vacio se acepta y queda vacio (el default lo aplica generateTitulos)", () => {
   const { anio, ...rest } = validInput();
   void anio;
   const out = normalizeTitulosInput(rest);
@@ -180,6 +183,37 @@ test("cleanTitulosContent sin marcador devuelve el contenido intacto", () => {
 
 test("cleanTitulosContent tolera TÍTULO 1 sin espacio y sin tilde", () => {
   assert.ok(cleanTitulosContent("ruido previo **TITULO1** resto").startsWith("**TITULO1**"));
+});
+
+// ── stripToolCallMarkup (tool_calls filtrados como texto, visto en produccion) ─
+
+// Caso real de produccion: la respuesta completa fueron solo llamadas de
+// busqueda escritas como texto plano, sin ningun titulo.
+const TOOL_CALL_LEAK_REAL = "<tool_call>openrouter_web_search"
+  + "<arg_key>query</arg_key>"
+  + '<arg_value>tesis "comunicación organizacional" "satisfacción laboral" Ecuador Colombia Bolivia 2022 2023 repositorio universitario</arg_value>'
+  + "</tool_call><tool_call>openrouter_web_search"
+  + "<arg_key>query</arg_key>"
+  + '<arg_value>tesis "redes sociales" "imagen institucional" universidad Ecuador Colombia Bolivia 2022 2023 repositorio</arg_value>'
+  + "</tool_call><tool_call>openrouter_web_search"
+  + "<arg_key>query</arg_key>"
+  + '<arg_value>tesis "periodismo digital" "pensamiento crítico" estudiantes Ecuador Colombia 2022 2023 repositorio universitario</arg_value>'
+  + "</tool_call>";
+
+test("stripToolCallMarkup elimina por completo el caso real de tool_calls filtrados", () => {
+  assert.equal(stripToolCallMarkup(TOOL_CALL_LEAK_REAL), "");
+});
+
+test("stripToolCallMarkup elimina un bloque sin cerrar al final y etiquetas sueltas", () => {
+  assert.equal(stripToolCallMarkup("texto util <tool_call>openrouter_web_search<arg_key>query</arg_key> cortado"), "texto util");
+  assert.equal(stripToolCallMarkup("hola <arg_value>x</arg_value> mundo"), "hola x mundo");
+});
+
+test("cleanTitulosContent quita tool_calls intercalados y conserva los titulos", () => {
+  const out = cleanTitulosContent(`**TÍTULO 1**\ncontenido${TOOL_CALL_LEAK_REAL}\nmas contenido`);
+  assert.ok(out.startsWith("**TÍTULO 1**"));
+  assert.ok(!out.includes("<tool_call>"));
+  assert.ok(out.includes("mas contenido"));
 });
 
 // ── buildTitulosDocx (zip .docx valido con el contenido esperado) ──────────
@@ -270,13 +304,18 @@ test("generateTitulos llama a OpenRouter una vez y devuelve el contenido", async
     assert.equal(calls[0].body.model, "z-ai/glm-5.2");
     assert.ok(Array.isArray(calls[0].body.tools));
     assert.equal(calls[0].body.tools[0].type, "openrouter:web_search");
-    assert.deepEqual(
-      calls[0].body.tools[0].parameters.allowed_domains,
-      ["alicia.concytec.gob.pe", "renati.sunedu.gob.pe", "repositorio.udh.edu.pe"],
-    );
+    // allowed_domains NUNCA se envia: aplica a todas las busquedas del
+    // request y bloquearia los antecedentes internacionales. El dominio del
+    // repositorio va como pista dentro del mensaje user.
+    assert.equal("allowed_domains" in calls[0].body.tools[0].parameters, false);
+    assert.ok(calls[0].body.messages[1].content.includes("repositorio.udh.edu.pe"));
     assert.ok(!("response_format" in calls[0].body));
     // El mensaje de usuario debe blindar contra narracion de la IA.
     assert.ok(calls[0].body.messages[1].content.includes("ÚNICAMENTE"));
+    // System estatico (cacheable): los datos del cliente van SOLO en el user.
+    assert.ok(!calls[0].body.messages[0].content.includes("Enfermería"));
+    assert.ok(calls[0].body.messages[1].content.includes("DATOS DEL ESTUDIANTE"));
+    assert.ok(calls[0].body.messages[1].content.includes("Enfermería"));
     assert.equal(result.contenido, "**TÍTULO 1**\n...");
     assert.equal(result.webSearchRequests, 3);
     assert.ok(Buffer.isBuffer(result.docxBuffer));
@@ -312,16 +351,19 @@ test("generateTitulos lee web_search_requests desde server_tool_use_details con 
   }
 });
 
-test("generateTitulos sin match de universidad omite allowed_domains", async () => {
+test("generateTitulos sin match de universidad no incluye pista de repositorio", async () => {
   const originalFetch = global.fetch;
   const calls = [];
   global.fetch = async (url, opts) => {
     calls.push({ url, body: JSON.parse(opts.body) });
-    return { ok: true, json: async () => ({ choices: [{ message: { content: "ok" } }], usage: null }) };
+    return { ok: true, json: async () => ({ choices: [{ message: { content: "**TÍTULO 1**\nok" } }], usage: null }) };
   };
   try {
-    await generateTitulos({ ...validInput(), universidad: "Universidad Nacional de Trujillo" }, { apiKey: "test-key" });
+    await generateTitulos({ ...validInput(), universidad: "Universidad de Springfield" }, { apiKey: "test-key" });
     assert.equal("allowed_domains" in calls[0].body.tools[0].parameters, false);
+    assert.ok(!calls[0].body.messages[1].content.includes("DATO VERIFICADO"));
+    // El plan de busqueda con la guia internacional va siempre.
+    assert.ok(calls[0].body.messages[1].content.includes("PLAN DE BÚSQUEDA"));
   } finally {
     global.fetch = originalFetch;
   }
@@ -336,6 +378,80 @@ test("generateTitulos reintenta UNA vez si el primer intento viene vacio, y lanz
   };
   try {
     await assert.rejects(() => generateTitulos(validInput(), { apiKey: "test-key" }));
+    assert.equal(attempts, 2);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateTitulos reintenta si la respuesta es solo tool_calls filtrados y usa la respuesta valida del segundo intento", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, opts) => {
+    calls.push(JSON.parse(opts.body));
+    const content = calls.length === 1 ? TOOL_CALL_LEAK_REAL : "**TÍTULO 1**\ncontenido valido";
+    return { ok: true, json: async () => ({ choices: [{ message: { content }, finish_reason: "stop" }], usage: null }) };
+  };
+  try {
+    const result = await generateTitulos(validInput(), { apiKey: "test-key" });
+    assert.equal(calls.length, 2);
+    // El segundo intento lleva el aviso correctivo como ultimo mensaje user,
+    // precedido por la respuesta invalida como assistant.
+    const mensajes = calls[1].messages;
+    assert.equal(mensajes[mensajes.length - 1].role, "user");
+    assert.ok(mensajes[mensajes.length - 1].content.includes("tool_call"));
+    assert.equal(mensajes[mensajes.length - 2].role, "assistant");
+    assert.equal(result.contenido, "**TÍTULO 1**\ncontenido valido");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateTitulos con anio vacio manda el anio actual en los DATOS DEL ESTUDIANTE", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, opts) => {
+    calls.push(JSON.parse(opts.body));
+    return { ok: true, json: async () => ({ choices: [{ message: { content: "**TÍTULO 1**\nok" } }], usage: null }) };
+  };
+  try {
+    const { anio, ...sinAnio } = validInput();
+    void anio;
+    await generateTitulos(sinAnio, { apiKey: "test-key" });
+    assert.ok(calls[0].messages[1].content.includes(`Año: ${new Date().getFullYear()}`));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateTitulos reintenta si la respuesta trae placeholders {{...}} sin reemplazar", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, opts) => {
+    calls.push(JSON.parse(opts.body));
+    const content = calls.length === 1
+      ? "**TÍTULO 1**\nAlgo en [lugar], {{anio}}" // placeholder fugado
+      : "**TÍTULO 1**\nAlgo en Huánuco, 2026";
+    return { ok: true, json: async () => ({ choices: [{ message: { content }, finish_reason: "stop" }], usage: null }) };
+  };
+  try {
+    const result = await generateTitulos(validInput(), { apiKey: "test-key" });
+    assert.equal(calls.length, 2);
+    assert.equal(result.contenido, "**TÍTULO 1**\nAlgo en Huánuco, 2026");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateTitulos lanza si ambos intentos son solo tool_calls filtrados (nunca entrega basura)", async () => {
+  const originalFetch = global.fetch;
+  let attempts = 0;
+  global.fetch = async () => {
+    attempts += 1;
+    return { ok: true, json: async () => ({ choices: [{ message: { content: TOOL_CALL_LEAK_REAL }, finish_reason: "stop" }], usage: null }) };
+  };
+  try {
+    await assert.rejects(() => generateTitulos(validInput(), { apiKey: "test-key" }), /no devolvio los titulos/);
     assert.equal(attempts, 2);
   } finally {
     global.fetch = originalFetch;

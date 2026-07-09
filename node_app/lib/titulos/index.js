@@ -2,22 +2,23 @@
 // formulario (universidad, carrera, lugar, numero_variables, anio opcional),
 // arma el system prompt interpolado con la plantilla que corresponda y hace
 // UNA llamada a OpenRouter (GLM-5.2 + openrouter:web_search).
-import { buildSystemPrompt } from "./prompt.js";
-import { buildAllowedDomains } from "./universities.js";
-import { requestTitulos, buildBaseUserContent } from "./openrouter.js";
+import { buildSystemPrompt, currentYear } from "./prompt.js";
+import { resolveRepositoryDomain } from "./universities.js";
+import {
+  requestTitulos, buildBaseUserContent, stripToolCallMarkup, TITULO_MARKER_RE,
+} from "./openrouter.js";
 import { buildTitulosDocx } from "./docx.js";
 import { extractReferenceUrls, verifyUrls } from "./verify.js";
 
-// Marcador tolerante de inicio del primer titulo (con o sin espacios, con o
-// sin tilde). GLM-5.2 a veces antepone narracion de sus busquedas ("Voy a
-// realizar las búsquedas...") antes de los titulos: se descarta todo lo
-// anterior al marcador. Si no aparece, se devuelve el contenido tal cual
-// (mejor entregar algo imperfecto que romper el job) pero se deja un aviso.
-const TITULO_1_MARKER_RE = /\*\*\s*T[IÍí]TULO\s*1/i;
-
+// Limpieza final del contenido: quita markup de tool_call filtrado como texto
+// (defensa en profundidad: requestTitulos ya lo hace, pero esta funcion
+// tambien se usa sobre contenido arbitrario) y descarta la narracion previa
+// al primer titulo ("Voy a realizar las búsquedas..."). Si el marcador no
+// aparece, se devuelve el texto tal cual (requestTitulos ya garantizo que
+// exista en el flujo normal) pero se deja un aviso.
 export const cleanTitulosContent = (content) => {
-  const text = String(content ?? "");
-  const match = text.match(TITULO_1_MARKER_RE);
+  const text = stripToolCallMarkup(content);
+  const match = text.match(TITULO_MARKER_RE);
   if (!match) {
     // eslint-disable-next-line no-console
     console.warn("[titulos] no se encontro el marcador **TÍTULO 1** en la respuesta de la IA; se entrega el contenido tal cual.");
@@ -98,12 +99,17 @@ const verifyContentSources = async (contenido) => {
 // (monitoreo de costo) y un resumen de la verificacion de fuentes.
 export const generateTitulos = async (payload, options = {}) => {
   const input = normalizeTitulosInput(payload);
-  const systemPrompt = buildSystemPrompt(input);
-  const allowedDomains = buildAllowedDomains(input.universidad);
+  // El anio se resuelve en codigo (no en el prompt): si el cliente no lo dio,
+  // se usa el anio actual del sistema. `datos` viaja en el mensaje user para
+  // que el system prompt quede estatico y cacheable.
+  const datos = { ...input, anio: input.anio || String(currentYear()) };
+  const systemPrompt = buildSystemPrompt(datos.numeroVariables);
+  const repositoryDomain = resolveRepositoryDomain(datos.universidad);
 
   const primerIntento = await requestTitulos({
     systemPrompt,
-    allowedDomains,
+    repositoryDomain,
+    datos,
     options,
   });
 
@@ -121,14 +127,15 @@ export const generateTitulos = async (payload, options = {}) => {
 
     const correctionMessages = [
       { role: "system", content: systemPrompt },
-      { role: "user", content: buildBaseUserContent() },
+      { role: "user", content: buildBaseUserContent(repositoryDomain, datos) },
       { role: "assistant", content },
       { role: "user", content: buildCorrectionUserContent(inventadas) },
     ];
 
     const reintento = await requestTitulos({
       systemPrompt,
-      allowedDomains,
+      repositoryDomain,
+      datos,
       options: { ...options, messages: correctionMessages },
     });
 
@@ -148,7 +155,9 @@ export const generateTitulos = async (payload, options = {}) => {
   // eslint-disable-next-line no-console
   console.log(`[titulos] verificacion de fuentes: ${reales.length} reales, ${noVerificables.length} no verificables`);
 
-  const docxBuffer = await buildTitulosDocx({ contenido, input });
+  // La portada del Word usa `datos` (con el anio ya resuelto) para no
+  // mostrar el campo vacio cuando el cliente no indico anio.
+  const docxBuffer = await buildTitulosDocx({ contenido, input: datos });
 
   return {
     contenido,
