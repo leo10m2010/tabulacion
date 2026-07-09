@@ -9,6 +9,7 @@ import {
 } from "./openrouter.js";
 import { buildTitulosDocx } from "./docx.js";
 import { extractReferenceUrls, verifyUrls } from "./verify.js";
+import { gatherSearchContext } from "./websearch.js";
 
 // Limpieza final del contenido: quita markup de tool_call filtrado como texto
 // (defensa en profundidad: requestTitulos ya lo hace, pero esta funcion
@@ -106,10 +107,23 @@ export const generateTitulos = async (payload, options = {}) => {
   const systemPrompt = buildSystemPrompt(datos.numeroVariables);
   const repositoryDomain = resolveRepositoryDomain(datos.universidad);
 
+  // Pre-busqueda del sistema (Brave/Firecrawl): resultados reales que se
+  // inyectan en el mensaje user para que el modelo casi no necesite buscar
+  // por su cuenta. Si falla o no hay claves, se sigue sin ella (el modelo
+  // conserva su herramienta de busqueda). Nunca debe tumbar el job.
+  let searchContext = null;
+  try {
+    searchContext = await gatherSearchContext(datos, repositoryDomain, options.websearch ?? {});
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(`[titulos] pre-busqueda fallo (se continua sin ella): ${err.message}`);
+  }
+
   const primerIntento = await requestTitulos({
     systemPrompt,
     repositoryDomain,
     datos,
+    searchContext,
     options,
   });
 
@@ -127,7 +141,7 @@ export const generateTitulos = async (payload, options = {}) => {
 
     const correctionMessages = [
       { role: "system", content: systemPrompt },
-      { role: "user", content: buildBaseUserContent(repositoryDomain, datos) },
+      { role: "user", content: buildBaseUserContent(repositoryDomain, datos, searchContext) },
       { role: "assistant", content },
       { role: "user", content: buildCorrectionUserContent(inventadas) },
     ];
@@ -136,6 +150,7 @@ export const generateTitulos = async (payload, options = {}) => {
       systemPrompt,
       repositoryDomain,
       datos,
+      searchContext,
       options: { ...options, messages: correctionMessages },
     });
 

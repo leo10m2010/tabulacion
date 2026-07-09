@@ -17,7 +17,7 @@ export const DEFAULT_MODEL = "z-ai/glm-5.2";
 // restringir a repositorios peruanos hace imposible encontrar los 5
 // antecedentes internacionales que exige la plantilla — el modelo busca en
 // vano una y otra vez hasta agotar el tope de resultados o glitchear.
-export const buildBaseUserContent = (repositoryDomain = null, datos = null) => {
+export const buildBaseUserContent = (repositoryDomain = null, datos = null, searchContext = null) => {
   // Los datos del cliente viven aqui (mensaje user), no en el system prompt:
   // el system queda estatico y cacheable entre solicitudes.
   const bloqueDatos = datos
@@ -34,7 +34,31 @@ export const buildBaseUserContent = (repositoryDomain = null, datos = null) => {
       + `https://${repositoryDomain} — prioriza ese dominio en tus búsquedas de tesis de esa universidad `
       + "(por ejemplo incluyendo el dominio o el nombre de la universidad en la consulta)."
     : "";
+  // Con pre-busqueda del sistema (Brave/Firecrawl), el modelo trabaja
+  // primero sobre resultados ya obtenidos y solo busca lo que falte (pocas
+  // busquedas => menos costo OpenRouter y menos riesgo de glitch). Sin
+  // pre-busqueda, aplica el plan de busqueda completo de siempre.
+  const bloqueResultados = searchContext
+    ? "RESULTADOS DE BÚSQUEDA DEL SISTEMA (obtenidos en tiempo real de motores de búsqueda; "
+      + "estas URLs son reales):\n\n" + searchContext + "\n\n"
+    : "";
+  const planBusqueda = searchContext
+    ? "PLAN DE BÚSQUEDA: usa PRIMERO los RESULTADOS DE BÚSQUEDA DEL SISTEMA de arriba como fuente "
+      + "principal para identificar las variables más investigadas y para citar los antecedentes. "
+      + "Solo si te falta información concreta (p. ej. no alcanzan los antecedentes internacionales) "
+      + "realiza búsquedas adicionales con la herramienta, MÁXIMO 4. Los antecedentes internacionales "
+      + "deben ser trabajos de instituciones extranjeras: una tesis de una universidad peruana NO "
+      + "cuenta como internacional aunque estudie otro país. Cuando tengas suficiente información, "
+      + "DEJA de buscar y redacta la respuesta completa."
+    : "PLAN DE BÚSQUEDA (máximo 10 búsquedas en total): usa ~3 búsquedas para tesis de la "
+      + "universidad y carrera del estudiante, ~3 para trabajos nacionales en ALICIA/RENATI u otros "
+      + "repositorios peruanos, y ~3 para los antecedentes internacionales en fuentes de OTROS países "
+      + "(SciELO, Redalyc, Dialnet o repositorios universitarios de Ecuador, Colombia, México, Chile, "
+      + "Argentina o España). Los antecedentes internacionales deben ser trabajos de instituciones "
+      + "extranjeras: una tesis de una universidad peruana NO cuenta como internacional aunque estudie "
+      + "otro país. Cuando tengas suficiente información, DEJA de buscar y redacta la respuesta completa.";
   return bloqueDatos
+  + bloqueResultados
   + "Genera los 3 títulos según los datos proporcionados. Tu respuesta debe "
   + "contener ÚNICAMENTE los tres títulos desarrollados según la plantilla, comenzando directamente "
   + "con **TÍTULO 1**. No narres tus búsquedas, no incluyas introducciones, resúmenes de "
@@ -42,13 +66,7 @@ export const buildBaseUserContent = (repositoryDomain = null, datos = null) => {
   + "<arg_key> o <arg_value> ni ninguna sintaxis de llamadas a herramientas dentro del texto de tu "
   + "respuesta: ejecuta las búsquedas con la herramienta de forma nativa y entrega solo el resultado final."
   + pistaRepositorio
-  + "\n\nPLAN DE BÚSQUEDA (máximo 10 búsquedas en total): usa ~3 búsquedas para tesis de la "
-  + "universidad y carrera del estudiante, ~3 para trabajos nacionales en ALICIA/RENATI u otros "
-  + "repositorios peruanos, y ~3 para los antecedentes internacionales en fuentes de OTROS países "
-  + "(SciELO, Redalyc, Dialnet o repositorios universitarios de Ecuador, Colombia, México, Chile, "
-  + "Argentina o España). Los antecedentes internacionales deben ser trabajos de instituciones "
-  + "extranjeras: una tesis de una universidad peruana NO cuenta como internacional aunque estudie "
-  + "otro país. Cuando tengas suficiente información, DEJA de buscar y redacta la respuesta completa.\n\n"
+  + "\n\n" + planBusqueda + "\n\n"
   + "IMPORTANTE - AUTENTICIDAD DE FUENTES: los antecedentes de cada título deben provenir "
   + "EXCLUSIVAMENTE de los resultados reales de la búsqueda web que realices; cita la URL "
   + "exactamente tal como aparece en el resultado de búsqueda, sin modificarla. Está PROHIBIDO "
@@ -129,7 +147,7 @@ const callOpenRouter = async ({
 // van en el mensaje user para mantener el system prompt estatico/cacheable.
 // Si el contenido viene vacio o invalido se reintenta UNA vez.
 export const requestTitulos = async ({
-  systemPrompt, repositoryDomain = null, datos = null, options = {},
+  systemPrompt, repositoryDomain = null, datos = null, searchContext = null, options = {},
 }) => {
   const apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -172,7 +190,7 @@ export const requestTitulos = async ({
     ? options.messages
     : [
       { role: "system", content: systemPrompt },
-      { role: "user", content: buildBaseUserContent(repositoryDomain, datos) },
+      { role: "user", content: buildBaseUserContent(repositoryDomain, datos, searchContext) },
     ];
   const tools = [{ type: "openrouter:web_search", parameters: searchParameters }];
 

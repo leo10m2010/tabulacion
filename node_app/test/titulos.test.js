@@ -5,6 +5,7 @@ import { loadTitulosPrompts, buildSystemPrompt } from "../lib/titulos/prompt.js"
 import { resolveRepositoryDomain } from "../lib/titulos/universities.js";
 import { normalizeTitulosInput, generateTitulos, cleanTitulosContent } from "../lib/titulos/index.js";
 import { stripToolCallMarkup, buildBaseUserContent } from "../lib/titulos/openrouter.js";
+import { searchWithFallback, buildQueries, gatherSearchContext } from "../lib/titulos/websearch.js";
 import { buildTitulosDocx } from "../lib/titulos/docx.js";
 
 // ── Parsing del .md ─────────────────────────────────────────────────────────
@@ -214,6 +215,108 @@ test("cleanTitulosContent quita tool_calls intercalados y conserva los titulos",
   assert.ok(out.startsWith("**TÍTULO 1**"));
   assert.ok(!out.includes("<tool_call>"));
   assert.ok(out.includes("mas contenido"));
+});
+
+// ── websearch: pre-busqueda Brave/Firecrawl (fetch inyectado, nunca red real) ─
+
+const braveOk = (results) => ({
+  status: 200,
+  json: async () => ({ web: { results } }),
+});
+
+test("searchWithFallback usa Brave y cachea el resultado", async () => {
+  let fetches = 0;
+  const fetchImpl = async (url) => {
+    fetches += 1;
+    assert.ok(String(url).includes("api.search.brave.com"));
+    return braveOk([{ title: "Tesis X", url: "https://repo.pe/x", description: "desc" }]);
+  };
+  const opts = { braveApiKey: "brave-key", firecrawlApiKey: null, fetchImpl };
+  const r1 = await searchWithFallback("consulta unica brave cache", opts);
+  const r2 = await searchWithFallback("consulta unica brave cache", opts);
+  assert.equal(fetches, 1); // la segunda sale del cache
+  assert.deepEqual(r1, r2);
+  assert.equal(r1[0].url, "https://repo.pe/x");
+});
+
+test("searchWithFallback cae a Firecrawl si Brave falla, y devuelve [] si ambos fallan", async () => {
+  const fetchImpl = async (url) => {
+    if (String(url).includes("brave")) return { status: 429, json: async () => ({}) };
+    return {
+      status: 200,
+      json: async () => ({ data: [{ title: "T", url: "https://fc.pe/t", description: "" }] }),
+    };
+  };
+  const conFallback = await searchWithFallback("consulta fallback firecrawl", {
+    braveApiKey: "b", firecrawlApiKey: "f", fetchImpl,
+  });
+  assert.equal(conFallback[0].url, "https://fc.pe/t");
+
+  const todoFalla = await searchWithFallback("consulta todo falla", {
+    braveApiKey: "b",
+    firecrawlApiKey: "f",
+    fetchImpl: async () => ({ status: 500, json: async () => ({}) }),
+  });
+  assert.deepEqual(todoFalla, []);
+});
+
+test("buildQueries usa site: del repositorio si hay dominio, y cubre alicia/renati/internacional", () => {
+  const datos = { universidad: "UDH", carrera: "Enfermería", lugar: "Huánuco" };
+  const conDominio = buildQueries(datos, "repositorio.udh.edu.pe");
+  assert.ok(conDominio[0].includes("site:repositorio.udh.edu.pe"));
+  assert.ok(conDominio.some((q) => q.includes("alicia.concytec.gob.pe")));
+  assert.ok(conDominio.some((q) => q.includes("renati.sunedu.gob.pe")));
+  assert.ok(conDominio.some((q) => q.includes("Ecuador")));
+  const sinDominio = buildQueries(datos, null);
+  assert.ok(sinDominio[0].includes("UDH"));
+});
+
+test("gatherSearchContext sin claves devuelve null; con resultados arma el bloque", async () => {
+  assert.equal(await gatherSearchContext(
+    { universidad: "U", carrera: "C", lugar: "L" },
+    null,
+    { braveApiKey: null, firecrawlApiKey: null },
+  ), null);
+
+  const bloque = await gatherSearchContext(
+    { universidad: "U Test", carrera: "Carrera Test", lugar: "Lugar Test" },
+    "repositorio.test.edu.pe",
+    {
+      braveApiKey: "brave-key",
+      firecrawlApiKey: null,
+      delayMs: 0,
+      fetchImpl: async () => braveOk([{ title: "Tesis A", url: "https://repo.pe/a", description: "d" }]),
+    },
+  );
+  assert.ok(bloque.includes("### Búsqueda:"));
+  assert.ok(bloque.includes("https://repo.pe/a"));
+});
+
+test("generateTitulos con pre-busqueda inyecta los resultados y acota las busquedas del modelo", async () => {
+  const originalFetch = global.fetch;
+  const openRouterCalls = [];
+  global.fetch = async (url, opts) => {
+    openRouterCalls.push(JSON.parse(opts.body));
+    return { ok: true, json: async () => ({ choices: [{ message: { content: "**TÍTULO 1**\nok" } }], usage: null }) };
+  };
+  try {
+    await generateTitulos({ ...validInput(), carrera: "Obstetricia" }, {
+      apiKey: "test-key",
+      websearch: {
+        braveApiKey: "brave-key",
+        firecrawlApiKey: null,
+        delayMs: 0,
+        fetchImpl: async () => braveOk([{ title: "Tesis B", url: "https://repo.pe/b", description: "d" }]),
+      },
+    });
+    const userMsg = openRouterCalls[0].messages[1].content;
+    assert.ok(userMsg.includes("RESULTADOS DE BÚSQUEDA DEL SISTEMA"));
+    assert.ok(userMsg.includes("https://repo.pe/b"));
+    assert.ok(userMsg.includes("MÁXIMO 4"));
+    assert.ok(!userMsg.includes("máximo 10 búsquedas"));
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 // ── buildTitulosDocx (zip .docx valido con el contenido esperado) ──────────
