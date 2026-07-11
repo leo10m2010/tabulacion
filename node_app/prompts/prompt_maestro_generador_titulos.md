@@ -395,8 +395,11 @@ generación corre en DOS etapas en vez de una sola llamada con herramienta:
    búsquedas Brave específicas (nacional + internacional + repositorio de
    la universidad) — URLs reales por construcción (~20 seg).
 3. **Etapa 2 — desarrollo** (prompt de la Sección 2 + plantilla,
-   razonamiento low, SIN herramienta): el modelo desarrolla los 3 títulos
-   citando solo los resultados disponibles (~3-4 min).
+   razonamiento APAGADO `reasoning.enabled=false`, SIN herramienta): el
+   modelo desarrolla los 3 títulos citando solo los resultados disponibles
+   (~2-4 min). OJO: para GLM el thinking es binario; con effort "low" el
+   modelo quemó 20.7k de 24k tokens pensando y devolvió vacío
+   (finish_reason=length, producción 2026-07-11) — por eso se apaga.
 Ventajas: sin herramienta no existe el glitch `<tool_call>`, no hay rondas
 de búsqueda del modelo (que ignoraba el "máximo 4" y sumaba minutos), y el
 costo baja ~3x. Si la Etapa 1 falla (JSON inválido tras reintento) o no hay

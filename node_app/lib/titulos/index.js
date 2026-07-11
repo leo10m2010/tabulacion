@@ -198,20 +198,42 @@ export const generateTitulos = async (payload, options = {}) => {
       seleccion = null;
     }
   }
-  // Etapa 2 sin herramienta y con razonamiento bajo (la tarea ya es
-  // mecanica: rellenar la plantilla con variables y material dados).
+  // Etapa 2 sin herramienta y con razonamiento APAGADO ("none" =>
+  // reasoning.enabled=false): la tarea ya es mecanica (rellenar la plantilla
+  // con variables y material dados) y para GLM el thinking es binario —
+  // con effort "low" el modelo quemo todo el presupuesto de tokens pensando
+  // y devolvio contenido vacio (finish_reason=length, visto en produccion).
   const developOptions = seleccion
-    ? { ...options, includeSearchTool: false, reasoningEffort: "low" }
+    ? { ...options, includeSearchTool: false, reasoningEffort: "none" }
     : options;
 
-  const primerIntento = await requestTitulos({
-    systemPrompt,
-    repositoryDomain,
-    datos,
-    searchContext: fullSearchContext,
-    seleccion,
-    options: developOptions,
-  });
+  // Si la etapa de desarrollo (sin herramienta) falla por cualquier motivo,
+  // el job NO muere: se cae al flujo clasico (una llamada CON herramienta,
+  // razonamiento medium), conservando las busquedas dirigidas como material
+  // extra. Preferimos un job lento a un job fallido.
+  let primerIntento;
+  try {
+    primerIntento = await requestTitulos({
+      systemPrompt,
+      repositoryDomain,
+      datos,
+      searchContext: fullSearchContext,
+      seleccion,
+      options: developOptions,
+    });
+  } catch (err) {
+    if (!seleccion) throw err;
+    // eslint-disable-next-line no-console
+    console.warn(`[titulos] etapa de desarrollo fallo (${err.message}); se reintenta con el flujo clasico.`);
+    seleccion = null;
+    primerIntento = await requestTitulos({
+      systemPrompt,
+      repositoryDomain,
+      datos,
+      searchContext: fullSearchContext,
+      options,
+    });
+  }
 
   let content = primerIntento.content;
   let webSearchRequests = primerIntento.webSearchRequests;

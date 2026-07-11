@@ -141,10 +141,15 @@ const callOpenRouter = async ({
         temperature: 0.5,
         // Esfuerzo de razonamiento por etapa: "medium" cuando hay analisis
         // (elegir variables con respaldo teorico, flujo clasico con
-        // busquedas); "low" cuando la tarea es mecanica (desarrollar la
-        // plantilla con variables y resultados ya dados) — 7-11k tokens de
-        // razonamiento eran varios minutos de espera.
-        reasoning: { effort: reasoningEffort },
+        // busquedas); "none" cuando la tarea es mecanica (desarrollar la
+        // plantilla con variables y resultados ya dados). OJO (fallo real
+        // 2026-07-11): para GLM el thinking es binario — effort "low" NO lo
+        // acota y el modelo quemo 20.7k de 24k tokens "pensando" hasta
+        // finish_reason=length con contenido vacio. Por eso "none" se mapea
+        // a reasoning.enabled=false (thinking apagado), no a un effort.
+        reasoning: reasoningEffort === "none"
+          ? { enabled: false }
+          : { effort: reasoningEffort },
       }),
     });
     const payload = await res.json().catch(() => null);

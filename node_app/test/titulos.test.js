@@ -344,11 +344,12 @@ test("generateTitulos con pre-busqueda corre en dos etapas: seleccion + desarrol
     assert.equal(seleccionBody.tools, undefined);
     assert.equal(seleccionBody.reasoning.effort, "medium");
     assert.ok(seleccionBody.messages[1].content.includes("https://repo.pe/b"));
-    // Etapa 2 (desarrollo): sin herramienta, razonamiento low, con las
-    // variables ya elegidas y las busquedas dirigidas.
+    // Etapa 2 (desarrollo): sin herramienta, razonamiento APAGADO (para GLM
+    // el thinking es binario; un effort bajo no lo acota), con las variables
+    // ya elegidas y las busquedas dirigidas.
     const devBody = openRouterCalls[1];
     assert.equal(devBody.tools, undefined);
-    assert.equal(devBody.reasoning.effort, "low");
+    assert.deepEqual(devBody.reasoning, { enabled: false });
     const userMsg = devBody.messages[1].content;
     assert.ok(userMsg.includes("RESULTADOS DE BÚSQUEDA DEL SISTEMA"));
     assert.ok(userMsg.includes("VARIABLES YA ELEGIDAS"));
@@ -391,6 +392,47 @@ test("si la seleccion de variables falla dos veces, se cae al flujo clasico con 
     assert.equal(devBody.reasoning.effort, "medium");
     assert.ok(!devBody.messages[1].content.includes("VARIABLES YA ELEGIDAS"));
     assert.ok(devBody.messages[1].content.includes("MÁXIMO 4"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("si la etapa de desarrollo falla dos veces, el job cae al flujo clasico con herramienta", async () => {
+  const originalFetch = global.fetch;
+  const openRouterCalls = [];
+  global.fetch = async (url, opts) => {
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      const body = JSON.parse(opts.body);
+      openRouterCalls.push(body);
+      let content;
+      if (esLlamadaSeleccion(body)) {
+        content = seleccionJson("quim");
+      } else if (body.tools === undefined) {
+        // Desarrollo sin herramienta: vacio en ambos intentos (simula el
+        // finish_reason=length por razonamiento desbocado).
+        content = "";
+      } else {
+        // Flujo clasico con herramienta: responde bien.
+        content = "**TÍTULO 1**\nok clasico";
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { content }, finish_reason: "length" } ] , usage: null }) };
+    }
+    return { status: 200, text: async () => "<title>Tesis</title>" };
+  };
+  try {
+    const result = await generateTitulos({ ...validInput(), carrera: "Química" }, {
+      apiKey: "test-key",
+      websearch: {
+        braveApiKey: "brave-key",
+        firecrawlApiKey: null,
+        delayMs: 0,
+        fetchImpl: async () => braveOk([{ title: "Tesis Q", url: "https://repo.pe/quim", description: "d" }]),
+      },
+    });
+    // 1 seleccion + 2 intentos de desarrollo fallidos + 1 llamada clasica.
+    assert.equal(openRouterCalls.length, 4);
+    assert.ok(Array.isArray(openRouterCalls[3].tools) && openRouterCalls[3].tools.length === 1);
+    assert.equal(result.contenido, "**TÍTULO 1**\nok clasico");
   } finally {
     global.fetch = originalFetch;
   }
