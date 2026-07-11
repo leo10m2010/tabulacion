@@ -96,6 +96,13 @@ de variables del estudiante (el sistema ya la seleccionó):
 Al desarrollar cada título sobre la plantilla:
 - Reemplaza cada `{{anio}}` por el año de los DATOS DEL ESTUDIANTE.
 - Reemplaza cada `[lugar]` por el lugar EXACTO que escribió el estudiante.
+- NUNCA dupliques el lugar: si [entidad] y [lugar] nombran lo mismo o uno
+  contiene al otro (p. ej. entidad "Municipalidad Provincial de Huánuco" y
+  lugar "municipalidad de huanuco"), escríbelo UNA sola vez — conserva el
+  lugar exacto del estudiante y omite la mención repetida de la entidad.
+  Está PROHIBIDO producir títulos como "... de la Municipalidad Provincial
+  de Huánuco, municipalidad de huanuco, 2026". Aplica esta regla también en
+  objetivos, problemas e hipótesis.
 - Los demás corchetes ([Variable 1], [Variable 2], [población], [entidad],
   [Dimensión 1], etc.) los completas tú con tu propuesta según lo hallado
   en los repositorios.
@@ -439,6 +446,12 @@ Reglas de elección:
 - Define la población (trabajadores, estudiantes, pacientes, usuarios,
   clientes, etc.) y la entidad/contexto coherentes con la carrera y con el
   lugar indicado en los DATOS DEL ESTUDIANTE.
+- El lugar del estudiante puede ser una ciudad/región O directamente una
+  institución/empresa. Si el lugar YA nombra la entidad (p. ej.
+  "municipalidad de huanuco", "Hospital Regional X"), NO inventes una
+  entidad distinta ni una versión reformulada de la misma: coloca en
+  "entidad" exactamente el lugar del estudiante, para que no se duplique
+  en el título.
 - Si el número de variables es 2, elige parejas cuya relación sea plausible
   y frecuente en la literatura de la carrera.
 

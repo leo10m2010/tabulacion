@@ -47,7 +47,8 @@ export const buildBaseUserContent = (repositoryDomain = null, datos = null, sear
   // los 3 titulos definidos, sin herramienta de busqueda.
   const bloqueSeleccion = seleccion
     ? "VARIABLES YA ELEGIDAS (desarrolla EXACTAMENTE estos 3 títulos; no cambies variables, "
-      + "población ni entidad):\n"
+      + "población ni entidad; si la entidad y el lugar nombran lo mismo, escríbelo UNA sola "
+      + "vez en el título — nunca lo dupliques):\n"
       + seleccion.map((t, i) => `- TÍTULO ${i + 1}: Variable 1: ${t.variable1}`
         + (t.variable2 ? `; Variable 2: ${t.variable2}` : "")
         + `; Población: ${t.poblacion}; Entidad: ${t.entidad}`).join("\n")

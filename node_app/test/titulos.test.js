@@ -488,6 +488,20 @@ test("buildTargetedQueries arma consultas nacionales, internacionales y del repo
   assert.equal(sinDominio.length, 4);
 });
 
+test("ambos prompts traen la regla anti-duplicacion de lugar/entidad", () => {
+  // Caso real 2026-07-11: titulo con "... Municipalidad Provincial de
+  // Huánuco, municipalidad de huanuco, 2026" — la seleccion invento una
+  // entidad que ya era el lugar y la plantilla pego el lugar textual.
+  const desarrollo = buildSystemPrompt("2");
+  assert.ok(desarrollo.includes("NUNCA dupliques el lugar"));
+  const seleccionPrompt = buildSeleccionSystemPrompt();
+  assert.ok(seleccionPrompt.includes("NO inventes una"));
+  const userMsg = buildBaseUserContent(null, null, "resultados", [
+    { variable1: "V1", variable2: "V2", poblacion: "p", entidad: "e" },
+  ]);
+  assert.ok(userMsg.includes("UNA sola"));
+});
+
 test("buildSeleccionSystemPrompt es estatico y pide ELEGIR con salida JSON", () => {
   const prompt = buildSeleccionSystemPrompt();
   assert.ok(prompt.includes("ELEGIR"));
