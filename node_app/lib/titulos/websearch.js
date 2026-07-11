@@ -10,7 +10,7 @@
 // La herramienta openrouter:web_search se mantiene como complemento acotado
 // (el prompt le permite pocas busquedas adicionales si le falta algo).
 
-import { normalizeUrlForMatch, findBannedSourceUrls } from "./verify.js";
+import { normalizeUrlForMatch, findBannedSourceUrls, findNonDocumentUrls } from "./verify.js";
 
 const BRAVE_URL = "https://api.search.brave.com/res/v1/web/search";
 const FIRECRAWL_URL = "https://api.firecrawl.dev/v1/search";
@@ -105,11 +105,14 @@ export const searchWithFallback = async (query, options = {}) => {
   if (cached) return cached;
 
   // Los resultados de fuentes no académicas prohibidas (Scribd, Studocu,
-  // etc.) se descartan aqui: la pre-busqueda jamas debe ofrecerle al modelo
-  // una URL que las reglas de referencias le prohiben citar.
+  // etc.) y las URLs que no son documentos (listados /browse, paginas de
+  // busqueda, portadas) se descartan aqui: la pre-busqueda jamas debe
+  // ofrecerle al modelo una URL que las reglas de referencias le prohiben
+  // citar o que no conduce a un trabajo concreto.
   const dropBanned = (results) => {
-    const banned = new Set(findBannedSourceUrls(results.map((r) => r.url)));
-    return results.filter((r) => !banned.has(r.url));
+    const urls = results.map((r) => r.url);
+    const excluded = new Set([...findBannedSourceUrls(urls), ...findNonDocumentUrls(urls)]);
+    return results.filter((r) => !excluded.has(r.url));
   };
 
   if (braveKey) {

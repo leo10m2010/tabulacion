@@ -93,12 +93,44 @@ export const findBannedSourceUrls = (urls) => urls.filter((url) => {
 });
 
 // Normalizacion para comparar URLs entre fuentes (respuesta de la IA vs
-// resultados de busqueda): minusculas, https, sin slash final.
-export const normalizeUrlForMatch = (url) => String(url ?? "")
-  .trim()
-  .toLowerCase()
-  .replace(/^http:\/\//, "https://")
-  .replace(/\/+$/, "");
+// resultados de busqueda): minusculas, https, sin slash final, sin
+// percent-encoding (el modelo a veces re-encodea tildes al copiar la URL).
+export const normalizeUrlForMatch = (url) => {
+  let text = String(url ?? "").trim();
+  try {
+    text = decodeURI(text);
+  } catch {
+    // URI malformada: se compara tal cual.
+  }
+  return text
+    .toLowerCase()
+    .replace(/^http:\/\//, "https://")
+    .replace(/\/+$/, "");
+};
+
+// URLs que aunque existan NO conducen a un documento citable: listados,
+// paginas de busqueda del repositorio, portadas. Citarlas viola la regla
+// APA de que el enlace lleve directamente al trabajo (caso real 2026-07-11:
+// la IA cito ".../handle/123456789/36/browse?...offset=723" — una pagina de
+// paginacion de DSpace). Se filtran del contexto que ve el modelo y, si aun
+// asi las cita, fuerzan el reintento correctivo.
+const NON_DOCUMENT_PATH_RE = new RegExp(
+  "(/browse([/?]|$)|/discover([/?]|$)|/simple-search|/community-list|/recent-submissions"
+  + "|/search([/?]|$)|[?&]query=|/cgi/search|/statistics([/?]|$)|/login([/?]|$))",
+  "i",
+);
+
+export const findNonDocumentUrls = (urls) => urls.filter((url) => {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  // Portada del sitio (path vacio o "/"): no es un documento.
+  if (parsed.pathname === "/" || parsed.pathname === "") return true;
+  return NON_DOCUMENT_PATH_RE.test(parsed.pathname + parsed.search);
+});
 
 // Hace un GET con timeout y sin seguir redirecciones (para distinguir 3xx
 // explicitamente). Devuelve { status, res } o { error } si hubo timeout o
@@ -121,31 +153,90 @@ const fetchWithTimeout = async (url, { timeoutMs, fetchImpl }) => {
   }
 };
 
+// Paginas que responden 200 pero cuyo contenido dice que el recurso no
+// existe (soft-404, tipico de DSpace y proxies de handle). Frases
+// especificas a proposito: un marcador generico como "404" solo daria
+// falsos positivos.
+const SOFT_404_MARKERS = [
+  "página no encontrada",
+  "pagina no encontrada",
+  "page not found",
+  "item not found",
+  "handle not found",
+  "recurso no encontrado",
+  "no se encontró el recurso",
+  "no se encontro el recurso",
+  "el recurso solicitado no existe",
+  "404 not found",
+  "error 404",
+];
+
+const MAX_REDIRECTS = 3;
+
 // Clasifica una URL:
-// - "real": 3xx (el recurso redirige, existe) o 2xx sin señales anti-bot.
-// - "sospechosa": 2xx pero el cuerpo es un muro anti-bot (no prueba nada).
-// - "inventada": 404/410 (el servidor confirma que no existe).
+// - "real": 2xx (directo o tras seguir redirecciones) sin señales anti-bot
+//   ni soft-404, o un PDF.
+// - "sospechosa": 2xx con muro anti-bot, redireccion a la portada/login del
+//   sitio (tipico de DSpace con handles invalidos), o demasiadas
+//   redirecciones. Se resuelve por procedencia o contraste Brave.
+// - "inventada": 404/410 (directo o al final de la cadena de redirecciones)
+//   o cuerpo soft-404 ("página no encontrada" con 200).
 // - "noVerificable": 403/429/5xx, timeout o error de red.
 // Se usa GET directo (no HEAD): para los 2xx hay que inspeccionar el cuerpo.
+// Las redirecciones se siguen manualmente (hasta MAX_REDIRECTS) porque un
+// 3xx NO prueba que el recurso exista: hdl.handle.net y varios DSpace
+// redirigen tambien handles rotos (a la portada o a una pagina de error).
 const classifyUrl = async (url, { timeoutMs, fetchImpl }) => {
-  const outcome = await fetchWithTimeout(url, { timeoutMs, fetchImpl });
-  if (outcome.error) return "noVerificable";
-  const { status, res } = outcome;
-  if (status >= 300 && status < 400) return "real";
-  if (status === 404 || status === 410) return "inventada";
-  if (status >= 200 && status < 300) {
-    let body = "";
-    try {
-      body = String(await res.text()).slice(0, 30000).toLowerCase();
-    } catch {
-      // Sin cuerpo legible no hay señales anti-bot que evaluar: se mantiene
-      // el criterio clasico (2xx = real).
+  let currentUrl = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const outcome = await fetchWithTimeout(currentUrl, { timeoutMs, fetchImpl });
+    if (outcome.error) return "noVerificable";
+    const { status, res } = outcome;
+
+    if (status >= 300 && status < 400) {
+      const location = res?.headers?.get?.("location");
+      if (!location) {
+        // Redireccion sin destino legible (o mock sin headers): se mantiene
+        // el criterio clasico (el recurso respondio, se considera real).
+        return "real";
+      }
+      let nextUrl;
+      try {
+        nextUrl = new URL(location, currentUrl);
+      } catch {
+        return "sospechosa";
+      }
+      // Aterrizar en la portada o el login del sitio es el patron clasico
+      // de "handle invalido" en DSpace: no prueba que el documento exista.
+      if (nextUrl.pathname === "/" || nextUrl.pathname === "" || /\/login([/?]|$)/i.test(nextUrl.pathname)) {
+        return "sospechosa";
+      }
+      currentUrl = nextUrl.toString();
+      continue;
+    }
+    if (status === 404 || status === 410) return "inventada";
+    if (status >= 200 && status < 300) {
+      const contentType = String(res?.headers?.get?.("content-type") ?? "").toLowerCase();
+      // El PDF ES el documento: no hay señales anti-bot ni soft-404 que
+      // buscar en un binario.
+      if (contentType.includes("application/pdf")) return "real";
+      let body = "";
+      try {
+        body = String(await res.text()).slice(0, 30000).toLowerCase();
+      } catch {
+        // Sin cuerpo legible no hay señales que evaluar: se mantiene el
+        // criterio clasico (2xx = real).
+        return "real";
+      }
+      if (BOT_CHALLENGE_MARKERS.some((marker) => body.includes(marker))) return "sospechosa";
+      if (SOFT_404_MARKERS.some((marker) => body.includes(marker))) return "inventada";
       return "real";
     }
-    if (BOT_CHALLENGE_MARKERS.some((marker) => body.includes(marker))) return "sospechosa";
-    return "real";
+    return "noVerificable";
   }
-  return "noVerificable";
+  // Cadena de redirecciones demasiado larga: no prueba nada.
+  return "sospechosa";
 };
 
 // Ejecuta `worker` sobre `items` con un limite de concurrencia dado.

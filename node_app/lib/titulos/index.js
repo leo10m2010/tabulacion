@@ -11,6 +11,7 @@ import {
 import { buildTitulosDocx } from "./docx.js";
 import {
   extractReferenceUrls, verifyUrls, normalizeUrlForMatch, findBannedSourceUrls,
+  findNonDocumentUrls,
 } from "./verify.js";
 import { gatherSearchContext, gatherTargetedSearchContext, braveUrlCheck } from "./websearch.js";
 
@@ -76,17 +77,23 @@ export const normalizeTitulosInput = (payload) => {
 // completo (system + user original + assistant con la respuesta anterior)
 // para que la IA reemplace SOLO las URLs que la verificacion detecto como
 // inventadas (404/410), sin tocar el resto del contenido.
-const buildCorrectionUserContent = (urlsInventadas, urlsProhibidas = []) => {
+const buildCorrectionUserContent = (urlsInventadas, urlsProhibidas = [], urlsListado = []) => {
   const problemas = [];
   if (urlsInventadas.length > 0) {
-    problemas.push("Verifique las URLs de tus antecedentes y las siguientes NO EXISTEN (el servidor "
-      + `respondio 404/410 al consultarlas): ${urlsInventadas.join(", ")}.`);
+    problemas.push("Verifique las URLs de tus antecedentes y las siguientes NO EXISTEN o NO aparecen "
+      + "en los resultados de búsqueda disponibles (URLs inventadas o mal copiadas): "
+      + `${urlsInventadas.join(", ")}.`);
   }
   if (urlsProhibidas.length > 0) {
     problemas.push("Las siguientes URLs provienen de fuentes NO académicas prohibidas por las reglas de "
       + `referencias (Scribd, Studocu, Course Hero, Monografias, blogs y similares): ${urlsProhibidas.join(", ")}. `
       + "Solo se aceptan fuentes primarias y oficiales: repositorios institucionales, ALICIA, RENATI, "
       + "SciELO, Redalyc, Dialnet o revistas con DOI.");
+  }
+  if (urlsListado.length > 0) {
+    problemas.push("Las siguientes URLs no conducen a un documento concreto sino a un listado, página "
+      + `de búsqueda o portada del repositorio: ${urlsListado.join(", ")}. El enlace de cada referencia `
+      + "debe llevar DIRECTAMENTE a la ficha o PDF del trabajo citado (handle, DOI o URI del ítem).");
   }
   return `${problemas.join(" ")} `
   + "Debes reemplazar ÚNICAMENTE esos antecedentes por otros REALES de fuentes oficiales: realiza nuevas "
@@ -104,15 +111,33 @@ const buildCorrectionUserContent = (urlsInventadas, urlsProhibidas = []) => {
 // 2. Contraste en Brave: si el indice del buscador conoce la URL exacta es
 //    real; si no aparece, se trata como inventada (el reintento correctivo
 //    la reemplaza). Sin clave o con Brave caido queda como no verificable.
-const verifyContentSources = async (contenido, { provenance, websearchOptions }) => {
+const verifyContentSources = async (contenido, { provenance, websearchOptions, requireProvenance = false }) => {
   const urls = extractReferenceUrls(contenido);
   // Fuentes no académicas (Scribd, Studocu, etc.): prohibidas por las reglas
-  // APA 7 del prompt aunque la URL exista. Se excluyen de la verificacion
-  // HTTP (no aporta nada) y disparan el mismo reintento correctivo.
+  // APA 7 del prompt aunque la URL exista. Las URLs de listado/portada no
+  // conducen al documento citado. Ambas se excluyen de la verificacion HTTP
+  // (no aporta nada) y disparan el mismo reintento correctivo.
   const prohibidas = findBannedSourceUrls(urls);
-  const prohibidasSet = new Set(prohibidas);
-  const urlsVerificables = urls.filter((url) => !prohibidasSet.has(url));
+  const listados = findNonDocumentUrls(urls.filter((url) => !prohibidas.includes(url)));
+  const excluidas = new Set([...prohibidas, ...listados]);
+  let urlsVerificables = urls.filter((url) => !excluidas.has(url));
+
+  // Flujo en dos etapas: la llamada de desarrollo NO tiene herramienta de
+  // busqueda, asi que TODA URL citada debe existir literalmente en los
+  // resultados que el sistema le entrego (procedencia). Una URL fuera de esa
+  // lista es alucinada por definicion — aunque responda 200 podria apuntar a
+  // otro trabajo distinto del citado. Se marca inventada sin gastar HTTP.
+  const fueraDeResultados = [];
+  if (requireProvenance) {
+    urlsVerificables = urlsVerificables.filter((url) => {
+      if (provenance.has(normalizeUrlForMatch(url))) return true;
+      fueraDeResultados.push(url);
+      return false;
+    });
+  }
+
   const { reales, inventadas, noVerificables, sospechosas } = await verifyUrls(urlsVerificables);
+  inventadas.push(...fueraDeResultados);
 
   for (const url of sospechosas) {
     if (provenance.has(normalizeUrlForMatch(url))) {
@@ -133,7 +158,7 @@ const verifyContentSources = async (contenido, { provenance, websearchOptions })
     );
   }
 
-  return { reales, inventadas, noVerificables, prohibidas };
+  return { reales, inventadas, noVerificables, prohibidas, listados };
 };
 
 // Genera los 3 titulos: valida, arma el system prompt final y llama a la IA.
@@ -242,29 +267,38 @@ export const generateTitulos = async (payload, options = {}) => {
   // las busquedas dirigidas (reales por construccion) — resuelven las
   // "sospechosas" sin gastar cuota.
   const provenance = new Set(extractReferenceUrls(fullSearchContext ?? "").map(normalizeUrlForMatch));
-  const verifyOpts = { provenance, websearchOptions: options.websearch ?? {} };
+  // En el flujo de dos etapas la llamada de desarrollo no tuvo herramienta:
+  // toda URL citada DEBE venir de los resultados entregados (procedencia
+  // estricta). En el flujo clasico el modelo busca por su cuenta y sus URLs
+  // legitimas no estan en la procedencia, asi que no se puede exigir.
   let {
-    reales, inventadas, noVerificables, prohibidas,
-  } = await verifyContentSources(contenido, verifyOpts);
+    reales, inventadas, noVerificables, prohibidas, listados,
+  } = await verifyContentSources(contenido, {
+    provenance,
+    websearchOptions: options.websearch ?? {},
+    requireProvenance: Boolean(seleccion),
+  });
 
-  if (inventadas.length > 0 || prohibidas.length > 0) {
+  if (inventadas.length > 0 || prohibidas.length > 0 || listados.length > 0) {
     // eslint-disable-next-line no-console
     console.warn(
-      `[titulos] verificacion de fuentes detecto ${inventadas.length} URL(s) inventada(s) y `
-      + `${prohibidas.length} de fuentes prohibidas; reintentando con correccion: `
-      + `${[...inventadas, ...prohibidas].join(", ")}`,
+      `[titulos] verificacion de fuentes detecto ${inventadas.length} URL(s) inventada(s)/fuera de `
+      + `resultados, ${prohibidas.length} de fuentes prohibidas y ${listados.length} de listados; `
+      + `reintentando con correccion: ${[...inventadas, ...prohibidas, ...listados].join(", ")}`,
     );
 
     const correctionMessages = [
       { role: "system", content: systemPrompt },
       { role: "user", content: buildBaseUserContent(repositoryDomain, datos, fullSearchContext, seleccion) },
       { role: "assistant", content },
-      { role: "user", content: buildCorrectionUserContent(inventadas, prohibidas) },
+      { role: "user", content: buildCorrectionUserContent(inventadas, prohibidas, listados) },
     ];
 
     // El reintento correctivo SIEMPRE lleva la herramienta de busqueda
     // (necesita encontrar reemplazos reales), incluso en el flujo en dos
-    // etapas donde la llamada de desarrollo fue sin herramienta.
+    // etapas donde la llamada de desarrollo fue sin herramienta. Por eso su
+    // verificacion NO exige procedencia: sus busquedas nuevas traen URLs
+    // legitimas que el sistema no conoce (la verificacion HTTP las cubre).
     const reintento = await requestTitulos({
       systemPrompt,
       repositoryDomain,
@@ -278,13 +312,17 @@ export const generateTitulos = async (payload, options = {}) => {
     webSearchRequests = reintento.webSearchRequests ?? webSearchRequests;
     contenido = cleanTitulosContent(content);
     ({
-      reales, inventadas, noVerificables, prohibidas,
-    } = await verifyContentSources(contenido, verifyOpts));
+      reales, inventadas, noVerificables, prohibidas, listados,
+    } = await verifyContentSources(contenido, {
+      provenance,
+      websearchOptions: options.websearch ?? {},
+      requireProvenance: false,
+    }));
 
-    if (inventadas.length > 0 || prohibidas.length > 0) {
+    if (inventadas.length > 0 || prohibidas.length > 0 || listados.length > 0) {
       throw new Error(
-        "Tras el reintento correctivo aun se detectaron URLs de antecedentes inventadas o de "
-        + `fuentes no académicas prohibidas: ${[...inventadas, ...prohibidas].join(", ")}`,
+        "Tras el reintento correctivo aun se detectaron URLs de antecedentes inventadas, de fuentes "
+        + `no académicas o de listados: ${[...inventadas, ...prohibidas, ...listados].join(", ")}`,
       );
     }
   }

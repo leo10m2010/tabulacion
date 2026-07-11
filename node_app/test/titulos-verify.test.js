@@ -5,7 +5,9 @@ import assert from "node:assert/strict";
 // (Brave/Firecrawl) solo se activa cuando un test la inyecta por options.
 process.env.BRAVE_API_KEY = "";
 process.env.FIRECRAWL_API_KEY = "";
-import { extractReferenceUrls, verifyUrls, findBannedSourceUrls } from "../lib/titulos/verify.js";
+import {
+  extractReferenceUrls, verifyUrls, findBannedSourceUrls, findNonDocumentUrls,
+} from "../lib/titulos/verify.js";
 import { generateTitulos } from "../lib/titulos/index.js";
 
 const validInput = () => ({
@@ -72,11 +74,35 @@ test("findBannedSourceUrls ignora URLs no parseables", () => {
   assert.deepEqual(findBannedSourceUrls(["no-es-una-url"]), []);
 });
 
+// ── findNonDocumentUrls ──────────────────────────────────────────────────────
+
+test("findNonDocumentUrls detecta listados, busquedas, portadas y login; respeta handles e items", () => {
+  const urls = [
+    "https://repositorio.udh.edu.pe/handle/123456789/36/browse?order=ASC&offset=723",
+    "https://repositorio.x.edu.pe/discover?query=tesis",
+    "https://alicia.concytec.gob.pe/vufind/Search/Results?lookfor=control",
+    "https://repositorio.x.edu.pe/",
+    "https://repositorio.x.edu.pe/login",
+    "https://repositorio.udh.edu.pe/handle/123456789/3866",
+    "https://hdl.handle.net/20.500.12692/84306",
+    "https://doi.org/10.1000/xyz123",
+    "https://repositorio.x.edu.pe/bitstream/1/2/tesis.pdf",
+  ];
+  assert.deepEqual(findNonDocumentUrls(urls), [
+    "https://repositorio.udh.edu.pe/handle/123456789/36/browse?order=ASC&offset=723",
+    "https://repositorio.x.edu.pe/discover?query=tesis",
+    "https://alicia.concytec.gob.pe/vufind/Search/Results?lookfor=control",
+    "https://repositorio.x.edu.pe/",
+    "https://repositorio.x.edu.pe/login",
+  ]);
+});
+
 // ── verifyUrls ───────────────────────────────────────────────────────────────
 
-// Mock de fetch por URL: cada entrada define status, cuerpo (para 2xx) o
-// error. verifyUrls usa GET directo (necesita el cuerpo para detectar muros
-// anti-bot que devuelven 200 a todo).
+// Mock de fetch por URL: cada entrada define status, cuerpo (para 2xx),
+// location (para 3xx), contentType o error. verifyUrls usa GET directo
+// (necesita el cuerpo para detectar muros anti-bot y soft-404) y sigue
+// redirecciones manualmente.
 const buildFetchMock = (byUrl) => async (url, opts) => {
   const behavior = byUrl[url];
   if (!behavior) throw new Error(`URL no mockeada: ${url}`);
@@ -89,6 +115,13 @@ const buildFetchMock = (byUrl) => async (url, opts) => {
   }
   return {
     status: behavior.status,
+    headers: {
+      get: (name) => {
+        if (name === "location") return behavior.location ?? null;
+        if (name === "content-type") return behavior.contentType ?? "text/html";
+        return null;
+      },
+    },
     text: async () => behavior.body ?? "<html><title>Tesis</title></html>",
   };
 };
@@ -110,9 +143,54 @@ test("verifyUrls clasifica 200 con muro anti-bot como sospechosa (caso RENATI)",
   assert.deepEqual(result.reales, []);
 });
 
-test("verifyUrls clasifica 302 (redirect manual) como real sin seguir la redireccion", async () => {
+test("verifyUrls: 302 sin header Location se mantiene real (criterio clasico)", async () => {
   const url = "https://hdl.handle.net/20.500.12692/redirige";
-  const fetchImpl = buildFetchMock({ [url]: { status: 302 } });
+  const fetchImpl = buildFetchMock({ [url]: { status: 302, location: null } });
+  const result = await verifyUrls([url], { fetchImpl, timeoutMs: 100 });
+  assert.deepEqual(result.reales, [url]);
+});
+
+test("verifyUrls sigue la redireccion: destino 200 real, destino 404 inventada", async () => {
+  const urlOk = "https://hdl.handle.net/20.500.12692/valido";
+  const destinoOk = "https://repositorio.ucv.edu.pe/handle/20.500.12692/valido";
+  const urlRoto = "https://hdl.handle.net/20.500.12692/roto";
+  const destinoRoto = "https://repositorio.ucv.edu.pe/handle/20.500.12692/roto";
+  const fetchImpl = buildFetchMock({
+    [urlOk]: { status: 302, location: destinoOk },
+    [destinoOk]: { status: 200 },
+    [urlRoto]: { status: 302, location: destinoRoto },
+    [destinoRoto]: { status: 404 },
+  });
+  const result = await verifyUrls([urlOk, urlRoto], { fetchImpl, timeoutMs: 100 });
+  assert.deepEqual(result.reales, [urlOk]);
+  assert.deepEqual(result.inventadas, [urlRoto]);
+});
+
+test("verifyUrls: redireccion a la portada o al login es sospechosa (handle invalido tipico de DSpace)", async () => {
+  const aPortada = "https://repositorio.x.edu.pe/handle/1/malo";
+  const aLogin = "https://repositorio.x.edu.pe/handle/1/privado";
+  const fetchImpl = buildFetchMock({
+    [aPortada]: { status: 302, location: "https://repositorio.x.edu.pe/" },
+    [aLogin]: { status: 302, location: "https://repositorio.x.edu.pe/login?from=1" },
+  });
+  const result = await verifyUrls([aPortada, aLogin], { fetchImpl, timeoutMs: 100 });
+  assert.deepEqual(new Set(result.sospechosas), new Set([aPortada, aLogin]));
+});
+
+test("verifyUrls clasifica soft-404 (200 con 'página no encontrada') como inventada", async () => {
+  const url = "https://repositorio.x.edu.pe/handle/1/fantasma";
+  const fetchImpl = buildFetchMock({
+    [url]: { status: 200, body: "<html><h1>Página no encontrada</h1></html>" },
+  });
+  const result = await verifyUrls([url], { fetchImpl, timeoutMs: 100 });
+  assert.deepEqual(result.inventadas, [url]);
+});
+
+test("verifyUrls clasifica un PDF (content-type application/pdf) como real sin leer el cuerpo", async () => {
+  const url = "https://repositorio.x.edu.pe/bitstream/1/2/tesis.pdf";
+  const fetchImpl = buildFetchMock({
+    [url]: { status: 200, contentType: "application/pdf", body: "%PDF-1.7 binario..." },
+  });
   const result = await verifyUrls([url], { fetchImpl, timeoutMs: 100 });
   assert.deepEqual(result.reales, [url]);
 });
@@ -298,10 +376,18 @@ test("URL tras muro anti-bot que vino de la pre-busqueda se acepta por procedenc
         braveApiKey: "brave-key",
         firecrawlApiKey: null,
         delayMs: 0,
-        // La pre-busqueda devuelve exactamente la URL de RENATI: procedencia.
+        // La pre-busqueda devuelve las DOS URLs citadas (procedencia): con
+        // el flujo de dos etapas toda cita debe venir de estos resultados.
         fetchImpl: async () => ({
           status: 200,
-          json: async () => ({ web: { results: [{ title: "Tesis RENATI", url: URL_RENATI, description: "d" }] } }),
+          json: async () => ({
+            web: {
+              results: [
+                { title: "Tesis RENATI", url: URL_RENATI, description: "d" },
+                { title: "Tesis real", url: REFERENCIA_REAL_1, description: "d" },
+              ],
+            },
+          }),
         }),
       },
     });
@@ -419,6 +505,88 @@ test("generateTitulos con fuente prohibida persistente tras el reintento lanza E
       },
     );
     assert.equal(openRouterCalls, 2);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("flujo dos etapas: URL fuera de los resultados del sistema se rechaza aunque responda 200", async () => {
+  const originalFetch = global.fetch;
+  const URL_PROV = "https://repositorio.prov.edu.pe/handle/1/111";
+  const URL_ALUCINADA = "https://repositorio.real.edu.pe/handle/2/222"; // existe, pero nadie se la dio
+  const URL_NUEVA = "https://repositorio.nueva.edu.pe/handle/3/333"; // hallada por el correctivo
+  const contenidoInicial = CONTENIDO_CON_REFERENCIAS(URL_PROV, URL_ALUCINADA);
+  const contenidoCorregido = CONTENIDO_CON_REFERENCIAS(URL_PROV, URL_NUEVA);
+  let openRouterCalls = 0;
+  let devCalls = 0;
+  let mensajeCorreccion = null;
+  global.fetch = async (url, opts) => {
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      openRouterCalls += 1;
+      const body = JSON.parse(opts.body);
+      if (esLlamadaSeleccion(body)) {
+        return { ok: true, json: async () => openRouterOk(seleccionJson("prov")) };
+      }
+      devCalls += 1;
+      if (devCalls === 2) {
+        mensajeCorreccion = body.messages[body.messages.length - 1].content;
+      }
+      return { ok: true, json: async () => openRouterOk(devCalls === 1 ? contenidoInicial : contenidoCorregido) };
+    }
+    // TODAS las URLs responden 200 con cuerpo normal: la alucinada solo debe
+    // caer por no estar en la procedencia, no por HTTP.
+    return { status: 200, headers: { get: () => null }, text: async () => "<title>Tesis</title>" };
+  };
+  try {
+    const result = await generateTitulos({ ...validInput(), carrera: "Sociología" }, {
+      apiKey: "test-key",
+      websearch: {
+        braveApiKey: "brave-key",
+        firecrawlApiKey: null,
+        delayMs: 0,
+        // El sistema solo entrego URL_PROV en sus resultados.
+        fetchImpl: async () => ({
+          status: 200,
+          json: async () => ({ web: { results: [{ title: "Tesis prov", url: URL_PROV, description: "d" }] } }),
+        }),
+      },
+    });
+    // seleccion + desarrollo + correctivo.
+    assert.equal(openRouterCalls, 3);
+    assert.ok(mensajeCorreccion.includes(URL_ALUCINADA));
+    assert.ok(mensajeCorreccion.includes("NO aparecen") || mensajeCorreccion.includes("NO EXISTEN"));
+    // El correctivo (con herramienta) puede citar URLs nuevas: no se exige
+    // procedencia en su verificacion y el job cierra bien.
+    assert.equal(result.contenido, contenidoCorregido.trim());
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("URL de listado (browse) citada dispara el correctivo con el mensaje de documento directo", async () => {
+  const originalFetch = global.fetch;
+  const URL_BROWSE = "https://repositorio.udh.edu.pe/handle/123456789/36/browse?offset=723";
+  const contenidoInicial = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, URL_BROWSE);
+  const contenidoCorregido = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, REFERENCIA_REAL_2);
+  let openRouterCalls = 0;
+  let mensajeCorreccion = null;
+  global.fetch = async (url, opts) => {
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      openRouterCalls += 1;
+      const body = JSON.parse(opts.body);
+      if (openRouterCalls === 2) {
+        mensajeCorreccion = body.messages[body.messages.length - 1].content;
+      }
+      return { ok: true, json: async () => openRouterOk(openRouterCalls === 1 ? contenidoInicial : contenidoCorregido) };
+    }
+    return { status: 200, headers: { get: () => null }, text: async () => "<title>Tesis</title>" };
+  };
+  try {
+    const result = await generateTitulos(validInput(), { apiKey: "test-key" });
+    assert.equal(openRouterCalls, 2);
+    assert.ok(mensajeCorreccion.includes(URL_BROWSE));
+    assert.ok(mensajeCorreccion.includes("listado"));
+    assert.equal(result.contenido, contenidoCorregido.trim());
   } finally {
     global.fetch = originalFetch;
   }
