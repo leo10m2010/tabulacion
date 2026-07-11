@@ -72,7 +72,11 @@ export const buildBaseUserContent = (repositoryDomain = null, datos = null, sear
   + "exactamente tal como aparece en el resultado de búsqueda, sin modificarla. Está PROHIBIDO "
   + "inventar o \"recordar\" autores, años, títulos de tesis o URLs que no hayan aparecido "
   + "efectivamente en los resultados de tus búsquedas. Si no encuentras suficientes antecedentes "
-  + "reales, realiza más búsquedas adicionales en vez de completar con datos supuestos.";
+  + "reales, realiza más búsquedas adicionales en vez de completar con datos supuestos. "
+  + "Cita únicamente fuentes académicas oficiales (repositorios institucionales, ALICIA, RENATI, "
+  + "SciELO, Redalyc, Dialnet o revistas con DOI) y redacta cada referencia en APA 7 según las "
+  + "reglas del PASO 4; NUNCA cites Scribd, Studocu, Course Hero, Monografias.com, Buenastareas, "
+  + "Academia.edu, ResearchGate, SlideShare, blogs ni páginas comerciales.";
 };
 
 // GLM-5.2 a veces "filtra" sus llamadas a herramientas como texto plano en el

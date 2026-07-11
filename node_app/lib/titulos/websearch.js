@@ -10,7 +10,7 @@
 // La herramienta openrouter:web_search se mantiene como complemento acotado
 // (el prompt le permite pocas busquedas adicionales si le falta algo).
 
-import { normalizeUrlForMatch } from "./verify.js";
+import { normalizeUrlForMatch, findBannedSourceUrls } from "./verify.js";
 
 const BRAVE_URL = "https://api.search.brave.com/res/v1/web/search";
 const FIRECRAWL_URL = "https://api.firecrawl.dev/v1/search";
@@ -104,9 +104,19 @@ export const searchWithFallback = async (query, options = {}) => {
   const cached = cacheGet(query);
   if (cached) return cached;
 
+  // Los resultados de fuentes no académicas prohibidas (Scribd, Studocu,
+  // etc.) se descartan aqui: la pre-busqueda jamas debe ofrecerle al modelo
+  // una URL que las reglas de referencias le prohiben citar.
+  const dropBanned = (results) => {
+    const banned = new Set(findBannedSourceUrls(results.map((r) => r.url)));
+    return results.filter((r) => !banned.has(r.url));
+  };
+
   if (braveKey) {
     try {
-      const results = await braveSearch(query, { apiKey: braveKey, count, timeoutMs, fetchImpl });
+      const results = dropBanned(
+        await braveSearch(query, { apiKey: braveKey, count, timeoutMs, fetchImpl }),
+      );
       if (results.length > 0) {
         cacheSet(query, results);
         return results;
@@ -120,9 +130,9 @@ export const searchWithFallback = async (query, options = {}) => {
   if (firecrawlKey) {
     try {
       // Menos resultados en el fallback: los creditos de Firecrawl son unicos.
-      const results = await firecrawlSearch(query, {
+      const results = dropBanned(await firecrawlSearch(query, {
         apiKey: firecrawlKey, count: Math.min(count, 5), timeoutMs, fetchImpl,
-      });
+      }));
       if (results.length > 0) {
         cacheSet(query, results);
         return results;

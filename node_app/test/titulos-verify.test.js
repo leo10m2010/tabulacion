@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 // (Brave/Firecrawl) solo se activa cuando un test la inyecta por options.
 process.env.BRAVE_API_KEY = "";
 process.env.FIRECRAWL_API_KEY = "";
-import { extractReferenceUrls, verifyUrls } from "../lib/titulos/verify.js";
+import { extractReferenceUrls, verifyUrls, findBannedSourceUrls } from "../lib/titulos/verify.js";
 import { generateTitulos } from "../lib/titulos/index.js";
 
 const validInput = () => ({
@@ -46,6 +46,30 @@ test("extractReferenceUrls sin URLs devuelve array vacio", () => {
   assert.deepEqual(extractReferenceUrls("sin referencias aqui"), []);
   assert.deepEqual(extractReferenceUrls(""), []);
   assert.deepEqual(extractReferenceUrls(undefined), []);
+});
+
+// ── findBannedSourceUrls ─────────────────────────────────────────────────────
+
+test("findBannedSourceUrls detecta dominios prohibidos y sus subdominios", () => {
+  const urls = [
+    "https://es.scribd.com/document/123/tesis",
+    "https://www.studocu.com/pe/document/456",
+    "https://repositorio.udh.edu.pe/handle/123/456",
+    "https://hdl.handle.net/20.500.12692/84306",
+  ];
+  assert.deepEqual(findBannedSourceUrls(urls), [
+    "https://es.scribd.com/document/123/tesis",
+    "https://www.studocu.com/pe/document/456",
+  ]);
+});
+
+test("findBannedSourceUrls no marca dominios que solo contienen el nombre prohibido", () => {
+  // "notscribd.com" no es scribd.com ni subdominio suyo.
+  assert.deepEqual(findBannedSourceUrls(["https://notscribd.com/doc/1"]), []);
+});
+
+test("findBannedSourceUrls ignora URLs no parseables", () => {
+  assert.deepEqual(findBannedSourceUrls(["no-es-una-url"]), []);
 });
 
 // ── verifyUrls ───────────────────────────────────────────────────────────────
@@ -308,6 +332,71 @@ test("URL tras muro anti-bot que Brave no conoce se trata como inventada y dispa
     });
     assert.equal(openRouterCalls, 2);
     assert.equal(result.contenido, contenidoCorregido.trim());
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateTitulos con URL de fuente prohibida (Scribd) hace reintento correctivo aunque responda 200", async () => {
+  const originalFetch = global.fetch;
+  const URL_SCRIBD = "https://es.scribd.com/document/123/tesis-copiada";
+  const contenidoInicial = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, URL_SCRIBD);
+  const contenidoCorregido = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, REFERENCIA_REAL_2);
+
+  let openRouterCalls = 0;
+  const bodies = [];
+  global.fetch = async (url, opts) => {
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      openRouterCalls += 1;
+      bodies.push(JSON.parse(opts.body));
+      const content = openRouterCalls === 1 ? contenidoInicial : contenidoCorregido;
+      return { ok: true, json: async () => openRouterOk(content) };
+    }
+    // Scribd responde 200 (la URL existe), pero igual esta prohibida. Nunca
+    // deberia consultarse por HTTP: se excluye antes de verifyUrls.
+    const statuses = {
+      [REFERENCIA_REAL_1]: 200,
+      [URL_SCRIBD]: 200,
+      [REFERENCIA_REAL_2]: 200,
+    };
+    return { status: statuses[url] };
+  };
+  try {
+    const result = await generateTitulos(validInput(), { apiKey: "test-key" });
+    assert.equal(openRouterCalls, 2);
+    const mensajeCorreccion = bodies[1].messages[3];
+    assert.equal(mensajeCorreccion.role, "user");
+    assert.ok(mensajeCorreccion.content.includes(URL_SCRIBD));
+    assert.ok(mensajeCorreccion.content.includes("prohibidas"));
+    assert.equal(result.contenido, contenidoCorregido.trim());
+    assert.deepEqual(result.fuentes, { reales: 2, noVerificables: 0 });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateTitulos con fuente prohibida persistente tras el reintento lanza Error", async () => {
+  const originalFetch = global.fetch;
+  const URL_STUDOCU = "https://www.studocu.com/pe/document/456/apuntes";
+  const contenido = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, URL_STUDOCU);
+  let openRouterCalls = 0;
+  global.fetch = async (url) => {
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      openRouterCalls += 1;
+      return { ok: true, json: async () => openRouterOk(contenido) };
+    }
+    return { status: 200, text: async () => "<title>Doc</title>" };
+  };
+  try {
+    await assert.rejects(
+      () => generateTitulos(validInput(), { apiKey: "test-key" }),
+      (err) => {
+        assert.ok(err instanceof Error);
+        assert.ok(err.message.includes(URL_STUDOCU));
+        return true;
+      },
+    );
+    assert.equal(openRouterCalls, 2);
   } finally {
     global.fetch = originalFetch;
   }

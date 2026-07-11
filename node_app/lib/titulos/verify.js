@@ -59,6 +59,39 @@ const BOT_CHALLENGE_MARKERS = [
   "enable javascript and cookies",
 ];
 
+// Dominios de fuentes NO académicas que las reglas APA 7 del generador
+// prohíben citar como antecedente (solo se aceptan fuentes primarias y
+// oficiales: repositorios institucionales, ALICIA, RENATI, SciELO, Redalyc,
+// Dialnet, revistas con DOI). Si la IA cita una de estas, el reintento
+// correctivo la reemplaza aunque la URL exista y responda 200.
+export const BANNED_SOURCE_DOMAINS = [
+  "scribd.com",
+  "studocu.com",
+  "coursehero.com",
+  "monografias.com",
+  "buenastareas.com",
+  "academia.edu",
+  "researchgate.net",
+  "slideshare.net",
+  "issuu.com",
+  "prezi.com",
+  "brainly.lat",
+  "clubensayos.com",
+];
+
+// Devuelve las URLs cuyo host pertenece (o es subdominio) a un dominio
+// prohibido. Las URLs no parseables no se marcan aqui: la verificacion HTTP
+// ya se encarga de ellas.
+export const findBannedSourceUrls = (urls) => urls.filter((url) => {
+  let host = "";
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return BANNED_SOURCE_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+});
+
 // Normalizacion para comparar URLs entre fuentes (respuesta de la IA vs
 // resultados de busqueda): minusculas, https, sin slash final.
 export const normalizeUrlForMatch = (url) => String(url ?? "")

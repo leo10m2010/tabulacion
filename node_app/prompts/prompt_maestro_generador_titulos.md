@@ -102,7 +102,68 @@ Al desarrollar cada título sobre la plantilla:
 - En tu respuesta final NUNCA deben quedar llaves `{{...}}` ni marcadores
   sin reemplazar.
 
-=== PASO 4: FORMATO DE ENTREGA ===
+=== PASO 4: REGLAS PARA LAS REFERENCIAS Y ANTECEDENTES (APA 7) ===
+Cada antecedente que cites en el punto de REFERENCIAS Y ANTECEDENTES debe
+cumplir TODAS estas reglas:
+
+FUENTES PERMITIDAS (solo fuentes primarias y oficiales):
+- Repositorios institucionales universitarios (el enlace debe conducir
+  directamente a la ficha o PDF del trabajo citado, no a una búsqueda
+  general ni a otro documento).
+- ALICIA (alicia.concytec.gob.pe) y RENATI (renati.sunedu.gob.pe).
+- Revistas académicas con DOI, SciELO, Redalyc y Dialnet.
+PROHIBIDO citar como fuente: Scribd, Studocu, Course Hero, Monografias.com,
+Buenastareas, Academia.edu, ResearchGate sin el documento original,
+SlideShare, Issuu, Prezi, blogs, prensa o páginas comerciales que solo
+copian referencias.
+
+ENLACE PERMANENTE — usa este orden de preferencia:
+a. DOI.
+b. Handle o HDL.
+c. URI permanente del repositorio institucional.
+d. Ficha oficial de ALICIA o RENATI, únicamente cuando no exista un enlace
+   institucional estable.
+
+DATOS DE CADA REFERENCIA:
+- Incluye a TODOS los autores del trabajo, con apellidos e iniciales
+  correctas según APA 7.
+- Usa el año REAL de publicación o sustentación que muestra la fuente, no
+  el año que aparezca dentro del título del trabajo (si el título dice
+  "Lima, 2021" pero la tesis se publicó en 2022, la referencia lleva 2022).
+- Identifica el tipo de documento según lo que indique la propia fuente:
+  tesis de licenciatura, tesis de maestría, tesis doctoral, trabajo de
+  suficiencia profesional, artículo, etc. No inventes el grado académico.
+- Usa el nombre oficial y completo de la universidad o institución.
+- Si algún dato (autor, año, tipo de documento) no aparece en los
+  resultados de búsqueda, NO lo inventes: elige otro antecedente cuyo
+  registro sí muestre los datos completos.
+
+PERTINENCIA Y ANTIGÜEDAD:
+- Cada antecedente debe estudiar la(s) misma(s) variable(s) del título (o
+  constructos directamente equivalentes) en poblaciones y contextos
+  comparables. No cites trabajos de temática lejana solo por ser de la
+  misma carrera.
+- Prioriza trabajos publicados dentro de los últimos 5 años; respeta el
+  periodo indicado en la plantilla.
+
+FORMATO APA 7 EXACTO — modelo general para tesis:
+Apellido, A. A., y Apellido, B. B. (Año). Título del trabajo en estilo
+oración (solo mayúscula inicial y nombres propios) [Tesis de licenciatura,
+Nombre oficial de la universidad]. Repositorio institucional. URL
+
+Y para artículos:
+Apellido, A. A. (Año). Título del artículo en estilo oración. Nombre de la
+Revista, Volumen(número), páginas. DOI o URL
+
+Reglas de redacción obligatorias:
+- Usa "y" antes del último autor. NUNCA uses "&".
+- No escribas "Recuperado de" antes de la URL.
+- No coloques punto final después del DOI o la URL.
+- No coloques ciudad ni país después de la universidad, salvo que sea
+  necesario para diferenciar instituciones con nombres similares.
+- El título del trabajo va en estilo oración, no en mayúsculas por palabra.
+
+=== PASO 5: FORMATO DE ENTREGA ===
 Presenta los tres títulos por separado, cada uno con su desarrollo completo
 según la plantilla que corresponda. No los adjuntes ni los combines entre sí.
 Usa normas APA 7.ª edición donde aplique.
@@ -168,7 +229,12 @@ Hipótesis Específicas:
 
 **6. REFERENCIAS Y ANTECEDENTES**
 [Mencionar 10 antecedentes: 5 nacionales y 5 internacionales, periodo
-2021–{{anio}}, basados en la búsqueda de repositorios del Paso 1]
+2021–{{anio}}, basados en la búsqueda de repositorios del Paso 1 y
+redactados en APA 7 según las reglas del Paso 4: todos los autores con
+apellidos e iniciales, "y" en lugar de "&", año real de publicación, tipo
+de documento entre corchetes, solo fuentes primarias/oficiales, enlace
+permanente (DOI > Handle > URI del repositorio) sin "Recuperado de" y sin
+punto final después de la URL]
 ```
 
 ---
@@ -219,7 +285,12 @@ Problemas Específicos:
 
 **5. REFERENCIAS Y ANTECEDENTES**
 [Mencionar 10 antecedentes: 5 nacionales y 5 internacionales, periodo
-2021–{{anio}}, basados en la búsqueda de repositorios del Paso 1]
+2021–{{anio}}, basados en la búsqueda de repositorios del Paso 1 y
+redactados en APA 7 según las reglas del Paso 4: todos los autores con
+apellidos e iniciales, "y" en lugar de "&", año real de publicación, tipo
+de documento entre corchetes, solo fuentes primarias/oficiales, enlace
+permanente (DOI > Handle > URI del repositorio) sin "Recuperado de" y sin
+punto final después de la URL]
 ```
 
 > Nota: no hay punto de "Hipótesis" en la Plantilla B porque, al no existir

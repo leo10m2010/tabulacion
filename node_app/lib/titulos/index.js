@@ -8,7 +8,9 @@ import {
   requestTitulos, buildBaseUserContent, stripToolCallMarkup, TITULO_MARKER_RE,
 } from "./openrouter.js";
 import { buildTitulosDocx } from "./docx.js";
-import { extractReferenceUrls, verifyUrls, normalizeUrlForMatch } from "./verify.js";
+import {
+  extractReferenceUrls, verifyUrls, normalizeUrlForMatch, findBannedSourceUrls,
+} from "./verify.js";
 import { gatherSearchContext, braveUrlCheck } from "./websearch.js";
 
 // Limpieza final del contenido: quita markup de tool_call filtrado como texto
@@ -73,13 +75,25 @@ export const normalizeTitulosInput = (payload) => {
 // completo (system + user original + assistant con la respuesta anterior)
 // para que la IA reemplace SOLO las URLs que la verificacion detecto como
 // inventadas (404/410), sin tocar el resto del contenido.
-const buildCorrectionUserContent = (urlsInventadas) => "Verifique las URLs de tus antecedentes y las siguientes "
-  + `NO EXISTEN (el servidor respondio 404/410 al consultarlas): ${urlsInventadas.join(", ")}. `
-  + "Debes reemplazar ÚNICAMENTE esos antecedentes por otros REALES: realiza nuevas búsquedas web y cita "
-  + "solo referencias cuya URL exacta haya aparecido efectivamente en los resultados de esas búsquedas "
-  + "nuevas. No inventes ni \"recuerdes\" URLs. Mantén intacto todo lo demás (los 3 títulos, problema, "
-  + "objetivos, planteamiento del problema, metodología e hipótesis si corresponde) y conserva el mismo "
-  + "formato completo de tu respuesta anterior, comenzando directamente con **TÍTULO 1**.";
+const buildCorrectionUserContent = (urlsInventadas, urlsProhibidas = []) => {
+  const problemas = [];
+  if (urlsInventadas.length > 0) {
+    problemas.push("Verifique las URLs de tus antecedentes y las siguientes NO EXISTEN (el servidor "
+      + `respondio 404/410 al consultarlas): ${urlsInventadas.join(", ")}.`);
+  }
+  if (urlsProhibidas.length > 0) {
+    problemas.push("Las siguientes URLs provienen de fuentes NO académicas prohibidas por las reglas de "
+      + `referencias (Scribd, Studocu, Course Hero, Monografias, blogs y similares): ${urlsProhibidas.join(", ")}. `
+      + "Solo se aceptan fuentes primarias y oficiales: repositorios institucionales, ALICIA, RENATI, "
+      + "SciELO, Redalyc, Dialnet o revistas con DOI.");
+  }
+  return `${problemas.join(" ")} `
+  + "Debes reemplazar ÚNICAMENTE esos antecedentes por otros REALES de fuentes oficiales: realiza nuevas "
+  + "búsquedas web y cita solo referencias cuya URL exacta haya aparecido efectivamente en los resultados "
+  + "de esas búsquedas nuevas. No inventes ni \"recuerdes\" URLs. Mantén intacto todo lo demás (los 3 "
+  + "títulos, problema, objetivos, planteamiento del problema, metodología e hipótesis si corresponde) y "
+  + "conserva el mismo formato completo de tu respuesta anterior, comenzando directamente con **TÍTULO 1**.";
+};
 
 // Verifica las URLs citadas como antecedentes en el contenido. Las
 // "sospechosas" (2xx pero detras de un muro anti-bot, p. ej. RENATI, que
@@ -91,7 +105,13 @@ const buildCorrectionUserContent = (urlsInventadas) => "Verifique las URLs de tu
 //    la reemplaza). Sin clave o con Brave caido queda como no verificable.
 const verifyContentSources = async (contenido, { provenance, websearchOptions }) => {
   const urls = extractReferenceUrls(contenido);
-  const { reales, inventadas, noVerificables, sospechosas } = await verifyUrls(urls);
+  // Fuentes no académicas (Scribd, Studocu, etc.): prohibidas por las reglas
+  // APA 7 del prompt aunque la URL exista. Se excluyen de la verificacion
+  // HTTP (no aporta nada) y disparan el mismo reintento correctivo.
+  const prohibidas = findBannedSourceUrls(urls);
+  const prohibidasSet = new Set(prohibidas);
+  const urlsVerificables = urls.filter((url) => !prohibidasSet.has(url));
+  const { reales, inventadas, noVerificables, sospechosas } = await verifyUrls(urlsVerificables);
 
   for (const url of sospechosas) {
     if (provenance.has(normalizeUrlForMatch(url))) {
@@ -112,7 +132,7 @@ const verifyContentSources = async (contenido, { provenance, websearchOptions })
     );
   }
 
-  return { reales, inventadas, noVerificables };
+  return { reales, inventadas, noVerificables, prohibidas };
 };
 
 // Genera los 3 titulos: valida, arma el system prompt final y llama a la IA.
@@ -160,20 +180,23 @@ export const generateTitulos = async (payload, options = {}) => {
   // por construccion) — resuelven las "sospechosas" sin gastar cuota.
   const provenance = new Set(extractReferenceUrls(searchContext ?? "").map(normalizeUrlForMatch));
   const verifyOpts = { provenance, websearchOptions: options.websearch ?? {} };
-  let { reales, inventadas, noVerificables } = await verifyContentSources(contenido, verifyOpts);
+  let {
+    reales, inventadas, noVerificables, prohibidas,
+  } = await verifyContentSources(contenido, verifyOpts);
 
-  if (inventadas.length > 0) {
+  if (inventadas.length > 0 || prohibidas.length > 0) {
     // eslint-disable-next-line no-console
     console.warn(
-      `[titulos] verificacion de fuentes detecto ${inventadas.length} URL(s) inventada(s); `
-      + `reintentando con correccion: ${inventadas.join(", ")}`,
+      `[titulos] verificacion de fuentes detecto ${inventadas.length} URL(s) inventada(s) y `
+      + `${prohibidas.length} de fuentes prohibidas; reintentando con correccion: `
+      + `${[...inventadas, ...prohibidas].join(", ")}`,
     );
 
     const correctionMessages = [
       { role: "system", content: systemPrompt },
       { role: "user", content: buildBaseUserContent(repositoryDomain, datos, searchContext) },
       { role: "assistant", content },
-      { role: "user", content: buildCorrectionUserContent(inventadas) },
+      { role: "user", content: buildCorrectionUserContent(inventadas, prohibidas) },
     ];
 
     const reintento = await requestTitulos({
@@ -187,12 +210,14 @@ export const generateTitulos = async (payload, options = {}) => {
     content = reintento.content;
     webSearchRequests = reintento.webSearchRequests ?? webSearchRequests;
     contenido = cleanTitulosContent(content);
-    ({ reales, inventadas, noVerificables } = await verifyContentSources(contenido, verifyOpts));
+    ({
+      reales, inventadas, noVerificables, prohibidas,
+    } = await verifyContentSources(contenido, verifyOpts));
 
-    if (inventadas.length > 0) {
+    if (inventadas.length > 0 || prohibidas.length > 0) {
       throw new Error(
-        "Tras el reintento correctivo aun se detectaron URLs de antecedentes inventadas "
-        + `(no existen): ${inventadas.join(", ")}`,
+        "Tras el reintento correctivo aun se detectaron URLs de antecedentes inventadas o de "
+        + `fuentes no académicas prohibidas: ${[...inventadas, ...prohibidas].join(", ")}`,
       );
     }
   }
