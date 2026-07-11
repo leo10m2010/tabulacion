@@ -124,6 +124,13 @@ c. URI permanente del repositorio institucional.
 d. Ficha oficial de ALICIA o RENATI, únicamente cuando no exista un enlace
    institucional estable.
 
+IMPORTANTE — SIN BÚSQUEDAS DE CONFIRMACIÓN: aplica estas reglas usando los
+resultados de búsqueda que YA tienes. NO realices búsquedas adicionales solo
+para confirmar autores, años o grados académicos de un trabajo: si un
+resultado no muestra los datos completos en su título o descripción,
+simplemente elige OTRO antecedente de los resultados ya disponibles que sí
+los muestre.
+
 DATOS DE CADA REFERENCIA:
 - Incluye a TODOS los autores del trabajo, con apellidos e iniciales
   correctas según APA 7.

@@ -515,6 +515,60 @@ test("generateTitulos reintenta si la respuesta es solo tool_calls filtrados y u
   }
 });
 
+test("glitch tool_calls CON pre-busqueda: el reintento va sin herramienta de busqueda y ordena redactar", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, opts) => {
+    calls.push(JSON.parse(opts.body));
+    const content = calls.length === 1 ? TOOL_CALL_LEAK_REAL : "**TÍTULO 1**\ncontenido valido";
+    return { ok: true, json: async () => ({ choices: [{ message: { content }, finish_reason: "stop" }], usage: null }) };
+  };
+  try {
+    const result = await generateTitulos({ ...validInput(), carrera: "Nutrición" }, {
+      apiKey: "test-key",
+      websearch: {
+        braveApiKey: "brave-key",
+        firecrawlApiKey: null,
+        delayMs: 0,
+        fetchImpl: async () => braveOk([{ title: "Tesis N", url: "https://repo.pe/n", description: "d" }]),
+      },
+    });
+    assert.equal(calls.length, 2);
+    // El primer intento lleva la herramienta de busqueda; el reintento por
+    // glitch de tool_calls (con pre-busqueda disponible) va SIN tools para
+    // forzar la redaccion con los resultados ya inyectados.
+    assert.ok(Array.isArray(calls[0].tools) && calls[0].tools.length === 1);
+    assert.equal(calls[1].tools, undefined);
+    const mensajeCorrectivo = calls[1].messages[calls[1].messages.length - 1];
+    assert.equal(mensajeCorrectivo.role, "user");
+    assert.ok(mensajeCorrectivo.content.includes("NO busques más"));
+    assert.equal(result.contenido, "**TÍTULO 1**\ncontenido valido");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("glitch tool_calls SIN pre-busqueda: el reintento conserva la herramienta de busqueda", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, opts) => {
+    calls.push(JSON.parse(opts.body));
+    const content = calls.length === 1 ? TOOL_CALL_LEAK_REAL : "**TÍTULO 1**\ncontenido valido";
+    return { ok: true, json: async () => ({ choices: [{ message: { content }, finish_reason: "stop" }], usage: null }) };
+  };
+  try {
+    // Sin claves de pre-busqueda no hay searchContext: quitar la herramienta
+    // invitaria a inventar fuentes, asi que se conserva.
+    await generateTitulos(validInput(), { apiKey: "test-key" });
+    assert.equal(calls.length, 2);
+    assert.ok(Array.isArray(calls[1].tools) && calls[1].tools.length === 1);
+    const mensajeCorrectivo = calls[1].messages[calls[1].messages.length - 1];
+    assert.ok(mensajeCorrectivo.content.includes("EJECUTA las búsquedas"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("generateTitulos con anio vacio manda el anio actual en los DATOS DEL ESTUDIANTE", async () => {
   const originalFetch = global.fetch;
   const calls = [];

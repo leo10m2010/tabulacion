@@ -200,9 +200,10 @@ export const requestTitulos = async ({
 
   let lastFailure = "desconocido";
   let attemptMessages = messages;
+  let attemptTools = tools;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const { content, usage, finishReason } = await callOpenRouter({
-      messages: attemptMessages, tools, model, apiKey, timeoutMs, maxTokens,
+      messages: attemptMessages, tools: attemptTools, model, apiKey, timeoutMs, maxTokens,
     });
     // OpenRouter devuelve el conteo en server_tool_use_details (verificado en
     // produccion); se conserva server_tool_use como fallback por compatibilidad.
@@ -242,23 +243,39 @@ export const requestTitulos = async ({
     console.error(
       `[titulos] intento ${attempt} fallido (${failure}). Respuesta cruda:\n${content.slice(0, 2000)}`,
     );
+    // Caso glitch de busqueda (visto en produccion 2026-07-10): la respuesta
+    // es puro markup <tool_call> tras haber EJECUTADO ya muchas busquedas
+    // reales — el modelo quedo atrapado buscando (p. ej. para "confirmar"
+    // autores/anios) en vez de redactar. Pedirle que "ejecute las busquedas"
+    // lo hunde mas. Si hubo pre-busqueda del sistema (searchContext), el
+    // reintento va SIN herramienta de busqueda y con la orden de redactar ya
+    // con los resultados disponibles; las URLs citadas igual pasan por la
+    // verificacion HTTP posterior (index.js), que atrapa cualquier inventada.
+    const forceWriteout = /<tool_call/i.test(content) && Boolean(searchContext);
+    if (forceWriteout) attemptTools = undefined;
+    const correctionContent = forceWriteout
+      ? "Tu respuesta anterior llegó como llamadas a herramientas escritas como texto (<tool_call>) "
+        + "en lugar de los títulos. Ya realizaste suficientes búsquedas: los RESULTADOS DE BÚSQUEDA "
+        + "DEL SISTEMA del mensaje inicial son suficientes. NO busques más. Redacta AHORA la "
+        + "respuesta completa usando únicamente la información ya disponible en esta conversación, "
+        + "comenzando directamente con **TÍTULO 1** y siguiendo la plantilla completa, reemplazando "
+        + "cada {{anio}} por el año de los DATOS DEL ESTUDIANTE y cada [lugar] por el lugar exacto. "
+        + "Si un antecedente no tiene datos completos en los resultados disponibles, reemplázalo por "
+        + "otro resultado listado que sí los tenga. No escribas ninguna etiqueta <tool_call>."
+      : "Tu respuesta anterior no fue válida: no contenía los 3 títulos desarrollados "
+        + "(llegó vacía, incompleta, con llamadas a herramientas escritas como texto <tool_call>, "
+        + "o con placeholders {{...}} sin reemplazar). "
+        + "EJECUTA las búsquedas web usando la herramienta disponible (no las escribas como texto) y "
+        + "responde ÚNICAMENTE con los tres títulos desarrollados según la plantilla, comenzando "
+        + "directamente con **TÍTULO 1**, reemplazando cada {{anio}} por el año de los DATOS DEL "
+        + "ESTUDIANTE y cada [lugar] por el lugar exacto. No incluyas etiquetas <tool_call> ni "
+        + "ninguna sintaxis de herramientas en tu respuesta.";
     // Para el segundo intento se anexa la respuesta invalida (si la hubo) y
-    // un aviso: debe ejecutar las busquedas de verdad y entregar solo los
-    // titulos, sin sintaxis de herramientas escrita como texto.
+    // el aviso correctivo que corresponda al tipo de fallo.
     attemptMessages = [
       ...messages,
       ...(content.trim() ? [{ role: "assistant", content }] : []),
-      {
-        role: "user",
-        content: "Tu respuesta anterior no fue válida: no contenía los 3 títulos desarrollados "
-          + "(llegó vacía, incompleta, con llamadas a herramientas escritas como texto <tool_call>, "
-          + "o con placeholders {{...}} sin reemplazar). "
-          + "EJECUTA las búsquedas web usando la herramienta disponible (no las escribas como texto) y "
-          + "responde ÚNICAMENTE con los tres títulos desarrollados según la plantilla, comenzando "
-          + "directamente con **TÍTULO 1**, reemplazando cada {{anio}} por el año de los DATOS DEL "
-          + "ESTUDIANTE y cada [lugar] por el lugar exacto. No incluyas etiquetas <tool_call> ni "
-          + "ninguna sintaxis de herramientas en tu respuesta.",
-      },
+      { role: "user", content: correctionContent },
     ];
   }
 
