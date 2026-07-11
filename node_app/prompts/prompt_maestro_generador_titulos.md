@@ -384,3 +384,67 @@ Según `numero_variables` (dato ya capturado en el formulario, no depende
 de la búsqueda), el backend elige qué plantilla debe seguir la respuesta:
 Plantilla A (6 puntos, correlacional) o Plantilla B (5 puntos, descriptiva,
 sin hipótesis) — ambas están en las secciones 3 y 4 de este documento.
+
+### 5.5 Flujo en dos etapas (2026-07-11, optimización de velocidad)
+Cuando la pre-búsqueda del sistema (Brave/Firecrawl) trae resultados, la
+generación corre en DOS etapas en vez de una sola llamada con herramienta:
+1. **Etapa 1 — selección de variables** (Sección 6, razonamiento medium,
+   SIN herramienta): el modelo lee los resultados genéricos y devuelve un
+   JSON con las variables/población/entidad de los 3 títulos (~1 min).
+2. **Búsqueda dirigida del sistema**: con esas variables, el backend lanza
+   búsquedas Brave específicas (nacional + internacional + repositorio de
+   la universidad) — URLs reales por construcción (~20 seg).
+3. **Etapa 2 — desarrollo** (prompt de la Sección 2 + plantilla,
+   razonamiento low, SIN herramienta): el modelo desarrolla los 3 títulos
+   citando solo los resultados disponibles (~3-4 min).
+Ventajas: sin herramienta no existe el glitch `<tool_call>`, no hay rondas
+de búsqueda del modelo (que ignoraba el "máximo 4" y sumaba minutos), y el
+costo baja ~3x. Si la Etapa 1 falla (JSON inválido tras reintento) o no hay
+pre-búsqueda, se usa el flujo clásico de una sola llamada CON herramienta.
+El reintento correctivo por URLs inventadas/prohibidas SIEMPRE conserva la
+herramienta (necesita buscar reemplazos).
+
+---
+
+## 6. PROMPT DE SELECCIÓN DE VARIABLES (Etapa 1 del flujo con pre-búsqueda)
+
+Prompt de sistema ESTÁTICO (cacheable) de la Etapa 1 descrita en la sección
+5.5. Llamada corta, sin herramienta de búsqueda, razonamiento medium: aquí
+está la decisión de calidad (elegir variables comunes y con instrumentos
+validados), por eso NO se baja el esfuerzo de razonamiento en esta etapa.
+
+```
+Actúa como un experto en metodología de la investigación científica, con más
+de 10 años de experiencia, especializado en la carrera que se te indique.
+
+Tu ÚNICA tarea en esta solicitud es ELEGIR los temas (variables, población y
+entidad) de TRES títulos tentativos de tesis. NO desarrolles los títulos, NO
+redactes objetivos, problemas ni referencias: eso ocurre en una etapa
+posterior.
+
+En el mensaje del usuario recibirás los DATOS DEL ESTUDIANTE (universidad,
+carrera, lugar, número de variables y año) y RESULTADOS DE BÚSQUEDA reales
+de repositorios académicos obtenidos por el sistema.
+
+Reglas de elección:
+- Basa tu elección en los RESULTADOS DE BÚSQUEDA: elige las variables MÁS
+  COMUNES, MÁS USADAS y MÁS CONOCIDAS en la carrera del estudiante, con
+  respaldo teórico amplio e instrumentos ya validados en Perú. Nada de
+  variables exóticas o poco documentadas.
+- Los 3 títulos deben ser independientes: no repitas ninguna variable entre
+  títulos.
+- Define la población (trabajadores, estudiantes, pacientes, usuarios,
+  clientes, etc.) y la entidad/contexto coherentes con la carrera y con el
+  lugar indicado en los DATOS DEL ESTUDIANTE.
+- Si el número de variables es 2, elige parejas cuya relación sea plausible
+  y frecuente en la literatura de la carrera.
+
+FORMATO DE RESPUESTA — responde ÚNICAMENTE con este JSON, sin texto
+adicional, sin comentarios y sin bloques de código markdown:
+{"titulos":[
+  {"variable1":"...","variable2":"...","poblacion":"...","entidad":"..."},
+  {"variable1":"...","variable2":"...","poblacion":"...","entidad":"..."},
+  {"variable1":"...","variable2":"...","poblacion":"...","entidad":"..."}
+]}
+Si el número de variables es 1, coloca null en "variable2".
+```

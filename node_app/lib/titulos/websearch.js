@@ -196,17 +196,11 @@ export const buildQueries = (datos, repositoryDomain) => {
 
 const truncate = (text, max) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
-// Ejecuta el set fijo de consultas (secuencial: Brave gratis limita a 1
+// Ejecuta una lista de consultas (secuencial: Brave gratis limita a 1
 // consulta/segundo) y arma el bloque de texto que se inyecta en el mensaje
-// user. Devuelve null si no hay ninguna clave configurada o si ninguna
-// consulta trajo resultados (en ese caso el flujo queda igual que antes).
-export const gatherSearchContext = async (datos, repositoryDomain, options = {}) => {
-  const braveKey = options.braveApiKey ?? process.env.BRAVE_API_KEY;
-  const firecrawlKey = options.firecrawlApiKey ?? process.env.FIRECRAWL_API_KEY;
-  if (!braveKey && !firecrawlKey) return null;
-
+// user. Devuelve null si ninguna consulta trajo resultados.
+const runQueries = async (queries, sectionLabel, logLabel, options = {}) => {
   const delayMs = options.delayMs ?? 1100;
-  const queries = buildQueries(datos, repositoryDomain);
   const sections = [];
   let totalResults = 0;
 
@@ -218,7 +212,7 @@ export const gatherSearchContext = async (datos, repositoryDomain, options = {})
       totalResults += results.length;
       const lines = results.map((r) => `- ${truncate(r.title, 120)} | ${r.url}`
         + (r.description ? ` | ${truncate(r.description, 200)}` : ""));
-      sections.push(`### Búsqueda: ${query}\n${lines.join("\n")}`);
+      sections.push(`### ${sectionLabel}: ${query}\n${lines.join("\n")}`);
     }
     if (i < queries.length - 1 && delayMs > 0) {
       // eslint-disable-next-line no-await-in-loop
@@ -227,7 +221,50 @@ export const gatherSearchContext = async (datos, repositoryDomain, options = {})
   }
 
   // eslint-disable-next-line no-console
-  console.log(`[titulos] pre-busqueda: ${queries.length} consultas, ${totalResults} resultados.`);
+  console.log(`[titulos] ${logLabel}: ${queries.length} consultas, ${totalResults} resultados.`);
   if (sections.length === 0) return null;
   return sections.join("\n\n");
+};
+
+// Pre-busqueda generica del job (por carrera/universidad). Devuelve null si
+// no hay ninguna clave configurada o si ninguna consulta trajo resultados
+// (en ese caso el flujo queda igual que antes).
+export const gatherSearchContext = async (datos, repositoryDomain, options = {}) => {
+  const braveKey = options.braveApiKey ?? process.env.BRAVE_API_KEY;
+  const firecrawlKey = options.firecrawlApiKey ?? process.env.FIRECRAWL_API_KEY;
+  if (!braveKey && !firecrawlKey) return null;
+  return runQueries(buildQueries(datos, repositoryDomain), "Búsqueda", "pre-busqueda", options);
+};
+
+// Consultas dirigidas a las variables ya elegidas en la Etapa 1: son las
+// mismas busquedas especificas que antes hacia el modelo (lento y propenso
+// al glitch), pero ejecutadas por el sistema — deterministas y con URLs
+// reales por construccion. Set acotado: 2 por titulo (nacional +
+// internacional) y, si hay dominio de repositorio, 1 mas por titulo.
+export const buildTargetedQueries = (seleccion, repositoryDomain) => {
+  const queries = [];
+  for (const t of seleccion) {
+    const vars = t.variable2 ? `"${t.variable1}" "${t.variable2}"` : `"${t.variable1}"`;
+    queries.push(`tesis ${vars} Perú repositorio`);
+    queries.push(`tesis ${vars} repositorio universidad Ecuador Colombia México Chile España`);
+    if (repositoryDomain) {
+      queries.push(`tesis "${t.variable1}" site:${repositoryDomain}`);
+    }
+  }
+  return queries;
+};
+
+// Ejecuta las consultas dirigidas y arma el bloque "RESULTADOS DE BÚSQUEDA
+// DIRIGIDA". Devuelve null sin claves o sin resultados (la Etapa 2 continua
+// solo con la pre-busqueda generica).
+export const gatherTargetedSearchContext = async (seleccion, repositoryDomain, options = {}) => {
+  const braveKey = options.braveApiKey ?? process.env.BRAVE_API_KEY;
+  const firecrawlKey = options.firecrawlApiKey ?? process.env.FIRECRAWL_API_KEY;
+  if (!braveKey && !firecrawlKey) return null;
+  return runQueries(
+    buildTargetedQueries(seleccion, repositoryDomain),
+    "Búsqueda dirigida",
+    "busqueda dirigida",
+    options,
+  );
 };

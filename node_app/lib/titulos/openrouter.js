@@ -17,7 +17,7 @@ export const DEFAULT_MODEL = "z-ai/glm-5.2";
 // restringir a repositorios peruanos hace imposible encontrar los 5
 // antecedentes internacionales que exige la plantilla — el modelo busca en
 // vano una y otra vez hasta agotar el tope de resultados o glitchear.
-export const buildBaseUserContent = (repositoryDomain = null, datos = null, searchContext = null) => {
+export const buildBaseUserContent = (repositoryDomain = null, datos = null, searchContext = null, seleccion = null) => {
   // Los datos del cliente viven aqui (mensaje user), no en el system prompt:
   // el system queda estatico y cacheable entre solicitudes.
   const bloqueDatos = datos
@@ -42,7 +42,25 @@ export const buildBaseUserContent = (repositoryDomain = null, datos = null, sear
     ? "RESULTADOS DE BÚSQUEDA DEL SISTEMA (obtenidos en tiempo real de motores de búsqueda; "
       + "estas URLs son reales):\n\n" + searchContext + "\n\n"
     : "";
-  const planBusqueda = searchContext
+  // Flujo en dos etapas: las variables ya fueron elegidas en la Etapa 1 y el
+  // sistema ya hizo las busquedas dirigidas. Esta llamada solo DESARROLLA
+  // los 3 titulos definidos, sin herramienta de busqueda.
+  const bloqueSeleccion = seleccion
+    ? "VARIABLES YA ELEGIDAS (desarrolla EXACTAMENTE estos 3 títulos; no cambies variables, "
+      + "población ni entidad):\n"
+      + seleccion.map((t, i) => `- TÍTULO ${i + 1}: Variable 1: ${t.variable1}`
+        + (t.variable2 ? `; Variable 2: ${t.variable2}` : "")
+        + `; Población: ${t.poblacion}; Entidad: ${t.entidad}`).join("\n")
+      + "\n\n"
+    : "";
+  const planBusqueda = seleccion
+    ? "PLAN: en esta solicitud NO tienes herramienta de búsqueda. El PASO 1 (búsqueda en "
+      + "repositorios) ya fue ejecutado por el sistema y sus resultados están arriba (incluidas "
+      + "búsquedas dirigidas a las variables ya elegidas). Usa esos resultados como ÚNICA fuente "
+      + "de antecedentes: cita solo trabajos cuya URL aparezca EXACTAMENTE en ellos. Recuerda que "
+      + "los antecedentes internacionales deben ser trabajos de instituciones extranjeras: una "
+      + "tesis de una universidad peruana NO cuenta como internacional aunque estudie otro país."
+    : searchContext
     ? "PLAN DE BÚSQUEDA: usa PRIMERO los RESULTADOS DE BÚSQUEDA DEL SISTEMA de arriba como fuente "
       + "principal para identificar las variables más investigadas y para citar los antecedentes. "
       + "Solo si te falta información concreta (p. ej. no alcanzan los antecedentes internacionales) "
@@ -59,6 +77,7 @@ export const buildBaseUserContent = (repositoryDomain = null, datos = null, sear
       + "otro país. Cuando tengas suficiente información, DEJA de buscar y redacta la respuesta completa.";
   return bloqueDatos
   + bloqueResultados
+  + bloqueSeleccion
   + "Genera los 3 títulos según los datos proporcionados. Tu respuesta debe "
   + "contener ÚNICAMENTE los tres títulos desarrollados según la plantilla, comenzando directamente "
   + "con **TÍTULO 1**. No narres tus búsquedas, no incluyas introducciones, resúmenes de "
@@ -68,11 +87,11 @@ export const buildBaseUserContent = (repositoryDomain = null, datos = null, sear
   + pistaRepositorio
   + "\n\n" + planBusqueda + "\n\n"
   + "IMPORTANTE - AUTENTICIDAD DE FUENTES: los antecedentes de cada título deben provenir "
-  + "EXCLUSIVAMENTE de los resultados reales de la búsqueda web que realices; cita la URL "
+  + "EXCLUSIVAMENTE de los resultados de búsqueda disponibles (los del sistema y, si tienes "
+  + "herramienta, los de tus propias búsquedas); cita la URL "
   + "exactamente tal como aparece en el resultado de búsqueda, sin modificarla. Está PROHIBIDO "
   + "inventar o \"recordar\" autores, años, títulos de tesis o URLs que no hayan aparecido "
-  + "efectivamente en los resultados de tus búsquedas. Si no encuentras suficientes antecedentes "
-  + "reales, realiza más búsquedas adicionales en vez de completar con datos supuestos. "
+  + "efectivamente en esos resultados. "
   + "Cita únicamente fuentes académicas oficiales (repositorios institucionales, ALICIA, RENATI, "
   + "SciELO, Redalyc, Dialnet o revistas con DOI) y redacta cada referencia en APA 7 según las "
   + "reglas del PASO 4; NUNCA cites Scribd, Studocu, Course Hero, Monografias.com, Buenastareas, "
@@ -97,7 +116,7 @@ export const stripToolCallMarkup = (text) => String(text ?? "")
 export const TITULO_MARKER_RE = /\*\*\s*T[IÍí]TULO\s*1/i;
 
 const callOpenRouter = async ({
-  messages, tools, model, apiKey, timeoutMs, maxTokens,
+  messages, tools, model, apiKey, timeoutMs, maxTokens, reasoningEffort = "medium",
 }) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -120,11 +139,12 @@ const callOpenRouter = async ({
         // menor probabilidad de desvios de formato (tool_calls como texto,
         // narracion), sin matar la redaccion academica.
         temperature: 0.5,
-        // Esfuerzo de razonamiento "medium": a diferencia de la tabulacion
-        // descriptiva (tarea mecanica, effort "low"), aqui la IA debe
-        // analizar resultados reales de busqueda y elegir variables con
-        // respaldo teorico, asi que se le deja mas presupuesto de analisis.
-        reasoning: { effort: "medium" },
+        // Esfuerzo de razonamiento por etapa: "medium" cuando hay analisis
+        // (elegir variables con respaldo teorico, flujo clasico con
+        // busquedas); "low" cuando la tarea es mecanica (desarrollar la
+        // plantilla con variables y resultados ya dados) — 7-11k tokens de
+        // razonamiento eran varios minutos de espera.
+        reasoning: { effort: reasoningEffort },
       }),
     });
     const payload = await res.json().catch(() => null);
@@ -151,7 +171,8 @@ const callOpenRouter = async ({
 // van en el mensaje user para mantener el system prompt estatico/cacheable.
 // Si el contenido viene vacio o invalido se reintenta UNA vez.
 export const requestTitulos = async ({
-  systemPrompt, repositoryDomain = null, datos = null, searchContext = null, options = {},
+  systemPrompt, repositoryDomain = null, datos = null, searchContext = null, seleccion = null,
+  options = {},
 }) => {
   const apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -194,16 +215,24 @@ export const requestTitulos = async ({
     ? options.messages
     : [
       { role: "system", content: systemPrompt },
-      { role: "user", content: buildBaseUserContent(repositoryDomain, datos, searchContext) },
+      { role: "user", content: buildBaseUserContent(repositoryDomain, datos, searchContext, seleccion) },
     ];
-  const tools = [{ type: "openrouter:web_search", parameters: searchParameters }];
+  // Flujo en dos etapas (includeSearchTool=false): la llamada de desarrollo
+  // va SIN herramienta — el material ya viene de la pre-busqueda + busquedas
+  // dirigidas del sistema, y sin tool no existe el glitch <tool_call>. El
+  // flujo clasico y el reintento correctivo conservan la herramienta.
+  const includeSearchTool = options.includeSearchTool ?? true;
+  const tools = includeSearchTool
+    ? [{ type: "openrouter:web_search", parameters: searchParameters }]
+    : undefined;
+  const reasoningEffort = options.reasoningEffort ?? "medium";
 
   let lastFailure = "desconocido";
   let attemptMessages = messages;
   let attemptTools = tools;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const { content, usage, finishReason } = await callOpenRouter({
-      messages: attemptMessages, tools: attemptTools, model, apiKey, timeoutMs, maxTokens,
+      messages: attemptMessages, tools: attemptTools, model, apiKey, timeoutMs, maxTokens, reasoningEffort,
     });
     // OpenRouter devuelve el conteo en server_tool_use_details (verificado en
     // produccion); se conserva server_tool_use como fallback por compatibilidad.
@@ -253,9 +282,12 @@ export const requestTitulos = async ({
     // verificacion HTTP posterior (index.js), que atrapa cualquier inventada.
     const forceWriteout = /<tool_call/i.test(content) && Boolean(searchContext);
     if (forceWriteout) attemptTools = undefined;
-    const correctionContent = forceWriteout
-      ? "Tu respuesta anterior llegó como llamadas a herramientas escritas como texto (<tool_call>) "
-        + "en lugar de los títulos. Ya realizaste suficientes búsquedas: los RESULTADOS DE BÚSQUEDA "
+    // Sin herramienta (flujo en dos etapas) el aviso clasico ("EJECUTA las
+    // busquedas") no aplica: siempre se pide redactar con lo disponible.
+    const correctionContent = (forceWriteout || !attemptTools)
+      ? "Tu respuesta anterior no fue válida: no contenía los 3 títulos desarrollados (llegó "
+        + "vacía, incompleta, con placeholders {{...}} sin reemplazar o como llamadas a "
+        + "herramientas escritas como texto <tool_call>). Los RESULTADOS DE BÚSQUEDA "
         + "DEL SISTEMA del mensaje inicial son suficientes. NO busques más. Redacta AHORA la "
         + "respuesta completa usando únicamente la información ya disponible en esta conversación, "
         + "comenzando directamente con **TÍTULO 1** y siguiendo la plantilla completa, reemplazando "
@@ -280,4 +312,131 @@ export const requestTitulos = async ({
   }
 
   throw new Error(`OpenRouter no devolvio los titulos tras el reintento (${lastFailure}).`);
+};
+
+// ── Etapa 1 del flujo en dos etapas: seleccion de variables ─────────────────
+
+// Extrae y valida el JSON de seleccion de la respuesta del modelo. Tolera
+// fences de codigo y texto alrededor (se toma del primer "{" al ultimo "}").
+// Devuelve el array normalizado de 3 titulos o lanza con el motivo.
+export const parseSeleccion = (raw, numeroVariables) => {
+  const text = String(raw ?? "");
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    throw new Error("la respuesta no contiene un objeto JSON");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    throw new Error("el JSON de la seleccion no es valido");
+  }
+  const titulos = parsed?.titulos;
+  if (!Array.isArray(titulos) || titulos.length !== 3) {
+    throw new Error("la seleccion debe traer exactamente 3 titulos");
+  }
+  const clean = (v) => String(v ?? "").trim();
+  const result = titulos.map((t, i) => {
+    const variable1 = clean(t?.variable1);
+    const variable2 = clean(t?.variable2);
+    const poblacion = clean(t?.poblacion);
+    const entidad = clean(t?.entidad);
+    if (!variable1 || !poblacion || !entidad) {
+      throw new Error(`el titulo ${i + 1} de la seleccion viene incompleto`);
+    }
+    if (numeroVariables === "2" && (!variable2 || variable2.toLowerCase() === "null")) {
+      throw new Error(`el titulo ${i + 1} de la seleccion no trae variable2 (tesis correlacional)`);
+    }
+    return {
+      variable1,
+      variable2: numeroVariables === "2" ? variable2 : null,
+      poblacion,
+      entidad,
+    };
+  });
+  // Titulos independientes: ninguna variable repetida entre titulos.
+  const vistas = new Set();
+  for (const t of result) {
+    for (const v of [t.variable1, t.variable2]) {
+      if (!v) continue;
+      const key = v.toLowerCase();
+      if (vistas.has(key)) {
+        throw new Error(`la variable "${v}" se repite entre titulos`);
+      }
+      vistas.add(key);
+    }
+  }
+  return result;
+};
+
+// Etapa 1: llamada corta SIN herramienta que elige las variables, poblacion
+// y entidad de los 3 titulos a partir de la pre-busqueda generica. Con el
+// resultado, index.js lanza busquedas Brave dirigidas y la Etapa 2 desarrolla
+// los titulos. Si el JSON viene invalido se reintenta UNA vez; si persiste,
+// se lanza y el caller cae al flujo clasico (una llamada con herramienta).
+export const requestSeleccionVariables = async ({
+  systemPrompt, datos, searchContext, options = {},
+}) => {
+  const apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENROUTER_API_KEY no esta configurada en el servidor.");
+  }
+  const model = options.model ?? process.env.OPENROUTER_MODEL_TITULOS ?? DEFAULT_MODEL;
+  const timeoutMs = options.timeoutMs
+    ?? Number.parseInt(process.env.OPENROUTER_TIMEOUT_MS ?? "600000", 10);
+  // Salida diminuta (un JSON de 3 titulos), pero el razonamiento medium
+  // tambien consume presupuesto de completion.
+  const maxTokens = options.maxTokensSeleccion
+    ?? Number.parseInt(process.env.OPENROUTER_MAX_TOKENS_SELECCION ?? "8000", 10);
+
+  const bloqueDatos = "DATOS DEL ESTUDIANTE:\n"
+    + `- Universidad: ${datos.universidad}\n`
+    + `- Carrera: ${datos.carrera}\n`
+    + `- Lugar: ${datos.lugar}\n`
+    + `- Número de variables: ${datos.numeroVariables}\n`
+    + `- Año: ${datos.anio}\n\n`;
+  const userContent = bloqueDatos
+    + "RESULTADOS DE BÚSQUEDA DEL SISTEMA (URLs reales de repositorios académicos):\n\n"
+    + searchContext + "\n\n"
+    + "Elige ahora las variables, población y entidad de los 3 títulos y responde SOLO con el JSON.";
+
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userContent },
+  ];
+
+  let lastFailure = "desconocido";
+  let attemptMessages = messages;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const { content, usage, finishReason } = await callOpenRouter({
+      messages: attemptMessages, tools: undefined, model, apiKey, timeoutMs, maxTokens,
+      reasoningEffort: "medium",
+    });
+    // eslint-disable-next-line no-console
+    console.log(
+      `[titulos] seleccion intento ${attempt}: finish_reason=${finishReason}, `
+      + `usage=${JSON.stringify(usage)}`,
+    );
+    try {
+      return parseSeleccion(stripToolCallMarkup(content), datos.numeroVariables);
+    } catch (err) {
+      lastFailure = err.message;
+      // eslint-disable-next-line no-console
+      console.error(
+        `[titulos] seleccion intento ${attempt} fallido (${err.message}). Respuesta cruda:\n${String(content).slice(0, 1000)}`,
+      );
+      attemptMessages = [
+        ...messages,
+        ...(String(content ?? "").trim() ? [{ role: "assistant", content }] : []),
+        {
+          role: "user",
+          content: `Tu respuesta anterior no fue válida (${err.message}). Responde ÚNICAMENTE con el `
+            + 'JSON pedido: {"titulos":[{"variable1":"...","variable2":"...","poblacion":"...",'
+            + '"entidad":"..."}, ...]} con exactamente 3 títulos, sin texto adicional ni bloques de código.',
+        },
+      ];
+    }
+  }
+  throw new Error(`La seleccion de variables fallo tras el reintento (${lastFailure}).`);
 };

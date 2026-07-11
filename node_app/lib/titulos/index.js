@@ -2,16 +2,17 @@
 // formulario (universidad, carrera, lugar, numero_variables, anio opcional),
 // arma el system prompt interpolado con la plantilla que corresponda y hace
 // UNA llamada a OpenRouter (GLM-5.2 + openrouter:web_search).
-import { buildSystemPrompt, currentYear } from "./prompt.js";
+import { buildSystemPrompt, buildSeleccionSystemPrompt, currentYear } from "./prompt.js";
 import { resolveRepositoryDomain } from "./universities.js";
 import {
-  requestTitulos, buildBaseUserContent, stripToolCallMarkup, TITULO_MARKER_RE,
+  requestTitulos, requestSeleccionVariables, buildBaseUserContent, stripToolCallMarkup,
+  TITULO_MARKER_RE,
 } from "./openrouter.js";
 import { buildTitulosDocx } from "./docx.js";
 import {
   extractReferenceUrls, verifyUrls, normalizeUrlForMatch, findBannedSourceUrls,
 } from "./verify.js";
-import { gatherSearchContext, braveUrlCheck } from "./websearch.js";
+import { gatherSearchContext, gatherTargetedSearchContext, braveUrlCheck } from "./websearch.js";
 
 // Limpieza final del contenido: quita markup de tool_call filtrado como texto
 // (defensa en profundidad: requestTitulos ya lo hace, pero esta funcion
@@ -165,20 +166,60 @@ export const generateTitulos = async (payload, options = {}) => {
     console.warn(`[titulos] pre-busqueda fallo (se continua sin ella): ${err.message}`);
   }
 
+  // Flujo en dos etapas (solo con pre-busqueda): la Etapa 1 elige las
+  // variables (llamada corta, razonamiento medium), el sistema lanza
+  // busquedas Brave dirigidas a esas variables, y la Etapa 2 desarrolla los
+  // titulos SIN herramienta (razonamiento low) — sin herramienta no hay
+  // glitch <tool_call> ni rondas de busqueda del modelo, y el job baja de
+  // ~10-17 min a ~4-6 min. Si la Etapa 1 falla, se cae al flujo clasico de
+  // una sola llamada CON herramienta (nunca se tumba el job por esto).
+  let seleccion = null;
+  let fullSearchContext = searchContext;
+  if (searchContext) {
+    try {
+      seleccion = await requestSeleccionVariables({
+        systemPrompt: buildSeleccionSystemPrompt(),
+        datos,
+        searchContext,
+        options,
+      });
+      try {
+        const targeted = await gatherTargetedSearchContext(
+          seleccion, repositoryDomain, options.websearch ?? {},
+        );
+        if (targeted) fullSearchContext = `${searchContext}\n\n${targeted}`;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(`[titulos] busqueda dirigida fallo (se continua con la generica): ${err.message}`);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`[titulos] seleccion de variables fallo (se usa el flujo clasico): ${err.message}`);
+      seleccion = null;
+    }
+  }
+  // Etapa 2 sin herramienta y con razonamiento bajo (la tarea ya es
+  // mecanica: rellenar la plantilla con variables y material dados).
+  const developOptions = seleccion
+    ? { ...options, includeSearchTool: false, reasoningEffort: "low" }
+    : options;
+
   const primerIntento = await requestTitulos({
     systemPrompt,
     repositoryDomain,
     datos,
-    searchContext,
-    options,
+    searchContext: fullSearchContext,
+    seleccion,
+    options: developOptions,
   });
 
   let content = primerIntento.content;
   let webSearchRequests = primerIntento.webSearchRequests;
   let contenido = cleanTitulosContent(content);
-  // Procedencia: URLs que el sistema mismo obtuvo en la pre-busqueda (reales
-  // por construccion) — resuelven las "sospechosas" sin gastar cuota.
-  const provenance = new Set(extractReferenceUrls(searchContext ?? "").map(normalizeUrlForMatch));
+  // Procedencia: URLs que el sistema mismo obtuvo en la pre-busqueda y en
+  // las busquedas dirigidas (reales por construccion) — resuelven las
+  // "sospechosas" sin gastar cuota.
+  const provenance = new Set(extractReferenceUrls(fullSearchContext ?? "").map(normalizeUrlForMatch));
   const verifyOpts = { provenance, websearchOptions: options.websearch ?? {} };
   let {
     reales, inventadas, noVerificables, prohibidas,
@@ -194,16 +235,20 @@ export const generateTitulos = async (payload, options = {}) => {
 
     const correctionMessages = [
       { role: "system", content: systemPrompt },
-      { role: "user", content: buildBaseUserContent(repositoryDomain, datos, searchContext) },
+      { role: "user", content: buildBaseUserContent(repositoryDomain, datos, fullSearchContext, seleccion) },
       { role: "assistant", content },
       { role: "user", content: buildCorrectionUserContent(inventadas, prohibidas) },
     ];
 
+    // El reintento correctivo SIEMPRE lleva la herramienta de busqueda
+    // (necesita encontrar reemplazos reales), incluso en el flujo en dos
+    // etapas donde la llamada de desarrollo fue sin herramienta.
     const reintento = await requestTitulos({
       systemPrompt,
       repositoryDomain,
       datos,
-      searchContext,
+      searchContext: fullSearchContext,
+      seleccion,
       options: { ...options, messages: correctionMessages },
     });
 

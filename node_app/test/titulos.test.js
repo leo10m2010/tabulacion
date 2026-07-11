@@ -6,12 +6,29 @@ import assert from "node:assert/strict";
 process.env.BRAVE_API_KEY = "";
 process.env.FIRECRAWL_API_KEY = "";
 import JSZip from "jszip";
-import { loadTitulosPrompts, buildSystemPrompt } from "../lib/titulos/prompt.js";
+import { loadTitulosPrompts, buildSystemPrompt, buildSeleccionSystemPrompt } from "../lib/titulos/prompt.js";
 import { resolveRepositoryDomain } from "../lib/titulos/universities.js";
 import { normalizeTitulosInput, generateTitulos, cleanTitulosContent } from "../lib/titulos/index.js";
-import { stripToolCallMarkup, buildBaseUserContent } from "../lib/titulos/openrouter.js";
-import { searchWithFallback, buildQueries, gatherSearchContext } from "../lib/titulos/websearch.js";
+import { stripToolCallMarkup, buildBaseUserContent, parseSeleccion } from "../lib/titulos/openrouter.js";
+import {
+  searchWithFallback, buildQueries, buildTargetedQueries, gatherSearchContext,
+} from "../lib/titulos/websearch.js";
 import { buildTitulosDocx } from "../lib/titulos/docx.js";
+
+// Seleccion valida de la Etapa 1 (flujo en dos etapas). `seed` distingue las
+// variables entre tests: las consultas dirigidas se cachean globalmente por
+// texto en websearch.js y variables repetidas contaminarian otros tests.
+const seleccionJson = (seed) => JSON.stringify({
+  titulos: [
+    { variable1: `Clima organizacional ${seed}`, variable2: `Satisfacción laboral ${seed}`, poblacion: "trabajadores", entidad: "hospital" },
+    { variable1: `Gestión administrativa ${seed}`, variable2: `Calidad de servicio ${seed}`, poblacion: "usuarios", entidad: "municipalidad" },
+    { variable1: `Estrés laboral ${seed}`, variable2: `Desempeño laboral ${seed}`, poblacion: "enfermeras", entidad: "clínica" },
+  ],
+});
+
+// Distingue en los mocks la llamada de seleccion (Etapa 1) de la de
+// desarrollo: el system prompt de seleccion pide ELEGIR y responder JSON.
+const esLlamadaSeleccion = (body) => body.messages[0].content.includes("ELEGIR");
 
 // ── Parsing del .md ─────────────────────────────────────────────────────────
 
@@ -297,12 +314,18 @@ test("gatherSearchContext sin claves devuelve null; con resultados arma el bloqu
   assert.ok(bloque.includes("https://repo.pe/a"));
 });
 
-test("generateTitulos con pre-busqueda inyecta los resultados y acota las busquedas del modelo", async () => {
+test("generateTitulos con pre-busqueda corre en dos etapas: seleccion + desarrollo sin herramienta", async () => {
   const originalFetch = global.fetch;
   const openRouterCalls = [];
   global.fetch = async (url, opts) => {
-    openRouterCalls.push(JSON.parse(opts.body));
-    return { ok: true, json: async () => ({ choices: [{ message: { content: "**TÍTULO 1**\nok" } }], usage: null }) };
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      const body = JSON.parse(opts.body);
+      openRouterCalls.push(body);
+      const content = esLlamadaSeleccion(body) ? seleccionJson("obst") : "**TÍTULO 1**\nok";
+      return { ok: true, json: async () => ({ choices: [{ message: { content } }], usage: null }) };
+    }
+    // Verificacion HTTP de URLs citadas (el contenido "ok" no trae URLs).
+    return { status: 200, text: async () => "<title>Tesis</title>" };
   };
   try {
     await generateTitulos({ ...validInput(), carrera: "Obstetricia" }, {
@@ -314,14 +337,121 @@ test("generateTitulos con pre-busqueda inyecta los resultados y acota las busque
         fetchImpl: async () => braveOk([{ title: "Tesis B", url: "https://repo.pe/b", description: "d" }]),
       },
     });
-    const userMsg = openRouterCalls[0].messages[1].content;
+    assert.equal(openRouterCalls.length, 2);
+    // Etapa 1 (seleccion): sin herramienta, razonamiento medium, con los
+    // resultados de la pre-busqueda.
+    const seleccionBody = openRouterCalls[0];
+    assert.equal(seleccionBody.tools, undefined);
+    assert.equal(seleccionBody.reasoning.effort, "medium");
+    assert.ok(seleccionBody.messages[1].content.includes("https://repo.pe/b"));
+    // Etapa 2 (desarrollo): sin herramienta, razonamiento low, con las
+    // variables ya elegidas y las busquedas dirigidas.
+    const devBody = openRouterCalls[1];
+    assert.equal(devBody.tools, undefined);
+    assert.equal(devBody.reasoning.effort, "low");
+    const userMsg = devBody.messages[1].content;
     assert.ok(userMsg.includes("RESULTADOS DE BÚSQUEDA DEL SISTEMA"));
-    assert.ok(userMsg.includes("https://repo.pe/b"));
-    assert.ok(userMsg.includes("MÁXIMO 4"));
-    assert.ok(!userMsg.includes("máximo 10 búsquedas"));
+    assert.ok(userMsg.includes("VARIABLES YA ELEGIDAS"));
+    assert.ok(userMsg.includes("Clima organizacional obst"));
+    assert.ok(userMsg.includes("Búsqueda dirigida"));
+    assert.ok(userMsg.includes("NO tienes herramienta de búsqueda"));
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+test("si la seleccion de variables falla dos veces, se cae al flujo clasico con herramienta", async () => {
+  const originalFetch = global.fetch;
+  const openRouterCalls = [];
+  global.fetch = async (url, opts) => {
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      const body = JSON.parse(opts.body);
+      openRouterCalls.push(body);
+      // La seleccion responde texto sin JSON (invalida); el desarrollo ok.
+      const content = esLlamadaSeleccion(body) ? "no puedo responder eso" : "**TÍTULO 1**\nok";
+      return { ok: true, json: async () => ({ choices: [{ message: { content } }], usage: null }) };
+    }
+    return { status: 200, text: async () => "<title>Tesis</title>" };
+  };
+  try {
+    await generateTitulos({ ...validInput(), carrera: "Biología" }, {
+      apiKey: "test-key",
+      websearch: {
+        braveApiKey: "brave-key",
+        firecrawlApiKey: null,
+        delayMs: 0,
+        fetchImpl: async () => braveOk([{ title: "Tesis B", url: "https://repo.pe/bio", description: "d" }]),
+      },
+    });
+    // 2 intentos de seleccion fallidos + 1 llamada clasica de desarrollo.
+    assert.equal(openRouterCalls.length, 3);
+    const devBody = openRouterCalls[2];
+    // Flujo clasico: CON herramienta, razonamiento medium, sin seleccion.
+    assert.ok(Array.isArray(devBody.tools) && devBody.tools.length === 1);
+    assert.equal(devBody.reasoning.effort, "medium");
+    assert.ok(!devBody.messages[1].content.includes("VARIABLES YA ELEGIDAS"));
+    assert.ok(devBody.messages[1].content.includes("MÁXIMO 4"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// ── parseSeleccion / buildTargetedQueries (unidad) ──────────────────────────
+
+test("parseSeleccion tolera fences y texto alrededor, y normaliza variable2 null con 1 variable", () => {
+  const raw = "Aquí está:\n```json\n" + JSON.stringify({
+    titulos: [
+      { variable1: "Ansiedad", variable2: null, poblacion: "estudiantes", entidad: "universidad" },
+      { variable1: "Autoestima", poblacion: "estudiantes", entidad: "colegio" },
+      { variable1: "Estrés académico", variable2: "lo que sea", poblacion: "alumnos", entidad: "instituto" },
+    ],
+  }) + "\n```";
+  const seleccion = parseSeleccion(raw, "1");
+  assert.equal(seleccion.length, 3);
+  assert.equal(seleccion[0].variable1, "Ansiedad");
+  // Con numero_variables=1 variable2 siempre queda null, venga lo que venga.
+  assert.equal(seleccion[2].variable2, null);
+});
+
+test("parseSeleccion rechaza: sin JSON, menos de 3 titulos, variable2 faltante y variables repetidas", () => {
+  assert.throws(() => parseSeleccion("sin json aqui", "2"), /JSON/);
+  assert.throws(() => parseSeleccion(JSON.stringify({ titulos: [{ variable1: "A", variable2: "B", poblacion: "p", entidad: "e" }] }), "2"), /3 titulos/);
+  const sinV2 = { titulos: [
+    { variable1: "A", variable2: "B", poblacion: "p", entidad: "e" },
+    { variable1: "C", poblacion: "p", entidad: "e" },
+    { variable1: "D", variable2: "E", poblacion: "p", entidad: "e" },
+  ] };
+  assert.throws(() => parseSeleccion(JSON.stringify(sinV2), "2"), /variable2/);
+  const repetida = { titulos: [
+    { variable1: "A", variable2: "B", poblacion: "p", entidad: "e" },
+    { variable1: "a", variable2: "C", poblacion: "p", entidad: "e" },
+    { variable1: "D", variable2: "E", poblacion: "p", entidad: "e" },
+  ] };
+  assert.throws(() => parseSeleccion(JSON.stringify(repetida), "2"), /se repite/);
+});
+
+test("buildTargetedQueries arma consultas nacionales, internacionales y del repositorio", () => {
+  const seleccion = [
+    { variable1: "V1", variable2: "V2", poblacion: "p", entidad: "e" },
+    { variable1: "V3", variable2: null, poblacion: "p", entidad: "e" },
+  ];
+  const conDominio = buildTargetedQueries(seleccion, "repositorio.udh.edu.pe");
+  assert.equal(conDominio.length, 6);
+  assert.ok(conDominio[0].includes('"V1" "V2"') && conDominio[0].includes("Perú"));
+  assert.ok(conDominio[1].includes("Ecuador"));
+  assert.ok(conDominio[2].includes("site:repositorio.udh.edu.pe"));
+  // Univariable: solo variable1 entre comillas.
+  assert.ok(conDominio[3].includes('"V3"') && !conDominio[3].includes('"null"'));
+  const sinDominio = buildTargetedQueries(seleccion, null);
+  assert.equal(sinDominio.length, 4);
+});
+
+test("buildSeleccionSystemPrompt es estatico y pide ELEGIR con salida JSON", () => {
+  const prompt = buildSeleccionSystemPrompt();
+  assert.ok(prompt.includes("ELEGIR"));
+  assert.ok(prompt.includes('"titulos"'));
+  assert.ok(!prompt.includes("{{universidad}}"));
+  assert.equal(prompt, buildSeleccionSystemPrompt());
 });
 
 // ── buildTitulosDocx (zip .docx valido con el contenido esperado) ──────────
@@ -515,13 +645,26 @@ test("generateTitulos reintenta si la respuesta es solo tool_calls filtrados y u
   }
 });
 
-test("glitch tool_calls CON pre-busqueda: el reintento va sin herramienta de busqueda y ordena redactar", async () => {
+test("glitch tool_calls CON pre-busqueda: la etapa de desarrollo (sin tools) reintenta y ordena redactar", async () => {
   const originalFetch = global.fetch;
   const calls = [];
+  let devCalls = 0;
   global.fetch = async (url, opts) => {
-    calls.push(JSON.parse(opts.body));
-    const content = calls.length === 1 ? TOOL_CALL_LEAK_REAL : "**TÍTULO 1**\ncontenido valido";
-    return { ok: true, json: async () => ({ choices: [{ message: { content }, finish_reason: "stop" }], usage: null }) };
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      const body = JSON.parse(opts.body);
+      calls.push(body);
+      let content;
+      if (esLlamadaSeleccion(body)) {
+        content = seleccionJson("nutr");
+      } else {
+        devCalls += 1;
+        // El desarrollo alucina markup <tool_call> en el primer intento
+        // (aunque no tiene herramienta) y responde bien en el segundo.
+        content = devCalls === 1 ? TOOL_CALL_LEAK_REAL : "**TÍTULO 1**\ncontenido valido";
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { content }, finish_reason: "stop" }], usage: null }) };
+    }
+    return { status: 200, text: async () => "<title>Tesis</title>" };
   };
   try {
     const result = await generateTitulos({ ...validInput(), carrera: "Nutrición" }, {
@@ -533,13 +676,11 @@ test("glitch tool_calls CON pre-busqueda: el reintento va sin herramienta de bus
         fetchImpl: async () => braveOk([{ title: "Tesis N", url: "https://repo.pe/n", description: "d" }]),
       },
     });
-    assert.equal(calls.length, 2);
-    // El primer intento lleva la herramienta de busqueda; el reintento por
-    // glitch de tool_calls (con pre-busqueda disponible) va SIN tools para
-    // forzar la redaccion con los resultados ya inyectados.
-    assert.ok(Array.isArray(calls[0].tools) && calls[0].tools.length === 1);
+    // 1 seleccion + 2 intentos de desarrollo (ambos sin herramienta).
+    assert.equal(calls.length, 3);
     assert.equal(calls[1].tools, undefined);
-    const mensajeCorrectivo = calls[1].messages[calls[1].messages.length - 1];
+    assert.equal(calls[2].tools, undefined);
+    const mensajeCorrectivo = calls[2].messages[calls[2].messages.length - 1];
     assert.equal(mensajeCorrectivo.role, "user");
     assert.ok(mensajeCorrectivo.content.includes("NO busques más"));
     assert.equal(result.contenido, "**TÍTULO 1**\ncontenido valido");

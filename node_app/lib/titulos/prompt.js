@@ -52,16 +52,23 @@ export const loadTitulosPrompts = () => {
   const systemSegment = extractSection(raw, "## 2. PROMPT DE SISTEMA", "## 3.");
   const plantillaASegment = extractSection(raw, "## 3. PLANTILLA A", "## 4.");
   const plantillaBSegment = extractSection(raw, "## 4. PLANTILLA B", "## 5.");
+  const seleccionSegment = extractSection(raw, "## 6. PROMPT DE SELECCIÓN", "## 7.");
 
   cached = {
     systemPrompt: extractFencedBlock(systemSegment, "2. PROMPT DE SISTEMA"),
     plantillaA: extractFencedBlock(plantillaASegment, "3. PLANTILLA A"),
     plantillaB: extractFencedBlock(plantillaBSegment, "4. PLANTILLA B"),
+    seleccionPrompt: extractFencedBlock(seleccionSegment, "6. PROMPT DE SELECCIÓN"),
   };
   return cached;
 };
 
 export const currentYear = () => new Date().getFullYear();
+
+// System prompt ESTATICO de la Etapa 1 (seleccion de variables) del flujo en
+// dos etapas: no lleva plantilla ni datos del cliente, es identico en todas
+// las solicitudes (100% cacheable).
+export const buildSeleccionSystemPrompt = () => loadTitulosPrompts().seleccionPrompt;
 
 // Arma el system prompt final ESTATICO: instrucciones + SOLO la plantilla
 // que corresponde segun numero_variables ("2" = Plantilla A correlacional

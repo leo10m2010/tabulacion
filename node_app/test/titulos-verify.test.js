@@ -195,6 +195,19 @@ const openRouterOk = (content) => ({
   usage: { server_tool_use_details: { web_search_requests: 3 } },
 });
 
+// Con pre-busqueda activa el flujo corre en dos etapas: la primera llamada a
+// OpenRouter es la seleccion de variables (system prompt pide ELEGIR y
+// responder JSON). `seed` evita que las consultas dirigidas (cacheadas
+// globalmente por texto) se compartan entre tests.
+const esLlamadaSeleccion = (body) => body.messages[0].content.includes("ELEGIR");
+const seleccionJson = (seed) => JSON.stringify({
+  titulos: [
+    { variable1: `Variable A ${seed}`, variable2: `Variable B ${seed}`, poblacion: "trabajadores", entidad: "entidad" },
+    { variable1: `Variable C ${seed}`, variable2: `Variable D ${seed}`, poblacion: "usuarios", entidad: "entidad" },
+    { variable1: `Variable E ${seed}`, variable2: `Variable F ${seed}`, poblacion: "clientes", entidad: "entidad" },
+  ],
+});
+
 test("generateTitulos caso feliz: todas las URLs reales, sin reintento", async () => {
   const originalFetch = global.fetch;
   const contenido = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, REFERENCIA_REAL_2);
@@ -267,10 +280,11 @@ test("URL tras muro anti-bot que vino de la pre-busqueda se acepta por procedenc
   const URL_RENATI = "https://renati.sunedu.gob.pe/handle/sunedu/1234567";
   const contenido = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, URL_RENATI);
   let openRouterCalls = 0;
-  global.fetch = async (url) => {
+  global.fetch = async (url, opts) => {
     if (url === "https://openrouter.ai/api/v1/chat/completions") {
       openRouterCalls += 1;
-      return { ok: true, json: async () => openRouterOk(contenido) };
+      const body = JSON.parse(opts.body);
+      return { ok: true, json: async () => openRouterOk(esLlamadaSeleccion(body) ? seleccionJson("der") : contenido) };
     }
     if (url === URL_RENATI) {
       return { status: 200, text: async () => "<title>Making sure you're not a bot!</title>" };
@@ -291,7 +305,8 @@ test("URL tras muro anti-bot que vino de la pre-busqueda se acepta por procedenc
         }),
       },
     });
-    assert.equal(openRouterCalls, 1);
+    // Dos etapas: 1 llamada de seleccion + 1 de desarrollo, sin correctivo.
+    assert.equal(openRouterCalls, 2);
     assert.deepEqual(result.fuentes, { reales: 2, noVerificables: 0 });
   } finally {
     global.fetch = originalFetch;
@@ -305,10 +320,16 @@ test("URL tras muro anti-bot que Brave no conoce se trata como inventada y dispa
   const contenidoInicial = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, URL_RENATI_FALSA);
   const contenidoCorregido = CONTENIDO_CON_REFERENCIAS(REFERENCIA_REAL_1, URL_OTRA);
   let openRouterCalls = 0;
-  global.fetch = async (url) => {
+  let devCalls = 0;
+  global.fetch = async (url, opts) => {
     if (url === "https://openrouter.ai/api/v1/chat/completions") {
       openRouterCalls += 1;
-      return { ok: true, json: async () => openRouterOk(openRouterCalls === 1 ? contenidoInicial : contenidoCorregido) };
+      const body = JSON.parse(opts.body);
+      if (esLlamadaSeleccion(body)) {
+        return { ok: true, json: async () => openRouterOk(seleccionJson("eco")) };
+      }
+      devCalls += 1;
+      return { ok: true, json: async () => openRouterOk(devCalls === 1 ? contenidoInicial : contenidoCorregido) };
     }
     if (url === URL_RENATI_FALSA) {
       return { status: 200, text: async () => "<title>Making sure you're not a bot!</title>" };
@@ -330,7 +351,8 @@ test("URL tras muro anti-bot que Brave no conoce se trata como inventada y dispa
         }),
       },
     });
-    assert.equal(openRouterCalls, 2);
+    // Dos etapas + correctivo: seleccion, desarrollo y reintento correctivo.
+    assert.equal(openRouterCalls, 3);
     assert.equal(result.contenido, contenidoCorregido.trim());
   } finally {
     global.fetch = originalFetch;
