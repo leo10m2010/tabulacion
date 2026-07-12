@@ -119,7 +119,9 @@ export const stripToolCallMarkup = (text) => String(text ?? "")
 // como intento fallido (nunca se entrega basura al cliente final).
 export const TITULO_MARKER_RE = /\*\*\s*T[IÍí]TULO\s*1/i;
 
-const callOpenRouter = async ({
+// Exportado: tambien lo usa lib/matriz (Matriz de Consistencia), que comparte
+// modelo, proveedor y manejo de reasoning/timeout con este modulo.
+export const callOpenRouter = async ({
   messages, tools, model, apiKey, timeoutMs, maxTokens, reasoningEffort = "medium",
 }) => {
   const controller = new AbortController();

@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
+  Table2,
   UserRound,
   Users,
   Wand2,
@@ -77,6 +78,7 @@ import { CronbachSection } from "./components/sections/CronbachSection";
 import { DescriptivaSection } from "./components/sections/DescriptivaSection";
 import { FormsSection } from "./components/sections/FormsSection";
 import { TitulosSection } from "./components/sections/TitulosSection";
+import { MatrizSection } from "./components/sections/MatrizSection";
 import { UsersSection } from "./components/sections/UsersSection";
 
 // Herramientas del menú (sidebar y tabs móviles se dibujan desde aquí).
@@ -86,6 +88,7 @@ const NAV_TOOLS: { id: AppSection; label: string; mobileLabel?: string; icon: ty
   { id: "confiabilidad", label: "Confiabilidad", mobileLabel: "Alfa", icon: ShieldCheck },
   { id: "forms", label: "Forms", icon: KeyRound },
   { id: "titulos", label: "Generador de Títulos", mobileLabel: "Títulos", icon: Lightbulb },
+  { id: "matriz", label: "Matriz de Consistencia", mobileLabel: "Matriz", icon: Table2 },
 ];
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
@@ -1485,6 +1488,11 @@ export default function App() {
           {/* ── Generador de Títulos de Investigación (IA) ── */}
           {activeSection === "titulos" && authUser && (
             <TitulosSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+          )}
+
+          {/* ── Matriz de Consistencia (IA) ── */}
+          {activeSection === "matriz" && authUser && (
+            <MatrizSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
           )}
 
           {/* ── Usuarios (admin) ── */}

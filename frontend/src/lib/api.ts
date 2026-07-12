@@ -10,6 +10,8 @@ import type {
   DescriptivaJobResponse,
   DescriptivaStartResponse,
   InlineGenerateResponse,
+  MatrizJobResponse,
+  MatrizStartResponse,
   TabConfig,
   TemplateInfo,
   TitulosJobResponse,
@@ -115,6 +117,25 @@ export const startTitulos = (apiBaseUrl: string, token: string, input: TitulosIn
 
 export const getTitulosJob = (apiBaseUrl: string, token: string, jobId: string) =>
   request<TitulosJobResponse>(apiBaseUrl, `/titulos/jobs/${jobId}`, { token });
+
+// Matriz de Consistencia (IA): título obligatorio + campos opcionales. El
+// backend crea un job (análisis del título + búsqueda de dimensiones +
+// redacción pueden tardar minutos) y aquí se hace polling hasta recibir la
+// matriz en JSON + el Word apaisado en base64.
+export interface MatrizInput {
+  titulo: string;
+  universidad?: string;
+  carrera?: string;
+  poblacion?: string;
+  lugar?: string;
+  anio?: string;
+}
+
+export const startMatriz = (apiBaseUrl: string, token: string, input: MatrizInput) =>
+  request<MatrizStartResponse>(apiBaseUrl, "/matriz", { method: "POST", token, body: input });
+
+export const getMatrizJob = (apiBaseUrl: string, token: string, jobId: string) =>
+  request<MatrizJobResponse>(apiBaseUrl, `/matriz/jobs/${jobId}`, { token });
 
 // ── Usuarios (admin) ─────────────────────────────────────────────────────────
 export const listUsers = (apiBaseUrl: string, token: string) =>

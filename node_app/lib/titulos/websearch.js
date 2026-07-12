@@ -179,6 +179,16 @@ export const braveUrlCheck = async (url, options = {}) => {
   }
 };
 
+// Ejecuta una lista de consultas arbitraria con el mismo pipeline (cache,
+// fallback Brave->Firecrawl, rate limit). La usa lib/matriz para la busqueda
+// dirigida de dimensiones. Devuelve null sin claves o sin resultados.
+export const gatherCustomSearchContext = async (queries, sectionLabel, logLabel, options = {}) => {
+  const braveKey = options.braveApiKey ?? process.env.BRAVE_API_KEY;
+  const firecrawlKey = options.firecrawlApiKey ?? process.env.FIRECRAWL_API_KEY;
+  if (!braveKey && !firecrawlKey) return null;
+  return runQueries(queries, sectionLabel, logLabel, options);
+};
+
 // Consultas fijas del job: cubren universidad, nacional (ALICIA/RENATI) e
 // internacional. Set acotado a proposito — la cuota es predecible.
 export const buildQueries = (datos, repositoryDomain) => {

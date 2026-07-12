@@ -125,6 +125,67 @@ export interface TitulosJobResponse {
   docxFileName?: string;
 }
 
+// Matriz de Consistencia (IA): el backend valida y devuelve la matriz como
+// JSON estructurado (espejo de parseMatriz en node_app/lib/matriz); el
+// frontend arma la tabla desde este objeto y el Word llega aparte en base64.
+export interface MatrizSeccion {
+  general: string;
+  especificos: string[];
+}
+
+export interface MatrizHipotesis {
+  general: string;
+  nula: string;
+  especificas: string[];
+}
+
+export interface MatrizVariable {
+  nombre: string;
+  rol: string;
+  dimensiones: string[];
+  autor: string;
+  fuente: string;
+}
+
+export interface MatrizMetodologia {
+  tipo: string;
+  enfoque: string;
+  nivel: string;
+  diseno: string;
+  poblacion: string;
+  muestra: string;
+  muestreo: string;
+  tecnica: string;
+  instrumento: string;
+}
+
+export interface MatrizData {
+  titulo: string;
+  problema: MatrizSeccion;
+  objetivos: MatrizSeccion;
+  // null en tesis descriptivas (no llevan hipótesis).
+  hipotesis: MatrizHipotesis | null;
+  variables: MatrizVariable[];
+  metodologia: MatrizMetodologia;
+}
+
+export interface MatrizStartResponse {
+  ok?: boolean;
+  jobId: string;
+  status: string;
+  error?: string;
+}
+
+export interface MatrizJobResponse {
+  ok?: boolean;
+  status: "processing" | "done" | "error";
+  error?: string | null;
+  matriz?: MatrizData;
+  webSearchRequests?: number | null;
+  docxBase64?: string;
+  docxFileName?: string;
+}
+
 export interface TemplateInfo {
   maxMuestra: number;
   maxItemsV1: number;
@@ -185,5 +246,5 @@ export interface AuthUsersResponse {
 
 export type ThemeMode = "light" | "dark";
 export type AppView = "landing" | "app";
-export type AppSection = "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "titulos" | "usuarios" | "cuenta";
+export type AppSection = "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "titulos" | "matriz" | "usuarios" | "cuenta";
 export type WizardStep = 1 | 2 | 3;
