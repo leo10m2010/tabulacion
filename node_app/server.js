@@ -24,6 +24,7 @@ import {
 import { docxToMarkdown } from "./lib/descriptiva/docx.js";
 import { generateTitulos, normalizeTitulosInput } from "./lib/titulos/index.js";
 import { generateMatriz, normalizeMatrizInput } from "./lib/matriz/index.js";
+import { generateHumanizacion, normalizeHumanizadorInput } from "./lib/humanizador/index.js";
 
 // Tutorica Forms (rellenador de Google Forms) corre en este mismo proceso: es
 // una app Express a la que se delegan las rutas /api/tesistab y /api/forms.
@@ -128,6 +129,18 @@ const MATRIZ_MAX_CONCURRENT = Number.parseInt(process.env.MATRIZ_MAX_CONCURRENT 
 const isMatrizJobActive = (job) => job.status === "processing"
   && Date.now() - job.createdAt < MATRIZ_JOB_TTL_MS;
 
+// Jobs del Humanizador (IA): mismo patron (varias llamadas a OpenRouter por
+// bloque de ~1000 palabras pueden tardar minutos; POST /humanizador crea un
+// job y el frontend hace polling).
+const humanizadorJobs = new Map();
+const HUMANIZADOR_JOB_TTL_MS = Number.parseInt(process.env.HUMANIZADOR_JOB_TTL_SECONDS ?? "1800", 10) * 1000;
+const HUMANIZADOR_DONE_TTL_MS = Number.parseInt(process.env.HUMANIZADOR_DONE_TTL_SECONDS ?? "600", 10) * 1000;
+const HUMANIZADOR_SERVED_TTL_MS = 120 * 1000;
+const HUMANIZADOR_MAX_CONCURRENT = Number.parseInt(process.env.HUMANIZADOR_MAX_CONCURRENT ?? "3", 10);
+
+const isHumanizadorJobActive = (job) => job.status === "processing"
+  && Date.now() - job.createdAt < HUMANIZADOR_JOB_TTL_MS;
+
 class HttpError extends Error {
   constructor(statusCode, message) {
     super(message);
@@ -162,6 +175,12 @@ const cleanupExpired = () => {
     const hardExpiry = job.status === "processing" ? job.expiresAt + MATRIZ_JOB_TTL_MS : job.expiresAt;
     if (hardExpiry <= now) {
       matrizJobs.delete(id);
+    }
+  }
+  for (const [id, job] of humanizadorJobs.entries()) {
+    const hardExpiry = job.status === "processing" ? job.expiresAt + HUMANIZADOR_JOB_TTL_MS : job.expiresAt;
+    if (hardExpiry <= now) {
+      humanizadorJobs.delete(id);
     }
   }
 };
@@ -1421,6 +1440,99 @@ const server = http.createServer(async (req, res) => {
         // Ya entregado: acortar la vida del contenido en memoria (el cliente
         // aun puede re-consultar un par de minutos, p. ej. tras un remount).
         job.expiresAt = Math.min(job.expiresAt, Date.now() + MATRIZ_SERVED_TTL_MS);
+        return;
+      }
+      sendJson(res, 200, { ok: true, status: job.status, error: job.error });
+      return;
+    }
+
+    // ── Humanizador de texto academico (IA) ─────────────────────────────────
+    // Texto pegado o .docx; el limite de 50-3000 palabras del .docx se valida
+    // DENTRO del job (la conversion es async) y llega como error de usuario.
+    if (req.method === "POST" && pathname === "/humanizador") {
+      const authUser = requireAuth(req, { requireSubscription: true });
+      const payload = await parseJsonBody(req);
+
+      let input;
+      try {
+        input = normalizeHumanizadorInput(payload);
+      } catch (err) {
+        throw new HttpError(400, err.message);
+      }
+
+      const active = [...humanizadorJobs.values()].filter(isHumanizadorJobActive);
+      if (active.some((j) => j.ownerUserId === authUser.id)) {
+        throw new HttpError(409, "Ya tienes una humanización en curso; espera a que termine.");
+      }
+      if (active.length >= HUMANIZADOR_MAX_CONCURRENT) {
+        throw new HttpError(429, "El servidor esta ocupado humanizando otros textos; intenta en un par de minutos.");
+      }
+
+      const id = crypto.randomUUID();
+      const job = {
+        id,
+        ownerUserId: authUser.id,
+        status: "processing",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + HUMANIZADOR_JOB_TTL_MS,
+        result: null,
+        error: null,
+      };
+      humanizadorJobs.set(id, job);
+
+      generateHumanizacion(input)
+        .then((generated) => {
+          job.result = generated;
+          job.status = "done";
+          job.expiresAt = Date.now() + HUMANIZADOR_DONE_TTL_MS;
+          // El registro de metricas nunca debe voltear un job exitoso a
+          // error (writeUsers toca disco y puede fallar).
+          try {
+            registerGeneration(authUser, "Humanizó texto académico");
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error(`[humanizador] job ${id}: no se pudo registrar la generacion:`, err);
+          }
+        })
+        .catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error(`[humanizador] job ${id} fallo:`, err);
+          job.status = "error";
+          // Las validaciones de entrada detectadas dentro del job (p. ej. el
+          // conteo de palabras del .docx) SI se muestran al usuario; el
+          // detalle de errores tecnicos queda solo en el log.
+          job.error = err?.isUserError
+            ? err.message
+            : "Hubo un problema humanizando tu texto, intenta de nuevo.";
+          job.expiresAt = Date.now() + HUMANIZADOR_DONE_TTL_MS;
+        });
+
+      sendJson(res, 202, { ok: true, jobId: id, status: job.status });
+      return;
+    }
+
+    // Polling del job; al completar entrega el texto + metricas + Word.
+    const humanizadorJobRoute = pathname.match(/^\/humanizador\/jobs\/([0-9a-fA-F-]+)$/);
+    if (req.method === "GET" && humanizadorJobRoute) {
+      const authUser = requireAuth(req);
+      const job = humanizadorJobs.get(humanizadorJobRoute[1]);
+      if (!job || (job.expiresAt <= Date.now() && job.status !== "processing")) {
+        throw new HttpError(404, "Generacion no encontrada o expirada.");
+      }
+      if (AUTH_REQUIRED && authUser.role !== "admin" && job.ownerUserId !== authUser.id) {
+        throw new HttpError(403, "No tienes acceso a esta generacion.");
+      }
+      if (job.status === "done") {
+        sendJson(res, 200, {
+          ok: true,
+          status: "done",
+          textoHumanizado: job.result.textoHumanizado,
+          metricas: job.result.metricas,
+          docxBase64: job.result.docxBuffer.toString("base64"),
+          docxFileName: "Texto_humanizado.docx",
+        });
+        // Ya entregado: acortar la vida del contenido en memoria.
+        job.expiresAt = Math.min(job.expiresAt, Date.now() + HUMANIZADOR_SERVED_TTL_MS);
         return;
       }
       sendJson(res, 200, { ok: true, status: job.status, error: job.error });

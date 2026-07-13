@@ -123,6 +123,7 @@ export const TITULO_MARKER_RE = /\*\*\s*T[IÍí]TULO\s*1/i;
 // modelo, proveedor y manejo de reasoning/timeout con este modulo.
 export const callOpenRouter = async ({
   messages, tools, model, apiKey, timeoutMs, maxTokens, reasoningEffort = "medium",
+  temperature = 0.5,
 }) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -141,10 +142,12 @@ export const callOpenRouter = async ({
         messages,
         tools,
         max_tokens: maxTokens,
-        // Temperatura moderada-baja: menos variabilidad entre corridas y
-        // menor probabilidad de desvios de formato (tool_calls como texto,
-        // narracion), sin matar la redaccion academica.
-        temperature: 0.5,
+        // Temperatura moderada-baja por defecto (0.5): menos variabilidad
+        // entre corridas y menor probabilidad de desvios de formato
+        // (tool_calls como texto, narracion), sin matar la redaccion
+        // academica. El Humanizador la sube (0.9) porque su tarea ES
+        // producir variabilidad lexica.
+        temperature,
         // Esfuerzo de razonamiento por etapa: "medium" cuando hay analisis
         // (elegir variables con respaldo teorico, flujo clasico con
         // busquedas); "none" cuando la tarea es mecanica (desarrollar la

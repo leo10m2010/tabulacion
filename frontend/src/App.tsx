@@ -7,6 +7,7 @@ import {
   Check,
   ChevronRight,
   Download,
+  Feather,
   FileSpreadsheet,
   HelpCircle,
   KeyRound,
@@ -79,6 +80,7 @@ import { DescriptivaSection } from "./components/sections/DescriptivaSection";
 import { FormsSection } from "./components/sections/FormsSection";
 import { TitulosSection } from "./components/sections/TitulosSection";
 import { MatrizSection } from "./components/sections/MatrizSection";
+import { HumanizadorSection } from "./components/sections/HumanizadorSection";
 import { UsersSection } from "./components/sections/UsersSection";
 
 // Herramientas del menú (sidebar y tabs móviles se dibujan desde aquí).
@@ -89,6 +91,7 @@ const NAV_TOOLS: { id: AppSection; label: string; mobileLabel?: string; icon: ty
   { id: "forms", label: "Forms", icon: KeyRound },
   { id: "titulos", label: "Generador de Títulos", mobileLabel: "Títulos", icon: Lightbulb },
   { id: "matriz", label: "Matriz de Consistencia", mobileLabel: "Matriz", icon: Table2 },
+  { id: "humanizador", label: "Humanizador", mobileLabel: "Humanizar", icon: Feather },
 ];
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
@@ -1493,6 +1496,11 @@ export default function App() {
           {/* ── Matriz de Consistencia (IA) ── */}
           {activeSection === "matriz" && authUser && (
             <MatrizSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+          )}
+
+          {/* ── Humanizador de texto académico (IA) ── */}
+          {activeSection === "humanizador" && authUser && (
+            <HumanizadorSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
           )}
 
           {/* ── Usuarios (admin) ── */}

@@ -176,6 +176,44 @@ export interface MatrizStartResponse {
   error?: string;
 }
 
+// Humanizador (IA): métricas de burstiness/delatoras que el backend calcula
+// antes y después de la reescritura (espejo de analyzeText en
+// node_app/lib/humanizador/metrics.js).
+export interface HumanizadorMetricasLado {
+  palabras: number;
+  oraciones: number;
+  mediaPalabras: number;
+  desviacion: number;
+  cv: number;
+  pctBanda1522: number;
+  cortas: number;
+  largas: number;
+  delatoras: number;
+  topDelatoras: { frase: string; veces: number }[];
+}
+
+export interface HumanizadorMetricas {
+  antes: HumanizadorMetricasLado;
+  despues: HumanizadorMetricasLado;
+}
+
+export interface HumanizadorStartResponse {
+  ok?: boolean;
+  jobId: string;
+  status: string;
+  error?: string;
+}
+
+export interface HumanizadorJobResponse {
+  ok?: boolean;
+  status: "processing" | "done" | "error";
+  error?: string | null;
+  textoHumanizado?: string;
+  metricas?: HumanizadorMetricas;
+  docxBase64?: string;
+  docxFileName?: string;
+}
+
 export interface MatrizJobResponse {
   ok?: boolean;
   status: "processing" | "done" | "error";
@@ -246,5 +284,5 @@ export interface AuthUsersResponse {
 
 export type ThemeMode = "light" | "dark";
 export type AppView = "landing" | "app";
-export type AppSection = "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "titulos" | "matriz" | "usuarios" | "cuenta";
+export type AppSection = "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "titulos" | "matriz" | "humanizador" | "usuarios" | "cuenta";
 export type WizardStep = 1 | 2 | 3;

@@ -9,6 +9,8 @@ import type {
   DescriptivaInfo,
   DescriptivaJobResponse,
   DescriptivaStartResponse,
+  HumanizadorJobResponse,
+  HumanizadorStartResponse,
   InlineGenerateResponse,
   MatrizJobResponse,
   MatrizStartResponse,
@@ -136,6 +138,20 @@ export const startMatriz = (apiBaseUrl: string, token: string, input: MatrizInpu
 
 export const getMatrizJob = (apiBaseUrl: string, token: string, jobId: string) =>
   request<MatrizJobResponse>(apiBaseUrl, `/matriz/jobs/${jobId}`, { token });
+
+// Humanizador (IA): texto pegado o .docx (50-3000 palabras). El backend crea
+// un job (reescritura por bloques + métricas + repasada dirigida pueden
+// tardar minutos) y aquí se hace polling hasta recibir el texto + métricas.
+export interface HumanizadorInput {
+  texto?: string;
+  docxBase64?: string;
+}
+
+export const startHumanizador = (apiBaseUrl: string, token: string, input: HumanizadorInput) =>
+  request<HumanizadorStartResponse>(apiBaseUrl, "/humanizador", { method: "POST", token, body: input });
+
+export const getHumanizadorJob = (apiBaseUrl: string, token: string, jobId: string) =>
+  request<HumanizadorJobResponse>(apiBaseUrl, `/humanizador/jobs/${jobId}`, { token });
 
 // ── Usuarios (admin) ─────────────────────────────────────────────────────────
 export const listUsers = (apiBaseUrl: string, token: string) =>
