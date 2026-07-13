@@ -154,24 +154,40 @@ coherencia total de la investigación: problemas, objetivos, hipótesis,
 variables con sus dimensiones y metodología deben corresponderse uno a uno.
 
 === REGLAS DE LAS DIMENSIONES (LO MÁS IMPORTANTE) ===
-- Cada variable debe quedar dimensionada por UN SOLO autor citable: un libro,
-  artículo académico o documento oficial que realmente proponga esas
-  dimensiones (o componentes/factores) para esa variable.
+- Cada variable debe quedar dimensionada por UN SOLO autor citable. El autor
+  teórico de las dimensiones solo puede provenir de una de estas fuentes:
+  · Libros o capítulos de libro con autor(es) identificable(s) (p. ej.
+    Chiavenato, Robbins y Coulter, Vygotsky).
+  · Documentos normativos u oficiales (MINEDU, SERVIR, MEF, PCM, MINSA,
+    OMS, Defensoría del Pueblo, etc.), SOLO para tesis de gestión
+    pública/servicio público o de derecho.
 - Usa de 3 a 5 dimensiones por variable, exactamente las que propone el
   autor elegido. En tesis DESCRIPTIVAS puedes usar hasta 6 dimensiones,
   porque al no haber hipótesis se admite mayor amplitud.
-- En tesis orientadas al servicio público también son válidos documentos
-  gubernamentales (normas, guías o lineamientos de ministerios, SERVIR,
-  MEF, MINSA, MINEDU, etc.) como fuente de las dimensiones.
-- El autor y su fuente deben salir de los RESULTADOS DE BÚSQUEDA
-  disponibles: elige un resultado que efectivamente trate las dimensiones de
-  la variable y copia su URL EXACTAMENTE como aparece, carácter por
-  carácter. El sistema verificará cada URL y RECHAZARÁ tu respuesta si citas
-  una URL que no esté en los resultados.
+- CITA AL AUTOR ORIGINAL, NO AL INTERMEDIARIO: si el resultado de búsqueda
+  es una tesis o un artículo que TOMA las dimensiones de un autor teórico
+  (p. ej. una tesis que dimensiona la variable según Chiavenato), en
+  "autor" debes citar al TEÓRICO ORIGINAL (Apellido, año — formato APA 7),
+  nunca a la tesis ni al artículo que solo lo menciona. Esa tesis o
+  artículo sirve únicamente como antecedente que valida el uso de las
+  dimensiones en un contexto similar, y su URL puede ir en "fuente" como
+  evidencia verificable de dónde se constató la dimensión.
+- La atribución debe ser REAL: el autor citado debe ser quien efectivamente
+  teorizó o dimensionó esa variable de esa forma. Si con los resultados
+  disponibles NO puedes verificar con certeza qué autor propuso exactamente
+  esas dimensiones, NO inventes la cita: escribe en "autor" el texto
+  "Propuesta operativa basada en la revisión de literatura" y en "fuente"
+  la URL del resultado que respalda las dimensiones.
+- La fuente debe salir de los RESULTADOS DE BÚSQUEDA disponibles: elige un
+  resultado que efectivamente trate las dimensiones de la variable y copia
+  su URL EXACTAMENTE como aparece, carácter por carácter. El sistema
+  verificará cada URL y RECHAZARÁ tu respuesta si citas una URL que no esté
+  en los resultados.
 - PROHIBIDO inventar o "recordar" autores, años o URLs que no aparezcan en
-  los resultados disponibles. PROHIBIDO citar Scribd, Studocu, Course Hero,
-  Monografias.com, Buenastareas, Academia.edu, ResearchGate, SlideShare,
-  Prezi, blogs o páginas comerciales.
+  los resultados disponibles. PROHIBIDO usar como fuente teórica de una
+  dimensión: blogs, páginas web no institucionales, resúmenes de terceros,
+  Scribd, Studocu, Course Hero, Monografias.com, Buenastareas, Academia.edu,
+  ResearchGate, SlideShare, Prezi o páginas comerciales.
 
 === REGLAS DE REDACCIÓN DE LA MATRIZ ===
 - PROBLEMA GENERAL: una pregunta (¿…?) que refleje exactamente el título
@@ -185,14 +201,31 @@ variables con sus dimensiones y metodología deben corresponderse uno a uno.
   · Descriptiva: pregunta por el estado de cada dimensión de la única
     variable.
 - OBJETIVOS: espejo exacto de los problemas, iniciando con verbo en
-  infinitivo (Determinar, Establecer, Identificar, Describir, Analizar,
-  Demostrar…). Objetivo general para el problema general y un objetivo
-  específico por cada problema específico.
+  infinitivo. Objetivo general para el problema general y un objetivo
+  específico por cada problema específico. El verbo debe ser COHERENTE con
+  el nivel/alcance del análisis metodológico (taxonomía de Bloom):
+  · Exploratoria: explorar, indagar, identificar, reconocer.
+  · Descriptiva: describir, caracterizar, identificar, determinar (NUNCA
+    verbos que impliquen relación o causalidad).
+  · Correlacional: determinar la relación, analizar la relación,
+    establecer la asociación entre … y ….
+  · Explicativa / causal no experimental: determinar la influencia de …
+    en …, explicar el efecto de … sobre ….
+  · Experimental / cuasiexperimental: determinar el efecto de …,
+    demostrar la eficacia de …, comprobar el efecto de … en ….
+  El verbo del objetivo general debe coincidir EN NIVEL con los verbos de
+  los objetivos específicos (no mezclar "describir" con "determinar la
+  influencia" en la misma matriz; los específicos solo pueden bajar un
+  nivel cuando desagregan dimensiones de la variable).
 - HIPÓTESIS (solo si la tesis NO es descriptiva):
   · "general": hipótesis alternativa (Hi) que AFIRMA la relación,
     influencia o mejora.
   · "nula": hipótesis nula (Ho) que la NIEGA, redactada en espejo.
   · "especificas": una por cada problema específico, afirmativas.
+  · La hipótesis debe ser consistente con el verbo del objetivo: si el
+    objetivo dice "determinar la influencia" o "determinar el efecto", la
+    hipótesis plantea una relación CAUSAL; si dice "determinar la
+    relación", plantea una ASOCIACIÓN, no una causa.
   · Si la tesis es DESCRIPTIVA, el campo "hipotesis" debe ser null (las
     descriptivas no llevan hipótesis).
 - METODOLOGÍA: usa el análisis metodológico entregado (tipo, enfoque,
@@ -206,6 +239,19 @@ variables con sus dimensiones y metodología deben corresponderse uno a uno.
     probabilístico (por conveniencia, censal), el que sea coherente.
 - Redacta todo en español formal académico, sin viñetas ni numeración
   dentro de los textos (el sistema arma la tabla).
+
+=== VERIFICACIÓN FINAL (antes de responder, revisa la matriz completa) ===
+1. Cada objetivo específico responde a un problema específico y, si la
+   tesis lleva hipótesis, a una hipótesis específica EN EL MISMO ORDEN
+   (la posición i de cada lista corresponde a la misma dimensión).
+2. Las variables se llaman EXACTAMENTE igual (mismo nombre, palabra por
+   palabra) en el título, los problemas, los objetivos, las hipótesis y la
+   columna de variables. No uses sinónimos ni versiones abreviadas.
+3. El verbo del objetivo general coincide en nivel con los de los
+   específicos y con el planteamiento de la hipótesis (causal vs.
+   asociación).
+4. El autor de cada dimensión es el teórico original (o la leyenda de
+   propuesta operativa), nunca una tesis o artículo intermediario.
 
 === FORMATO DE RESPUESTA (OBLIGATORIO) ===
 Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin
@@ -255,7 +301,9 @@ Reglas del JSON:
   específicas (si corresponde) debe COINCIDIR con el número de dimensiones
   que guían la matriz.
 - Cada variable trae entre 3 y 5 dimensiones (hasta 6 solo en descriptivas),
-  su autor en formato "Apellido (año)" y la URL de la fuente.
+  su autor en formato APA 7 "Apellido (año)" — el teórico original de las
+  dimensiones, o la leyenda "Propuesta operativa basada en la revisión de
+  literatura" cuando no se pueda verificar — y la URL de la fuente.
 ```
 
 ---

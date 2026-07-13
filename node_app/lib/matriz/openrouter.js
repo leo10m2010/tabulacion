@@ -229,16 +229,20 @@ export const buildMatrizUserContent = (input, analisis, searchContext, { include
     : "";
   const planFuentes = includeSearchTool
     ? "PLAN DE BÚSQUEDA (máximo 4 búsquedas): busca las dimensiones de cada variable según un autor "
-      + "citable (libro, artículo o documento oficial). Cita solo autores y URLs que aparezcan "
-      + "efectivamente en los resultados de tus búsquedas, copiando cada URL exactamente. Cuando "
-      + "tengas las dimensiones de todas las variables, DEJA de buscar y redacta el JSON completo. "
-      + "Nunca escribas etiquetas como <tool_call>, <arg_key> o <arg_value> en tu respuesta: ejecuta "
-      + "las búsquedas con la herramienta de forma nativa."
+      + "citable (libro con autor identificable o documento normativo oficial). Si el resultado es "
+      + "una tesis o artículo que toma las dimensiones de un teórico, cita en \"autor\" al teórico "
+      + "original, no al intermediario. Cita solo URLs que aparezcan efectivamente en los resultados "
+      + "de tus búsquedas, copiando cada URL exactamente. Cuando tengas las dimensiones de todas las "
+      + "variables, DEJA de buscar y redacta el JSON completo. Nunca escribas etiquetas como "
+      + "<tool_call>, <arg_key> o <arg_value> en tu respuesta: ejecuta las búsquedas con la "
+      + "herramienta de forma nativa."
     : "PLAN: en esta solicitud NO tienes herramienta de búsqueda. Las dimensiones y sus autores deben "
       + "salir de los RESULTADOS DE BÚSQUEDA DEL SISTEMA de arriba: elige para cada variable un "
-      + "resultado que trate sus dimensiones y copia su URL LITERALMENTE, carácter por carácter. El "
-      + "sistema verificará cada URL y RECHAZARÁ tu respuesta si citas alguna que no esté en los "
-      + "resultados, así que no reconstruyas ni completes URLs de memoria.";
+      + "resultado que trate sus dimensiones (si ese resultado es una tesis o artículo que toma las "
+      + "dimensiones de un teórico, cita en \"autor\" al teórico original, no al intermediario) y "
+      + "copia su URL LITERALMENTE, carácter por carácter. El sistema verificará cada URL y "
+      + "RECHAZARÁ tu respuesta si citas alguna que no esté en los resultados, así que no "
+      + "reconstruyas ni completes URLs de memoria.";
   return buildDatosBlock(input)
     + bloqueAnalisis
     + bloqueResultados
