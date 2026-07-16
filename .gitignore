@@ -10,3 +10,4 @@ node_app/data/
 .env
 frontend/.env
 tmp_*.xlsx
+salida-*.xlsx

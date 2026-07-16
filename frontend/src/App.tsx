@@ -9,6 +9,7 @@ import {
   Download,
   Feather,
   FileSpreadsheet,
+  FlaskConical,
   HelpCircle,
   KeyRound,
   Lightbulb,
@@ -20,6 +21,8 @@ import {
   Sparkles,
   Sun,
   Table2,
+  TrendingDown,
+  TrendingUp,
   UserRound,
   Users,
   Wand2,
@@ -49,7 +52,7 @@ import type {
   WizardStep,
 } from "./lib/types";
 import * as api from "./lib/api";
-import { CORRELATION_LEVELS, DEFAULT_API_BASE_URL, FALLBACK_CONFIG, LIST_GROUPS, themePalette } from "./lib/constants";
+import { CORRELATION_LEVELS, DEFAULT_API_BASE_URL, FALLBACK_CONFIG, LIST_GROUPS, QUASI_DEFAULTS, QUASI_EFFECT_LEVELS, themePalette } from "./lib/constants";
 import {
   base64ToUint8Array,
   eid,
@@ -131,6 +134,9 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const isAdmin = authUser?.role === "admin";
+  // Diseño de investigación elegido: correlacional (histórico) o
+  // cuasiexperimental (pretest-postest con grupo experimental y control).
+  const isQuasi = toStringValue(config.diseno) === "cuasiexperimental";
 
   // ── Effects ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -202,6 +208,16 @@ export default function App() {
     }));
   }, [estructuraV1, estructuraV2]);
 
+  // En el diseño cuasiexperimental la muestra total es la suma de ambos
+  // grupos; se sincroniza para que baremos y validaciones sigan funcionando.
+  useEffect(() => {
+    if (toStringValue(config.diseno) !== "cuasiexperimental") return;
+    const total = (parseIntSafe(config.nExperimental) ?? 0) + (parseIntSafe(config.nControl) ?? 0);
+    if (total > 0 && parseIntSafe(config.muestra) !== total) {
+      setConfig((prev) => ({ ...prev, muestra: String(total) }));
+    }
+  }, [config.diseno, config.nExperimental, config.nControl, config.muestra]);
+
   useEffect(() => {
     const muestra = parseIntSafe(config.muestra);
     if (!muestra || muestra <= 0) return;
@@ -263,11 +279,18 @@ export default function App() {
   // ── Validation ─────────────────────────────────────────────────────────────
   const validationMessages = useMemo(() => {
     const issues: string[] = [];
-    const hasV2 = (parseIntSafe(config.variable) ?? 2) >= 2;
+    const quasi = toStringValue(config.diseno) === "cuasiexperimental";
+    const hasV2 = !quasi && (parseIntSafe(config.variable) ?? 2) >= 2;
     const muestra = parseIntSafe(config.muestra);
     const item = parseIntSafe(config.item);
     const escala = parseIntSafe(config.escala);
     const respuesta = parseIntSafe(config.respuesta);
+    if (quasi) {
+      const nExp = parseIntSafe(config.nExperimental);
+      const nCtrl = parseIntSafe(config.nControl);
+      if (nExp === null || nExp < 2) issues.push("El grupo experimental debe tener 2 o más participantes.");
+      if (nCtrl === null || nCtrl < 2) issues.push("El grupo control debe tener 2 o más participantes.");
+    }
     if (muestra === null || muestra < 2) issues.push("La cantidad de personas debe ser 2 o más.");
     if (item === null || item <= 0) issues.push("Las preguntas de V1 deben ser mayor a 0.");
     if (hasV2) {
@@ -313,8 +336,12 @@ export default function App() {
         issues.push(`${label}: los porcentajes deben sumar exactamente 100% (actual: ${sum}%).`);
       }
     };
-    validatePorcentaje("porcentaje", "Baremo V1");
-    if (hasV2) validatePorcentaje("porcentaje_v2", "Baremo V2");
+    // El diseño cuasiexperimental no reparte encuestados por baremo: la
+    // distribución de puntajes la definen el efecto y la dirección elegidos.
+    if (!quasi) {
+      validatePorcentaje("porcentaje", "Baremo V1");
+      if (hasV2) validatePorcentaje("porcentaje_v2", "Baremo V2");
+    }
 
     return issues;
   }, [config, templateInfo]);
@@ -477,6 +504,8 @@ export default function App() {
       setResult({
         correlation: payload.correlation,
         correlationControl: payload.correlationControl ?? null,
+        quasiExperimental: payload.quasiExperimental ?? null,
+        diseno: payload.diseno ?? "correlacional",
         warnings: payload.warnings ?? [],
         csvRows,
         sheetNames: parsedWorkbook.names,
@@ -712,14 +741,57 @@ export default function App() {
                     </CardHeader>
                     <CardContent className="space-y-6">
                       {(() => {
-                        const numVars = parseInt(getScalar("variable"), 10) || 2;
-                        const hasV2 = numVars >= 2;
+                        const numVars = isQuasi ? 1 : (parseInt(getScalar("variable"), 10) || 2);
+                        const hasV2 = !isQuasi && numVars >= 2;
                         return (
                           <>
-                            {/* Número de variables — selector */}
+                            {/* Diseño de investigación — selector */}
                             <div>
                               <div className="mb-2 flex items-center gap-2.5">
                                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">1</span>
+                                <p className="text-base font-semibold text-foreground">¿Cuál es el diseño de tu investigación?</p>
+                              </div>
+                              <FieldHint text="Correlacional: mide la relación entre variables en un solo momento. Cuasiexperimental: compara un grupo experimental y uno control con pretest y postest para evaluar una intervención." />
+                              <div className="mt-3 flex gap-2">
+                                <button
+                                  onClick={() => setConfig((prev) => ({ ...prev, diseno: "correlacional", variable: "2" }))}
+                                  className={cn(
+                                    "flex flex-1 items-center justify-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                    !isQuasi
+                                      ? "border-primary bg-primary/10 text-primary"
+                                      : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                                  )}
+                                >
+                                  <ArrowUpDown className="h-4 w-4" />
+                                  Correlacional
+                                </button>
+                                <button
+                                  onClick={() => setConfig((prev) => {
+                                    const next: TabConfig = { ...prev, diseno: QUASI_DEFAULTS.diseno, variable: QUASI_DEFAULTS.variable };
+                                    (Object.keys(QUASI_DEFAULTS) as (keyof typeof QUASI_DEFAULTS)[])
+                                      .forEach((key) => {
+                                        if (!toStringValue(next[key]).trim()) next[key] = QUASI_DEFAULTS[key];
+                                      });
+                                    return next;
+                                  })}
+                                  className={cn(
+                                    "flex flex-1 items-center justify-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                    isQuasi
+                                      ? "border-primary bg-primary/10 text-primary"
+                                      : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                                  )}
+                                >
+                                  <FlaskConical className="h-4 w-4" />
+                                  Cuasiexperimental
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Número de variables — selector (solo correlacional) */}
+                            {!isQuasi && (
+                            <div>
+                              <div className="mb-2 flex items-center gap-2.5">
+                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">2</span>
                                 <p className="text-base font-semibold text-foreground">¿Cuántas variables tiene tu encuesta?</p>
                               </div>
                               <FieldHint text="La mayoría de tesis usan 2 variables. Si solo tienes 1, la correlación no aplica." />
@@ -740,6 +812,7 @@ export default function App() {
                                 ))}
                               </div>
                             </div>
+                            )}
 
                             {/* Divider: Datos generales */}
                             <div className="flex items-center gap-3">
@@ -750,8 +823,10 @@ export default function App() {
                             {/* General */}
                             <div className="grid gap-4 sm:grid-cols-2">
                               {[
-                                { key: "nommuestra", label: "Nombre de la muestra", hint: "¿Cómo se llaman las personas encuestadas? Ej: Beneficiarios, Estudiantes, Trabajadores.", placeholder: "Ej: Beneficiarios" },
-                                { key: "muestra", label: "Cantidad de personas encuestadas", hint: "Total de personas que respondieron la encuesta. Mínimo 2.", placeholder: "Ej: 289" },
+                                { key: "nommuestra", label: isQuasi ? "Nombre de los participantes" : "Nombre de la muestra", hint: isQuasi ? "¿Cómo se llaman los participantes del estudio? Ej: Estudiantes, Pacientes, Trabajadores." : "¿Cómo se llaman las personas encuestadas? Ej: Beneficiarios, Estudiantes, Trabajadores.", placeholder: "Ej: Estudiantes" },
+                                ...(isQuasi ? [] : [
+                                  { key: "muestra", label: "Cantidad de personas encuestadas", hint: "Total de personas que respondieron la encuesta. Mínimo 2.", placeholder: "Ej: 289" },
+                                ]),
                                 { key: "respuesta", label: "¿Cuántas opciones tiene cada pregunta?", hint: "Cuenta las alternativas de tu escala. Ej: Muy en desacuerdo / En desacuerdo / Neutral / De acuerdo / Muy de acuerdo = 5 opciones.", placeholder: "Ej: 5" },
                               ].map((field) => (
                                 <div key={field.key}>
@@ -764,6 +839,134 @@ export default function App() {
                               ))}
                             </div>
 
+                            {/* Grupos y efecto — solo cuasiexperimental */}
+                            {isQuasi && (
+                              <div className="rounded-xl border border-border/80 bg-background/50 p-4 space-y-5">
+                                <div className="flex items-center gap-2.5">
+                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">2</span>
+                                  <p className="text-base font-semibold text-foreground">Grupos, mediciones y efecto de la intervención</p>
+                                </div>
+
+                                <div className="grid gap-4 sm:grid-cols-2">
+                                  <div>
+                                    <label className="block">
+                                      <span className="text-sm font-medium text-foreground">Cantidad del grupo experimental</span>
+                                      <Input className="mt-1.5" value={getScalar("nExperimental")} onChange={(e) => setScalar("nExperimental", e.target.value)} placeholder="Ej: 30" />
+                                    </label>
+                                    <FieldHint text="Participantes que reciben la intervención. Mínimo 2." />
+                                  </div>
+                                  <div>
+                                    <label className="block">
+                                      <span className="text-sm font-medium text-foreground">Cantidad del grupo control</span>
+                                      <Input className="mt-1.5" value={getScalar("nControl")} onChange={(e) => setScalar("nControl", e.target.value)} placeholder="Ej: 30" />
+                                    </label>
+                                    <FieldHint text="Participantes que NO reciben la intervención. Mínimo 2." />
+                                  </div>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  Muestra total: <span className="font-semibold text-foreground">{(parseIntSafe(config.nExperimental) ?? 0) + (parseIntSafe(config.nControl) ?? 0)}</span> participantes.
+                                </p>
+
+                                <div>
+                                  <p className="text-sm font-medium text-foreground">Número de mediciones</p>
+                                  <FieldHint text="El diseño actual aplica 2 mediciones a cada grupo: pretest (antes de la intervención) y postest (después)." />
+                                  <div className="mt-2 flex gap-2">
+                                    <button
+                                      onClick={() => setScalar("mediciones", "2")}
+                                      className="flex-1 rounded-xl border-2 border-primary bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary"
+                                    >
+                                      2 mediciones — Pretest y Postest
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <p className="text-sm font-medium text-foreground">Tamaño del efecto esperado</p>
+                                  <FieldHint text="Qué tanto cambia el grupo experimental después de la intervención. El grupo control se mantiene relativamente estable." />
+                                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                    {QUASI_EFFECT_LEVELS.map((lvl) => {
+                                      const selected = (getScalar("efectoIntervencion") || "moderado") === lvl.id;
+                                      return (
+                                        <button
+                                          key={lvl.id}
+                                          onClick={() => setScalar("efectoIntervencion", lvl.id)}
+                                          className={cn(
+                                            "rounded-xl border-2 px-3 py-2 text-left transition-all",
+                                            selected
+                                              ? "border-primary bg-primary/10"
+                                              : "border-border bg-background hover:border-primary/50",
+                                          )}
+                                        >
+                                          <span className={cn("block text-sm font-semibold", selected ? "text-primary" : "text-foreground")}>{lvl.nombre}</span>
+                                          <span className="block text-xs text-muted-foreground">{lvl.detalle}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <p className="text-sm font-medium text-foreground">Dirección del efecto</p>
+                                  <FieldHint text="Mejora: los puntajes del grupo experimental suben en el postest (ej: mejora del aprendizaje). Disminución: bajan (ej: reducción de la ansiedad)." />
+                                  <div className="mt-2 flex gap-2">
+                                    <button
+                                      onClick={() => setScalar("direccionEfecto", "mejora")}
+                                      className={cn(
+                                        "flex flex-1 items-center justify-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                        (getScalar("direccionEfecto") || "mejora") === "mejora"
+                                          ? "border-primary bg-primary/10 text-primary"
+                                          : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                                      )}
+                                    >
+                                      <TrendingUp className="h-4 w-4" />
+                                      Mejora (los puntajes suben)
+                                    </button>
+                                    <button
+                                      onClick={() => setScalar("direccionEfecto", "disminuye")}
+                                      className={cn(
+                                        "flex flex-1 items-center justify-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                        getScalar("direccionEfecto") === "disminuye"
+                                          ? "border-primary bg-primary/10 text-primary"
+                                          : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                                      )}
+                                    >
+                                      <TrendingDown className="h-4 w-4" />
+                                      Disminución (los puntajes bajan)
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <p className="text-sm font-medium text-foreground">¿Controlar el patrón de resultados?</p>
+                                  <FieldHint text="Activado: la simulación busca el escenario más coherente (grupos equivalentes al inicio, control estable y cambio del experimental según el efecto elegido). Desactivado: los resultados salen de una sola simulación natural. Función pensada para datos simulados, pruebas y demostraciones académicas." />
+                                  <div className="mt-2 flex gap-2">
+                                    <button
+                                      onClick={() => setScalar("controlarResultados", "1")}
+                                      className={cn(
+                                        "flex-1 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                        getScalar("controlarResultados") !== "0"
+                                          ? "border-primary bg-primary/10 text-primary"
+                                          : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                                      )}
+                                    >
+                                      Activado
+                                    </button>
+                                    <button
+                                      onClick={() => setScalar("controlarResultados", "0")}
+                                      className={cn(
+                                        "flex-1 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                        getScalar("controlarResultados") === "0"
+                                          ? "border-primary bg-primary/10 text-primary"
+                                          : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                                      )}
+                                    >
+                                      Desactivado — resultado natural
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
                             {/* Divider: Configuración por variable */}
                             <div className="flex items-center gap-3">
                               <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Configuración por variable</span>
@@ -774,7 +977,7 @@ export default function App() {
                             <div className="rounded-xl border border-border/60 bg-background/50 p-4">
                               <div className={cn("grid gap-4", hasV2 ? "grid-cols-2" : "grid-cols-1")}>
                                 {/* Headers */}
-                                <div className="rounded bg-primary/10 px-2 py-1 text-center text-xs font-semibold uppercase tracking-wide text-primary">Variable 1</div>
+                                <div className="rounded bg-primary/10 px-2 py-1 text-center text-xs font-semibold uppercase tracking-wide text-primary">{isQuasi ? "Variable dependiente" : "Variable 1"}</div>
                                 {hasV2 && <div className="rounded bg-primary/10 px-2 py-1 text-center text-xs font-semibold uppercase tracking-wide text-primary">Variable 2</div>}
                                 {/* Preguntas */}
                                 <div>
@@ -1001,6 +1204,12 @@ export default function App() {
                       const dimsV1 = Math.max(parseIntSafe(config.dimensiones) ?? 1, 1);
                       const dimsV2 = Math.max(parseIntSafe(config.dimensiones_v2) ?? 1, 1);
                       const muestra = parseIntSafe(config.muestra) ?? 0;
+                      if (isQuasi) {
+                        const nExp = parseIntSafe(config.nExperimental) ?? 0;
+                        const nCtrl = parseIntSafe(config.nControl) ?? 0;
+                        if (nExp < 2) { setErrorMessage("El grupo experimental debe tener 2 o más participantes."); return; }
+                        if (nCtrl < 2) { setErrorMessage("El grupo control debe tener 2 o más participantes."); return; }
+                      }
                       if (muestra <= 0) { setErrorMessage("La cantidad de personas encuestadas debe ser mayor a 0."); return; }
                       if (numV1 <= 0) { setErrorMessage("El número de preguntas de Variable 1 debe ser mayor a 0."); return; }
                       if (hasV2next && numV2 <= 0) { setErrorMessage("El número de preguntas de Variable 2 debe ser mayor a 0."); return; }
@@ -1025,11 +1234,15 @@ export default function App() {
               {/* Step 2: Escalas y estructura */}
               {wizardStep === 2 && (
                 <div className="step-enter space-y-5">
-                  {LIST_GROUPS.filter((group) => !("variable" in group && group.variable === "v2") || parseInt(getScalar("variable"), 10) >= 2).map((group) => (
+                  {LIST_GROUPS.filter((group) => !("variable" in group && group.variable === "v2") || (!isQuasi && parseInt(getScalar("variable"), 10) >= 2)).map((group) => (
                     <Card key={group.title} className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
                       <CardHeader>
                         <CardTitle>{group.title}</CardTitle>
-                        <CardDescription>{group.description}</CardDescription>
+                        <CardDescription>
+                          {isQuasi && "variable" in group && group.variable === "v1"
+                            ? "¿En qué nivel queda cada participante? Define los nombres de los niveles (Bajo, Medio, Alto). Los rangos exactos se calculan solos; la distribución de puntajes la determina el efecto elegido."
+                            : group.description}
+                        </CardDescription>
                         {"variable" in group && group.variable === "v1" && (
                           <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
                             <HelpCircle className="h-3 w-3" />
@@ -1044,7 +1257,7 @@ export default function App() {
                         )}
                       </CardHeader>
                       <CardContent className={cn("grid gap-3", group.fields.length > 1 && "md:grid-cols-2")}>
-                        {group.fields.map((field) => {
+                        {group.fields.filter((field) => !isQuasi || !field.key.startsWith("porcentaje")).map((field) => {
                           const isEscalaField = field.key === "nombre_escala" || field.key === "nombre_escala_v2";
                           const labelsKey = "variable" in group
                             ? (group.variable === "v1" ? "nombre_escala" : "nombre_escala_v2")
@@ -1183,11 +1396,13 @@ export default function App() {
                       </Button>
                       <Button size="lg" onClick={() => {
                         const sumOf = (list: string[]) => list.reduce((acc, v) => { const n = parseInt(v.trim(), 10); return Number.isFinite(n) ? acc + n : acc; }, 0);
-                        const hasV2 = (parseIntSafe(config.variable) ?? 2) >= 2;
-                        const v1Sum = sumOf(getList("porcentaje"));
-                        const v2Sum = hasV2 ? sumOf(getList("porcentaje_v2")) : 100;
-                        if (v1Sum !== 100 || v2Sum !== 100) {
-                          setStep2Error("Los porcentajes de cada variable deben sumar exactamente 100%"); return;
+                        const hasV2 = !isQuasi && (parseIntSafe(config.variable) ?? 2) >= 2;
+                        if (!isQuasi) {
+                          const v1Sum = sumOf(getList("porcentaje"));
+                          const v2Sum = hasV2 ? sumOf(getList("porcentaje_v2")) : 100;
+                          if (v1Sum !== 100 || v2Sum !== 100) {
+                            setStep2Error("Los porcentajes de cada variable deben sumar exactamente 100%"); return;
+                          }
                         }
                         const totalV1 = parseIntSafe(config.item) ?? 0;
                         const usedV1 = estructuraV1.flatMap((d) => d.indicadores.flatMap((i) => i.items)).length;
@@ -1223,7 +1438,20 @@ export default function App() {
                     </CardHeader>
                     <CardContent>
                       <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-                        {[
+                        {(isQuasi ? [
+                          { label: "Diseño", value: "Cuasiexperimental (pretest-postest)" },
+                          { label: "Muestra", value: `${getScalar("nommuestra")} (${getScalar("muestra")} en total)` },
+                          { label: "Grupo experimental", value: `${getScalar("nExperimental")} participantes` },
+                          { label: "Grupo control", value: `${getScalar("nControl")} participantes` },
+                          { label: "Mediciones", value: "2 (Pretest y Postest)" },
+                          { label: "Efecto esperado", value: QUASI_EFFECT_LEVELS.find((l) => l.id === (getScalar("efectoIntervencion") || "moderado"))?.nombre ?? "Moderado" },
+                          { label: "Dirección", value: getScalar("direccionEfecto") === "disminuye" ? "Disminución" : "Mejora" },
+                          { label: "Control de resultados", value: getScalar("controlarResultados") === "0" ? "Desactivado (natural)" : "Activado" },
+                          { label: "Preguntas", value: getScalar("item") },
+                          { label: "Niveles del baremo", value: getScalar("escala") },
+                          { label: "Opciones por pregunta", value: `1 al ${getScalar("respuesta")}` },
+                          { label: "Variable dependiente", value: getList("nombre_dimension").filter(Boolean).join(", ") || "—" },
+                        ] : [
                           { label: "Muestra", value: `${getScalar("nommuestra")} (${getScalar("muestra")} personas)` },
                           { label: "Variables", value: getScalar("variable") },
                           { label: "Preguntas V1", value: getScalar("item") },
@@ -1239,7 +1467,7 @@ export default function App() {
                               : (CORRELATION_LEVELS.find((l) => l.id === (getScalar("nivelCorrelacion") || "muy_alta"))?.nombre ?? "Muy alta"),
                           }] : []),
                           { label: "Variables", value: getList("nombre_dimension").filter(Boolean).join(", ") || "—" },
-                        ].map((item) => (
+                        ]).map((item) => (
                           <div key={item.label} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2.5">
                             <p className="text-xs text-muted-foreground">{item.label}</p>
                             <p className="mt-0.5 text-sm font-semibold truncate">{item.value}</p>
@@ -1324,8 +1552,46 @@ export default function App() {
                         <CardDescription>Generado el {new Date(result.generatedAt).toLocaleString()}</CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-5">
+                        {/* Análisis cuasiexperimental: comparaciones y decisiones */}
+                        {result.quasiExperimental && (
+                          <div className="rounded-xl border border-border/60 bg-background/80 p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-sm font-medium text-foreground">
+                                Análisis cuasiexperimental (α = {result.quasiExperimental.alpha})
+                              </p>
+                              <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                                Pretest-postest con grupo control
+                              </span>
+                            </div>
+                            <div className="mt-3 space-y-2.5">
+                              {[result.quasiExperimental.baseline, ...result.quasiExperimental.comparisons].map((comp) => (
+                                <div key={comp.name} className="rounded-lg border border-border/60 bg-card/60 p-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <p className="text-sm font-semibold text-foreground">{comp.name}</p>
+                                    <span className={cn(
+                                      "rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                                      comp.significant
+                                        ? "bg-green-500/15 text-green-600 dark:text-green-400"
+                                        : "bg-muted text-muted-foreground",
+                                    )}>
+                                      {comp.significant ? "Diferencia significativa" : "Sin diferencia significativa"}
+                                    </span>
+                                  </div>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {comp.testLabel} · p = {comp.p.toFixed(3)} · {comp.decision} · Tamaño del efecto: {Number.isFinite(comp.effectSize) ? comp.effectSize.toFixed(3) : "—"} ({comp.effectMagnitude})
+                                  </p>
+                                  <p className="mt-1 text-xs text-muted-foreground">{comp.interpretation}</p>
+                                </div>
+                              ))}
+                            </div>
+                            <p className="mt-3 text-[11px] text-muted-foreground">
+                              Datos simulados: función pensada para pruebas, ensayos estadísticos y demostraciones académicas; no reemplaza datos reales. El detalle completo está en la hoja “Comparaciones” del Excel.
+                            </p>
+                          </div>
+                        )}
+
                         {/* Correlation: con 1 sola variable no aplica */}
-                        {result.correlationControl ? (
+                        {!result.quasiExperimental && result.correlationControl ? (
                           <div className="rounded-xl border border-border/60 bg-background/80 p-4">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <p className="text-sm text-muted-foreground">

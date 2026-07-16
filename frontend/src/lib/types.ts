@@ -35,9 +35,56 @@ export interface CorrelationControl {
   cumple?: boolean;
 }
 
+// Análisis del diseño cuasiexperimental (espejo de analyzeQuasiExperimentalData
+// en node_app/lib/quasi-experimental.js).
+export interface QuasiNormality {
+  target: string;
+  method: string;
+  statistic: number | null;
+  p: number | null;
+  normal: boolean;
+}
+
+export interface QuasiDescriptive {
+  n: number;
+  mean: number | null;
+  sd: number | null;
+  median: number | null;
+  min: number | null;
+  max: number | null;
+}
+
+export interface QuasiComparison {
+  name: string;
+  type: "paired" | "independent";
+  hypotheses: { nula: string; alterna: string };
+  normality: QuasiNormality[];
+  test: string;
+  testLabel: string;
+  statistic: number;
+  df?: number | null;
+  p: number;
+  alpha: number;
+  decision: string;
+  significant: boolean;
+  effectSize: number;
+  effectMagnitude: string;
+  interpretation: string;
+}
+
+export interface QuasiAnalysis {
+  alpha: number;
+  variable: string;
+  descriptive: Record<string, QuasiDescriptive>;
+  baseline: QuasiComparison;
+  comparisons: QuasiComparison[];
+}
+
 export interface InlineGenerateResponse {
   correlation: number | null;
   correlationControl?: CorrelationControl | null;
+  quasiExperimental?: QuasiAnalysis | null;
+  diseno?: string;
   warnings?: string[];
   baseCsv: string;
   excelBase64: string;
@@ -239,6 +286,8 @@ export interface DownloadLinks {
 export interface GeneratedResult {
   correlation: number | null;
   correlationControl: CorrelationControl | null;
+  quasiExperimental: QuasiAnalysis | null;
+  diseno: string;
   warnings: string[];
   csvRows: TableRows;
   sheetNames: string[];

@@ -121,6 +121,29 @@ test("la gestion de usuarios sigue siendo solo para admins", async () => {
   assert.equal(res.status, 403);
 });
 
+test("/generate con diseno cuasiexperimental responde analisis y Excel", async () => {
+  const user = await login("user@test.local", "OtraClave123!");
+  const config = JSON.parse(fs.readFileSync(
+    path.join(SCRIPT_DIR, "..", "..", "examples", "Tabulacion_cuasiexperimental.json"),
+    "utf-8",
+  ));
+  const gen = await fetch(`${BASE}/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${user.body.token}` },
+    body: JSON.stringify({ config: { ...config, nExperimental: 12, nControl: 12 }, responseMode: "inline" }),
+  });
+  assert.equal(gen.status, 200);
+  const payload = await gen.json();
+  assert.equal(payload.diseno, "cuasiexperimental");
+  assert.equal(payload.correlation, null);
+  assert.ok(payload.quasiExperimental, "incluye el analisis cuasiexperimental");
+  assert.equal(payload.quasiExperimental.comparisons.length, 3);
+  assert.ok(payload.quasiExperimental.baseline.hypotheses.nula.startsWith("H₀"));
+  assert.ok(payload.excelBase64.length > 1000);
+  assert.equal(payload.baseCsv.split("\n").length, 1 + 24);
+  assert.ok(Array.isArray(payload.chartsPreview) && payload.chartsPreview.length === 1);
+});
+
 test("config que excede los limites devuelve 500 con mensaje claro", async () => {
   const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
   const config = JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, "..", "..", "Tabulacion.json"), "utf-8"));

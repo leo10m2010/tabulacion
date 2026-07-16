@@ -70,6 +70,27 @@ export const CORRELATION_LEVELS = [
   { id: "nula", nombre: "Nula", rango: "≈ 0.00" },
 ];
 
+// Niveles de efecto del diseño cuasiexperimental. Deben coincidir con
+// EFECTOS_CUASIEXPERIMENTALES de node_app/lib/quasi-experimental.js.
+export const QUASI_EFFECT_LEVELS = [
+  { id: "nulo", nombre: "Sin efecto", detalle: "La intervención no produce cambios" },
+  { id: "pequeno", nombre: "Bajo", detalle: "Cambio leve pero perceptible" },
+  { id: "moderado", nombre: "Moderado", detalle: "Cambio claro y consistente" },
+  { id: "grande", nombre: "Alto", detalle: "Cambio fuerte y evidente" },
+];
+
+// Valores por defecto que se aplican al elegir el diseño cuasiexperimental.
+export const QUASI_DEFAULTS = {
+  diseno: "cuasiexperimental",
+  variable: "1",
+  nExperimental: "30",
+  nControl: "30",
+  mediciones: "2",
+  efectoIntervencion: "moderado",
+  direccionEfecto: "mejora",
+  controlarResultados: "1",
+};
+
 // Temas de color para los graficos del Excel y de la vista previa. Deben
 // coincidir con CHART_THEMES de node_app/generator.js (alli sin "#").
 export interface ChartTheme {

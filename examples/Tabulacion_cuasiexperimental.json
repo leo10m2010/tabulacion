@@ -1,0 +1,66 @@
+{
+  "diseno": "cuasiexperimental",
+  "titulo": "Programa educativo para mejorar la motricidad fina en estudiantes de primer grado, 2026",
+  "investigador": "Nombre del investigador",
+  "nExperimental": 30,
+  "nControl": 30,
+  "efectoIntervencion": "moderado",
+  "direccionEfecto": "mejora",
+  "cambioControl": 0,
+  "controlarResultados": true,
+  "alpha": 0.05,
+  "conDatos": "1",
+  "tema": "clasico",
+  "variable": "1",
+  "item": "12",
+  "respuesta": "5",
+  "nombre_respuesta": [
+    "Nunca",
+    "Casi nunca",
+    "A veces",
+    "Casi siempre",
+    "Siempre"
+  ],
+  "nombre_escala": [
+    "Bajo",
+    "Medio",
+    "Alto"
+  ],
+  "nombre_dimension": [
+    "Motricidad fina"
+  ],
+  "nombre_items_v1": [
+    "Realiza trazos controlados",
+    "Colorea respetando límites",
+    "Coordina la vista y la mano",
+    "Recorta siguiendo una línea",
+    "Manipula objetos pequeños",
+    "Ensarta piezas con precisión",
+    "Modela formas definidas",
+    "Dobla papel con control",
+    "Pega elementos en la ubicación indicada",
+    "Usa correctamente el lápiz",
+    "Mantiene precisión en movimientos finos",
+    "Completa tareas gráfico-plásticas"
+  ],
+  "estructura_v1": [
+    {
+      "nombre": "Coordinación visomanual",
+      "indicadores": [
+        { "nombre": "Control gráfico", "items": 4 }
+      ]
+    },
+    {
+      "nombre": "Precisión y control",
+      "indicadores": [
+        { "nombre": "Movimientos finos", "items": 4 }
+      ]
+    },
+    {
+      "nombre": "Manipulación gráfico-plástica",
+      "indicadores": [
+        { "nombre": "Uso de materiales", "items": 4 }
+      ]
+    }
+  ]
+}

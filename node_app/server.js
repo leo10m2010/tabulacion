@@ -1083,6 +1083,8 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, {
           correlation: artifacts.correlation,
           correlationControl: artifacts.correlationControl ?? null,
+          quasiExperimental: artifacts.quasiExperimental ?? null,
+          diseno: artifacts.diseno ?? "correlacional",
           warnings: artifacts.warnings ?? [],
           baseCsv: artifacts.baseCsv,
           excelBase64: artifacts.excelBuffer.toString("base64"),
