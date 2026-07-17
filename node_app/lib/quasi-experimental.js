@@ -130,6 +130,15 @@ export const normalizeQuasiExperimentalConfig = (raw, baseCfg) => {
     ? Math.min(0.5, Math.max(-0.5, controlDriftRaw))
     : 0.04;
 
+  // Mediciones: 2 (pretest y postest) o 3 (agrega un seguimiento posterior
+  // que evalúa la persistencia del efecto de la intervención).
+  const medicionesRaw = toInt(source.mediciones ?? source.numeroMediciones ?? 2, 2);
+  let mediciones = medicionesRaw;
+  if (medicionesRaw !== 2 && medicionesRaw !== 3) {
+    baseCfg.warnings.push(`El diseño soporta 2 o 3 mediciones (configuraste ${medicionesRaw}); se usaron 2.`);
+    mediciones = 2;
+  }
+
   if (baseCfg.variables.length > 1) {
     baseCfg.warnings.push(
       "El diseño cuasiexperimental utiliza la primera variable como variable dependiente; las variables adicionales fueron ignoradas.",
@@ -144,6 +153,7 @@ export const normalizeQuasiExperimentalConfig = (raw, baseCfg) => {
     cuasiexperimental: {
       nExperimental,
       nControl,
+      mediciones,
       alpha,
       efectoNivel: effect.nivel,
       efectoEtiqueta: effect.etiqueta,
@@ -219,6 +229,7 @@ const generateGroup = ({
   effectShift,
   direction,
   controlDrift,
+  mediciones,
 }) => {
   const isExperimental = group === "Experimental";
   return Array.from({ length: n }, (_, index) => {
@@ -236,7 +247,7 @@ const generateGroup = ({
 
     const preTotal = pre.reduce((sum, value) => sum + value, 0);
     const postTotal = post.reduce((sum, value) => sum + value, 0);
-    return {
+    const row = {
       id: `${isExperimental ? "GE" : "GC"}-${String(index + 1).padStart(3, "0")}`,
       group,
       pre,
@@ -245,6 +256,20 @@ const generateGroup = ({
       postTotal,
       change: postTotal - preTotal,
     };
+
+    if (mediciones >= 3) {
+      // Seguimiento: el efecto de la intervención persiste con un ligero
+      // decaimiento (0.85) y variación individual propia; el control conserva
+      // solo su deriva natural acumulada.
+      const segShift = direction * (isExperimental ? effectShift * 0.85 : controlDrift * 1.5);
+      const segLatent = baseline + segShift + randn() * 0.26;
+      row.seg = itemParameters.map(({ loading, bias, noise }) => (
+        discretize(loading * segLatent + bias + randn() * noise * 0.8, scaleValues)
+      ));
+      row.segTotal = row.seg.reduce((sum, value) => sum + value, 0);
+      row.changeSeg = row.segTotal - postTotal;
+    }
+    return row;
   });
 };
 
@@ -369,20 +394,28 @@ const independentComparison = ({ name, hypotheses, first, second, alpha, labels 
 
 export const analyzeQuasiExperimentalData = (experimental, control, cfg) => {
   const alpha = cfg.cuasiexperimental.alpha;
+  const hasSeg = cfg.cuasiexperimental.mediciones >= 3;
   const variableName = cfg.variables[0].nombre;
   const expPre = experimental.map((row) => row.preTotal);
   const expPost = experimental.map((row) => row.postTotal);
   const ctrlPre = control.map((row) => row.preTotal);
   const ctrlPost = control.map((row) => row.postTotal);
+  const expSeg = hasSeg ? experimental.map((row) => row.segTotal) : null;
+  const ctrlSeg = hasSeg ? control.map((row) => row.segTotal) : null;
 
   return {
     alpha,
     variable: variableName,
+    mediciones: cfg.cuasiexperimental.mediciones,
     descriptive: {
       experimentalPre: describe(expPre),
       experimentalPost: describe(expPost),
       controlPre: describe(ctrlPre),
       controlPost: describe(ctrlPost),
+      ...(hasSeg ? {
+        experimentalSeg: describe(expSeg),
+        controlSeg: describe(ctrlSeg),
+      } : {}),
       experimentalChange: describe(experimental.map((row) => row.change)),
       controlChange: describe(control.map((row) => row.change)),
     },
@@ -431,6 +464,41 @@ export const analyzeQuasiExperimentalData = (experimental, control, cfg) => {
         alpha,
         labels: ["Postest - Experimental", "Postest - Control"],
       }),
+      ...(hasSeg ? [
+        pairedComparison({
+          name: "Grupo experimental: postest vs. seguimiento",
+          hypotheses: {
+            nula: `H₀: No existen diferencias significativas en ${variableName} entre el postest y el seguimiento del grupo experimental (el efecto de la intervención se mantiene).`,
+            alterna: `H₁: Existen diferencias significativas en ${variableName} entre el postest y el seguimiento del grupo experimental.`,
+          },
+          pre: expPost,
+          post: expSeg,
+          alpha,
+          normalityTarget: "Diferencias seg-post (Experimental)",
+        }),
+        pairedComparison({
+          name: "Grupo control: postest vs. seguimiento",
+          hypotheses: {
+            nula: `H₀: No existen diferencias significativas en ${variableName} entre el postest y el seguimiento del grupo control.`,
+            alterna: `H₁: Existen diferencias significativas en ${variableName} entre el postest y el seguimiento del grupo control.`,
+          },
+          pre: ctrlPost,
+          post: ctrlSeg,
+          alpha,
+          normalityTarget: "Diferencias seg-post (Control)",
+        }),
+        independentComparison({
+          name: "Seguimiento: Experimental vs. Control",
+          hypotheses: {
+            nula: `H₀: No existen diferencias significativas en ${variableName} entre el grupo experimental y el grupo control en el seguimiento.`,
+            alterna: `H₁: Existen diferencias significativas en ${variableName} entre el grupo experimental y el grupo control en el seguimiento (el efecto persiste en el tiempo).`,
+          },
+          first: expSeg,
+          second: ctrlSeg,
+          alpha,
+          labels: ["Seguimiento - Experimental", "Seguimiento - Control"],
+        }),
+      ] : []),
     ],
   };
 };
@@ -439,7 +507,7 @@ export const analyzeQuasiExperimentalData = (experimental, control, cfg) => {
 // intento perfectamente coherente (equivalencia inicial, control estable y,
 // si hay efecto, cambios significativos en el GE y en el postest entre grupos).
 const resultScore = (analysis, cfg) => {
-  const [experimental, control, postBetween] = analysis.comparisons;
+  const [experimental, control, postBetween, expSeg, ctrlSeg, segBetween] = analysis.comparisons;
   const baseline = analysis.baseline;
   const { alpha, efectoShift, direccion } = cfg.cuasiexperimental;
   let score = 0;
@@ -458,6 +526,17 @@ const resultScore = (analysis, cfg) => {
     );
     if (Math.sign(expChange || direccion) !== direccion) score += 3;
     if (Math.sign(postDifference || direccion) !== direccion) score += 3;
+  }
+
+  // Con seguimiento el patrón coherente es: el efecto persiste (GE post vs.
+  // seg sin cambio significativo, GE vs. GC significativo en el seguimiento)
+  // y el control sigue estable.
+  if (segBetween) {
+    if (ctrlSeg.p < alpha) score += 2 + (alpha - ctrlSeg.p) * 10;
+    if (efectoShift >= 0.2) {
+      if (expSeg.p < alpha) score += 2 + (alpha - expSeg.p) * 5;
+      if (segBetween.p >= alpha) score += 4 + (segBetween.p - alpha) * 5;
+    }
   }
 
   return score;
@@ -481,6 +560,7 @@ export const generateQuasiExperimentalData = (cfg) => {
       effectShift: q.efectoShift,
       direction: q.direccion,
       controlDrift: q.cambioControl,
+      mediciones: q.mediciones,
     });
     const control = generateGroup({
       n: q.nControl,
@@ -490,6 +570,7 @@ export const generateQuasiExperimentalData = (cfg) => {
       effectShift: q.efectoShift,
       direction: q.direccion,
       controlDrift: q.cambioControl,
+      mediciones: q.mediciones,
     });
     const analysis = analyzeQuasiExperimentalData(experimental, control, cfg);
     const score = resultScore(analysis, cfg);
@@ -523,13 +604,22 @@ export const buildQuasiExperimentalCsv = (data, cfg) => {
   const itemCount = cfg.variables[0].totalItems;
   const levels = computeVariableLevels(cfg);
   const dimensions = computeDimensionLayout(cfg);
+  const hasSeg = cfg.cuasiexperimental.mediciones >= 3;
   const measurementCols = (prefix) => [
     ...Array.from({ length: itemCount }, (_, index) => `${prefix}_P${index + 1}`),
     ...dimensions.flatMap((_, di) => [`${prefix}_D${di + 1}`, `${prefix}_D${di + 1}_Nivel`]),
     `${prefix}_Total`,
     `${prefix}_Nivel`,
   ];
-  const headers = ["ID", "Grupo", ...measurementCols("PRE"), ...measurementCols("POST"), "Cambio"];
+  const headers = [
+    "ID",
+    "Grupo",
+    ...measurementCols("PRE"),
+    ...measurementCols("POST"),
+    ...(hasSeg ? measurementCols("SEG") : []),
+    "Cambio",
+    ...(hasSeg ? ["Cambio_Seguimiento"] : []),
+  ];
 
   const measurementValues = (scores) => {
     const total = scores.reduce((sum, value) => sum + value, 0);
@@ -552,7 +642,9 @@ export const buildQuasiExperimentalCsv = (data, cfg) => {
       row.group,
       ...measurementValues(row.pre),
       ...measurementValues(row.post),
+      ...(hasSeg ? measurementValues(row.seg) : []),
       row.change,
+      ...(hasSeg ? [row.changeSeg] : []),
     ].map(csvEscape).join(","))),
   ].join("\n");
 };

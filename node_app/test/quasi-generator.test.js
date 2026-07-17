@@ -263,6 +263,65 @@ test("el flujo correlacional sigue intacto (diseno correlacional por defecto)", 
   assert.equal(workbook.sheet("GE Pretest"), undefined);
 });
 
+test("3 mediciones: hojas de seguimiento, comparaciones extra y CSV ampliado", async () => {
+  const rawSeg = { ...raw, mediciones: 3, nExperimental: 15, nControl: 15 };
+  const result = await generateArtifacts(rawSeg);
+  assert.equal(result.diseno, "cuasiexperimental");
+
+  // 6 comparaciones: 3 base + persistencia GE, estabilidad GC y seg GE vs GC.
+  const analysis = result.quasiExperimental;
+  assert.equal(analysis.comparisons.length, 6);
+  assert.match(analysis.comparisons[3].name, /postest vs\. seguimiento/);
+  assert.match(analysis.comparisons[5].name, /Seguimiento: Experimental vs\. Control/);
+  assert.ok(analysis.descriptive.experimentalSeg, "descriptivos del seguimiento presentes");
+
+  const workbook = await XlsxPopulate.fromDataAsync(result.excelBuffer);
+  const names = workbook.sheets().map((s) => s.name());
+  assert.deepEqual(names, [
+    "GE Pretest", "GE Postest", "GE Seguimiento", "GC Pretest", "GC Postest", "GC Seguimiento",
+    "Consolidado", "Comparaciones", "Información",
+  ]);
+
+  // Hoja de seguimiento: el cambio compara Seg - Post.
+  const geSeg = workbook.sheet("GE Seguimiento");
+  assert.equal(geSeg.cell("C4").value(), "Seguimiento");
+  assert.match(String(geSeg.cell("X2").value()), /Seg − Post/);
+  assert.match(String(geSeg.cell("X4").formula()), /'GE Seguimiento'!V4-'GE Postest'!V4/);
+  const v = geSeg.cell("D4").value();
+  assert.ok(v >= 1 && v <= 5, `respuesta fuera de escala: ${v}`);
+
+  // Consolidado con 10 columnas (seguimiento y ambas diferencias).
+  const consolidado = workbook.sheet("Consolidado");
+  assert.equal(consolidado.cell(2, 7).value(), "Puntaje seguimiento");
+  assert.match(String(consolidado.cell("G3").formula()), /'GE Seguimiento'!V4/);
+  assert.match(String(consolidado.cell("J3").formula()), /G3-E3/);
+
+  // CSV: 30 filas + columnas SEG_ y Cambio_Seguimiento coherentes.
+  const lines = result.baseCsv.trim().split("\n");
+  assert.equal(lines.length, 31);
+  const header = lines[0].split(",");
+  ["SEG_P1", "SEG_D1", "SEG_Total", "SEG_Nivel", "Cambio", "Cambio_Seguimiento"].forEach((column) => {
+    assert.ok(header.includes(column), `falta columna ${column}`);
+  });
+  const first = lines[1].split(",");
+  const idx = (name) => header.indexOf(name);
+  const segTotal = Number(first[idx("SEG_Total")]);
+  const allSeg = Array.from({ length: 12 }, (_, i) => Number(first[idx(`SEG_P${i + 1}`)]));
+  assert.equal(segTotal, allSeg.reduce((a, b) => a + b, 0));
+  assert.equal(Number(first[idx("Cambio_Seguimiento")]), segTotal - Number(first[idx("POST_Total")]));
+
+  // El grafico de medias ahora tiene 6 barras.
+  assert.equal(result.chartsPreview[0].charts[0].categories.length, 6);
+});
+
+test("mediciones invalidas caen a 2 con aviso", async () => {
+  const result = await generateArtifacts({ ...raw, mediciones: 5, nExperimental: 5, nControl: 5 });
+  assert.ok(result.warnings.some((w) => w.includes("2 o 3 mediciones")));
+  const workbook = await XlsxPopulate.fromDataAsync(result.excelBuffer);
+  assert.equal(workbook.sheet("GE Seguimiento"), undefined);
+  assert.equal(result.quasiExperimental.comparisons.length, 3);
+});
+
 test("CSV sin datos conserva la cabecera completa", () => {
   const cfg = normalizedExample();
   const csv = buildQuasiExperimentalCsv(null, cfg);

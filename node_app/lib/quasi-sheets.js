@@ -34,8 +34,10 @@ const P_STYLE = { ...ST_CELL, numberFormat: "0.000" };
 const SHEET_NAMES = {
   gePre: "GE Pretest",
   gePost: "GE Postest",
+  geSeg: "GE Seguimiento",
   gcPre: "GC Pretest",
   gcPost: "GC Postest",
+  gcSeg: "GC Seguimiento",
 };
 
 const DATA_START = 4;
@@ -76,8 +78,16 @@ const addMeasurementSheet = ({ sheet, cfg, rows, group, moment, hasData }) => {
   const expectedRows = isExperimental
     ? cfg.cuasiexperimental.nExperimental
     : cfg.cuasiexperimental.nControl;
-  const preSheetName = isExperimental ? SHEET_NAMES.gePre : SHEET_NAMES.gcPre;
-  const postSheetName = isExperimental ? SHEET_NAMES.gePost : SHEET_NAMES.gcPost;
+  // El cambio compara esta medición con la anterior: Post − Pre en las hojas
+  // de pretest/postest, Seg − Post en las hojas de seguimiento.
+  const isSeg = moment === "Seguimiento";
+  const changeFromSheet = isExperimental
+    ? (isSeg ? SHEET_NAMES.gePost : SHEET_NAMES.gePre)
+    : (isSeg ? SHEET_NAMES.gcPost : SHEET_NAMES.gcPre);
+  const changeToSheet = isExperimental
+    ? (isSeg ? SHEET_NAMES.geSeg : SHEET_NAMES.gePost)
+    : (isSeg ? SHEET_NAMES.gcSeg : SHEET_NAMES.gcPost);
+  const changeHeader = isSeg ? "Cambio (Seg − Post)" : "Cambio (Post − Pre)";
 
   sheet.range(1, 1, 1, lastCol).merged(true).style(TITLE_STYLE);
   sheet.cell(1, 1).value(`${group} - ${moment}: ${variable.nombre}`);
@@ -110,7 +120,7 @@ const addMeasurementSheet = ({ sheet, cfg, rows, group, moment, hasData }) => {
     sheet.cell(3, level).value("Nivel").style(ST_HEADER);
   });
 
-  [["Puntaje total", totalCol], ["Nivel general", levelCol], ["Cambio (Post − Pre)", changeCol]]
+  [["Puntaje total", totalCol], ["Nivel general", levelCol], [changeHeader, changeCol]]
     .forEach(([label, col]) => {
       sheet.range(2, col, 3, col).merged(true).style(ST_HEADER);
       sheet.cell(2, col).value(label);
@@ -129,7 +139,7 @@ const addMeasurementSheet = ({ sheet, cfg, rows, group, moment, hasData }) => {
     sheet.cell(excelRow, 2).value(group);
     sheet.cell(excelRow, 3).value(moment);
 
-    const scores = moment === "Pretest" ? source?.pre : source?.post;
+    const scores = moment === "Pretest" ? source?.pre : (isSeg ? source?.seg : source?.post);
     if (hasData && scores) {
       scores.forEach((value, scoreIndex) => sheet.cell(excelRow, firstItemCol + scoreIndex).value(value));
     }
@@ -151,10 +161,10 @@ const addMeasurementSheet = ({ sheet, cfg, rows, group, moment, hasData }) => {
     sheet.cell(excelRow, levelCol)
       .formula(valoracionFormula(levels, `${totalL}${excelRow}`));
 
-    const preRef = `${quoteSheet(preSheetName)}!${totalL}${excelRow}`;
-    const postRef = `${quoteSheet(postSheetName)}!${totalL}${excelRow}`;
+    const fromRef = `${quoteSheet(changeFromSheet)}!${totalL}${excelRow}`;
+    const toRef = `${quoteSheet(changeToSheet)}!${totalL}${excelRow}`;
     sheet.cell(excelRow, changeCol)
-      .formula(`IF(OR(${preRef}="",${postRef}=""),"",${postRef}-${preRef})`);
+      .formula(`IF(OR(${fromRef}="",${toRef}=""),"",${toRef}-${fromRef})`);
 
     sheet.range(excelRow, 1, excelRow, lastCol).style({
       ...ST_CELL,
@@ -225,24 +235,32 @@ const addConsolidatedSheet = (sheet, cfg) => {
   const totalL = colLetter(cols.totalCol);
   const levelL = colLetter(cols.levelCol);
   const q = cfg.cuasiexperimental;
+  const hasSeg = q.mediciones >= 3;
   const totalRows = q.nExperimental + q.nControl;
   const headers = [
     "Código", "Grupo", "Puntaje pretest", "Nivel pretest",
-    "Puntaje postest", "Nivel postest", "Diferencia (Post − Pre)",
+    "Puntaje postest", "Nivel postest",
+    ...(hasSeg ? ["Puntaje seguimiento", "Nivel seguimiento"] : []),
+    "Diferencia (Post − Pre)",
+    ...(hasSeg ? ["Diferencia (Seg − Post)"] : []),
   ];
 
   sheet.range(1, 1, 1, headers.length).merged(true).style(TITLE_STYLE);
-  sheet.cell(1, 1).value("Consolidado pretest-postest por participante");
+  sheet.cell(1, 1).value(hasSeg
+    ? "Consolidado pretest-postest-seguimiento por participante"
+    : "Consolidado pretest-postest por participante");
   sheet.row(1).height(25);
   headers.forEach((header, index) => sheet.cell(2, index + 1).value(header).style(ST_HEADER));
   sheet.row(2).height(30);
 
+  const diffCol = hasSeg ? 9 : 7;
   for (let index = 0; index < totalRows; index += 1) {
     const row = index + 3;
     const isExperimental = index < q.nExperimental;
     const sourceRow = DATA_START + (isExperimental ? index : index - q.nExperimental);
     const preSheet = quoteSheet(isExperimental ? SHEET_NAMES.gePre : SHEET_NAMES.gcPre);
     const postSheet = quoteSheet(isExperimental ? SHEET_NAMES.gePost : SHEET_NAMES.gcPost);
+    const segSheet = quoteSheet(isExperimental ? SHEET_NAMES.geSeg : SHEET_NAMES.gcSeg);
 
     sheet.cell(row, 1).formula(`${preSheet}!A${sourceRow}`);
     sheet.cell(row, 2).value(isExperimental ? "Experimental" : "Control");
@@ -250,7 +268,14 @@ const addConsolidatedSheet = (sheet, cfg) => {
     sheet.cell(row, 4).formula(`${preSheet}!${levelL}${sourceRow}`);
     sheet.cell(row, 5).formula(`${postSheet}!${totalL}${sourceRow}`);
     sheet.cell(row, 6).formula(`${postSheet}!${levelL}${sourceRow}`);
-    sheet.cell(row, 7).formula(`IF(OR(C${row}="",E${row}=""),"",E${row}-C${row})`);
+    if (hasSeg) {
+      sheet.cell(row, 7).formula(`${segSheet}!${totalL}${sourceRow}`);
+      sheet.cell(row, 8).formula(`${segSheet}!${levelL}${sourceRow}`);
+    }
+    sheet.cell(row, diffCol).formula(`IF(OR(C${row}="",E${row}=""),"",E${row}-C${row})`);
+    if (hasSeg) {
+      sheet.cell(row, 10).formula(`IF(OR(E${row}="",G${row}=""),"",G${row}-E${row})`);
+    }
 
     sheet.range(row, 1, row, headers.length).style({
       ...ST_CELL,
@@ -259,6 +284,7 @@ const addConsolidatedSheet = (sheet, cfg) => {
     sheet.cell(row, 2).style(ST_CELL_LEFT);
     sheet.cell(row, 4).style(ST_CELL_LEFT);
     sheet.cell(row, 6).style(ST_CELL_LEFT);
+    if (hasSeg) sheet.cell(row, 8).style(ST_CELL_LEFT);
   }
 
   const noteRow = totalRows + 4;
@@ -267,18 +293,21 @@ const addConsolidatedSheet = (sheet, cfg) => {
     .value("Los valores provienen de las hojas de medición mediante fórmulas; se recalculan al abrir el archivo en Excel.")
     .style(ST_NOTE);
 
-  [14, 16, 14, 15, 14, 15, 18].forEach((width, index) => { sheet.column(index + 1).width(width); });
+  headers.forEach((_, index) => { sheet.column(index + 1).width(index === 0 ? 14 : 16); });
 };
 
 // ── Comparaciones ────────────────────────────────────────────────────────────
 const writeDescriptiveTable = (sheet, startRow, analysis) => {
+  const hasSeg = Boolean(analysis.descriptive.experimentalSeg);
   const rows = [
     ["Experimental", "Pretest", analysis.descriptive.experimentalPre],
     ["Experimental", "Postest", analysis.descriptive.experimentalPost],
+    ...(hasSeg ? [["Experimental", "Seguimiento", analysis.descriptive.experimentalSeg]] : []),
     ["Control", "Pretest", analysis.descriptive.controlPre],
     ["Control", "Postest", analysis.descriptive.controlPost],
-    ["Experimental", "Cambio", analysis.descriptive.experimentalChange],
-    ["Control", "Cambio", analysis.descriptive.controlChange],
+    ...(hasSeg ? [["Control", "Seguimiento", analysis.descriptive.controlSeg]] : []),
+    ["Experimental", "Cambio (Post − Pre)", analysis.descriptive.experimentalChange],
+    ["Control", "Cambio (Post − Pre)", analysis.descriptive.controlChange],
   ];
   const headers = ["Grupo", "Medición", "n", "Media", "DE", "Mediana", "Mínimo", "Máximo"];
 
@@ -299,11 +328,14 @@ const writeDescriptiveTable = (sheet, startRow, analysis) => {
 
 // Mini tabla de medias que alimenta el gráfico de barras del análisis.
 const writeMeansBlock = (sheet, startRow, analysis) => {
+  const hasSeg = Boolean(analysis.descriptive.experimentalSeg);
   const entries = [
     ["GE Pretest", analysis.descriptive.experimentalPre.mean],
     ["GE Postest", analysis.descriptive.experimentalPost.mean],
+    ...(hasSeg ? [["GE Seguimiento", analysis.descriptive.experimentalSeg.mean]] : []),
     ["GC Pretest", analysis.descriptive.controlPre.mean],
     ["GC Postest", analysis.descriptive.controlPost.mean],
+    ...(hasSeg ? [["GC Seguimiento", analysis.descriptive.controlSeg.mean]] : []),
   ];
   sheet.range(startRow, 1, startRow, 2).merged(true).style(SECTION_STYLE);
   sheet.cell(startRow, 1).value("Medias por grupo y medición");
@@ -314,13 +346,13 @@ const writeMeansBlock = (sheet, startRow, analysis) => {
   });
   const sheetRef = quoteSheet(sheet.name());
   const chart = {
-    title: `Medias de ${analysis.variable}: pretest y postest por grupo`,
+    title: `Medias de ${analysis.variable}: mediciones por grupo`,
     seriesName: "Media",
-    catRef: `${sheetRef}!$A$${startRow + 1}:$A$${startRow + 4}`,
-    valRef: `${sheetRef}!$B$${startRow + 1}:$B$${startRow + 4}`,
+    catRef: `${sheetRef}!$A$${startRow + 1}:$A$${startRow + entries.length}`,
+    valRef: `${sheetRef}!$B$${startRow + 1}:$B$${startRow + entries.length}`,
     numFmt: FMT_2DEC,
     varyColors: true,
-    points: 4,
+    points: entries.length,
     preview: {
       categories: entries.map(([label]) => label),
       values: entries.map(([, mean]) => mean ?? 0),
@@ -332,19 +364,22 @@ const writeMeansBlock = (sheet, startRow, analysis) => {
       toRow: startRow - 1 + 14,
     },
   };
-  return { endRow: Math.max(startRow + 5, startRow - 1 + 15), chart };
+  return { endRow: Math.max(startRow + entries.length + 1, startRow - 1 + 15), chart };
 };
 
+// Todas las pruebas de normalidad usadas, sin duplicados (los grupos del
+// postest/seguimiento aparecen en más de una comparación independiente).
 const allNormalityRows = (analysis) => {
-  const [experimental, control, postBetween] = analysis.comparisons;
-  return [
-    analysis.baseline.normality[0],
-    analysis.baseline.normality[1],
-    experimental.normality[0],
-    control.normality[0],
-    postBetween.normality[0],
-    postBetween.normality[1],
-  ];
+  const seen = new Set();
+  const rows = [];
+  [analysis.baseline, ...analysis.comparisons].forEach((comparison) => {
+    comparison.normality.forEach((result) => {
+      if (seen.has(result.target)) return;
+      seen.add(result.target);
+      rows.push(result);
+    });
+  });
+  return rows;
 };
 
 const writeNormalityTable = (sheet, startRow, analysis) => {
@@ -510,7 +545,7 @@ const addInformationSheet = (sheet, cfg, data) => {
     ["Título", cfg.titulo || "No especificado"],
     ["Investigador(a)", cfg.investigador || "No especificado"],
     ["Diseño", "Cuasiexperimental: pretest-postest con grupo experimental y grupo control"],
-    ["Mediciones", "2 (Pretest y Postest)"],
+    ["Mediciones", q.mediciones >= 3 ? "3 (Pretest, Postest y Seguimiento)" : "2 (Pretest y Postest)"],
     ["Variable dependiente", cfg.variables[0].nombre],
     ["Dimensiones", dimensions.map((d) => `${d.nombre} (${d.items} ítems)`).join("; ")],
     ["Total de ítems", cfg.variables[0].totalItems],
@@ -538,6 +573,10 @@ const addInformationSheet = (sheet, cfg, data) => {
     "Pretest vs. postest del grupo experimental: t pareada o Wilcoxon, según la normalidad de las diferencias post − pre.",
     "Pretest vs. postest del grupo control: t pareada o Wilcoxon, según la normalidad de las diferencias post − pre.",
     "Postest experimental vs. control: t de Welch o U de Mann-Whitney, según la normalidad de ambos grupos.",
+    ...(q.mediciones >= 3 ? [
+      "Postest vs. seguimiento de cada grupo: t pareada o Wilcoxon, según la normalidad de las diferencias seg − post (evalúa la persistencia del efecto).",
+      "Seguimiento experimental vs. control: t de Welch o U de Mann-Whitney, según la normalidad de ambos grupos.",
+    ] : []),
     "Los datos simulados sirven para pruebas, demostraciones y estructuración del análisis. No reemplazan la recolección real de información.",
   ];
   notes.forEach((note, index) => {
@@ -565,11 +604,14 @@ const addInformationSheet = (sheet, cfg, data) => {
 
 export const buildQuasiExperimentalWorkbook = async (cfg, data) => {
   resetAxisIds(); // ids de ejes deterministas por archivo
+  const hasSeg = cfg.cuasiexperimental.mediciones >= 3;
   const workbook = await XlsxPopulate.fromBlankAsync();
   const gePre = workbook.sheet(0).name(SHEET_NAMES.gePre);
   const gePost = workbook.addSheet(SHEET_NAMES.gePost);
+  const geSeg = hasSeg ? workbook.addSheet(SHEET_NAMES.geSeg) : null;
   const gcPre = workbook.addSheet(SHEET_NAMES.gcPre);
   const gcPost = workbook.addSheet(SHEET_NAMES.gcPost);
+  const gcSeg = hasSeg ? workbook.addSheet(SHEET_NAMES.gcSeg) : null;
   const consolidated = workbook.addSheet("Consolidado");
   const comparisons = workbook.addSheet("Comparaciones");
   const information = workbook.addSheet("Información");
@@ -577,8 +619,10 @@ export const buildQuasiExperimentalWorkbook = async (cfg, data) => {
   const hasData = Boolean(data);
   addMeasurementSheet({ sheet: gePre, cfg, rows: data?.experimental, group: "Experimental", moment: "Pretest", hasData });
   addMeasurementSheet({ sheet: gePost, cfg, rows: data?.experimental, group: "Experimental", moment: "Postest", hasData });
+  if (geSeg) addMeasurementSheet({ sheet: geSeg, cfg, rows: data?.experimental, group: "Experimental", moment: "Seguimiento", hasData });
   addMeasurementSheet({ sheet: gcPre, cfg, rows: data?.control, group: "Control", moment: "Pretest", hasData });
   addMeasurementSheet({ sheet: gcPost, cfg, rows: data?.control, group: "Control", moment: "Postest", hasData });
+  if (gcSeg) addMeasurementSheet({ sheet: gcSeg, cfg, rows: data?.control, group: "Control", moment: "Seguimiento", hasData });
   addConsolidatedSheet(consolidated, cfg);
   const comparisonCharts = addComparisonsSheet(comparisons, cfg, data);
   addInformationSheet(information, cfg, data);

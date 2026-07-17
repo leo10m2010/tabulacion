@@ -290,6 +290,13 @@ export default function App() {
       const nCtrl = parseIntSafe(config.nControl);
       if (nExp === null || nExp < 2) issues.push("El grupo experimental debe tener 2 o más participantes.");
       if (nCtrl === null || nCtrl < 2) issues.push("El grupo control debe tener 2 o más participantes.");
+      const efecto = toStringValue(config.efectoIntervencion).trim();
+      if (efecto && !["nulo", "pequeno", "moderado", "grande"].includes(efecto)) {
+        const n = Number(efecto);
+        if (!Number.isFinite(n) || n < 0 || n > 3) {
+          issues.push("El efecto personalizado debe ser un número entre 0 y 3 (ej: 1.5).");
+        }
+      }
     }
     if (muestra === null || muestra < 2) issues.push("La cantidad de personas debe ser 2 o más.");
     if (item === null || item <= 0) issues.push("Las preguntas de V1 deben ser mayor a 0.");
@@ -869,40 +876,85 @@ export default function App() {
 
                                 <div>
                                   <p className="text-sm font-medium text-foreground">Número de mediciones</p>
-                                  <FieldHint text="El diseño actual aplica 2 mediciones a cada grupo: pretest (antes de la intervención) y postest (después)." />
+                                  <FieldHint text="2 mediciones: pretest (antes de la intervención) y postest (después). 3 mediciones: agrega un seguimiento posterior que evalúa si el efecto se mantiene en el tiempo." />
                                   <div className="mt-2 flex gap-2">
-                                    <button
-                                      onClick={() => setScalar("mediciones", "2")}
-                                      className="flex-1 rounded-xl border-2 border-primary bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary"
-                                    >
-                                      2 mediciones — Pretest y Postest
-                                    </button>
+                                    {[
+                                      { id: "2", label: "2 — Pretest y Postest" },
+                                      { id: "3", label: "3 — Pretest, Postest y Seguimiento" },
+                                    ].map((option) => (
+                                      <button
+                                        key={option.id}
+                                        onClick={() => setScalar("mediciones", option.id)}
+                                        className={cn(
+                                          "flex-1 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all",
+                                          (getScalar("mediciones") || "2") === option.id
+                                            ? "border-primary bg-primary/10 text-primary"
+                                            : "border-border bg-background text-muted-foreground hover:border-primary/50",
+                                        )}
+                                      >
+                                        {option.label}
+                                      </button>
+                                    ))}
                                   </div>
                                 </div>
 
                                 <div>
                                   <p className="text-sm font-medium text-foreground">Tamaño del efecto esperado</p>
                                   <FieldHint text="Qué tanto cambia el grupo experimental después de la intervención. El grupo control se mantiene relativamente estable." />
-                                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                                    {QUASI_EFFECT_LEVELS.map((lvl) => {
-                                      const selected = (getScalar("efectoIntervencion") || "moderado") === lvl.id;
-                                      return (
-                                        <button
-                                          key={lvl.id}
-                                          onClick={() => setScalar("efectoIntervencion", lvl.id)}
-                                          className={cn(
-                                            "rounded-xl border-2 px-3 py-2 text-left transition-all",
-                                            selected
-                                              ? "border-primary bg-primary/10"
-                                              : "border-border bg-background hover:border-primary/50",
-                                          )}
-                                        >
-                                          <span className={cn("block text-sm font-semibold", selected ? "text-primary" : "text-foreground")}>{lvl.nombre}</span>
-                                          <span className="block text-xs text-muted-foreground">{lvl.detalle}</span>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
+                                  {(() => {
+                                    const efectoActual = getScalar("efectoIntervencion") || "moderado";
+                                    const esNivel = QUASI_EFFECT_LEVELS.some((l) => l.id === efectoActual);
+                                    return (
+                                      <>
+                                        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                                          {QUASI_EFFECT_LEVELS.map((lvl) => {
+                                            const selected = efectoActual === lvl.id;
+                                            return (
+                                              <button
+                                                key={lvl.id}
+                                                onClick={() => setScalar("efectoIntervencion", lvl.id)}
+                                                className={cn(
+                                                  "rounded-xl border-2 px-3 py-2 text-left transition-all",
+                                                  selected
+                                                    ? "border-primary bg-primary/10"
+                                                    : "border-border bg-background hover:border-primary/50",
+                                                )}
+                                              >
+                                                <span className={cn("block text-sm font-semibold", selected ? "text-primary" : "text-foreground")}>{lvl.nombre}</span>
+                                                <span className="block text-xs text-muted-foreground">{lvl.detalle}</span>
+                                              </button>
+                                            );
+                                          })}
+                                          <button
+                                            onClick={() => { if (esNivel) setScalar("efectoIntervencion", "1.5"); }}
+                                            className={cn(
+                                              "rounded-xl border-2 px-3 py-2 text-left transition-all",
+                                              !esNivel
+                                                ? "border-primary bg-primary/10"
+                                                : "border-border bg-background hover:border-primary/50",
+                                            )}
+                                          >
+                                            <span className={cn("block text-sm font-semibold", !esNivel ? "text-primary" : "text-foreground")}>Personalizado</span>
+                                            <span className="block text-xs text-muted-foreground">Define tu propia magnitud</span>
+                                          </button>
+                                        </div>
+                                        {!esNivel && (
+                                          <div className="mt-3">
+                                            <label className="block">
+                                              <span className="text-sm font-medium text-foreground">Magnitud personalizada (0 a 3)</span>
+                                              <Input
+                                                className="mt-1.5 max-w-[160px]"
+                                                value={efectoActual}
+                                                onChange={(e) => setScalar("efectoIntervencion", e.target.value)}
+                                                placeholder="Ej: 1.5"
+                                              />
+                                            </label>
+                                            <FieldHint text="0 = sin efecto, 0.35 ≈ bajo, 0.75 ≈ moderado, 1.15 ≈ alto. Valores mayores producen cambios más marcados." />
+                                          </div>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
                                 </div>
 
                                 <div>
@@ -1443,8 +1495,8 @@ export default function App() {
                           { label: "Muestra", value: `${getScalar("nommuestra")} (${getScalar("muestra")} en total)` },
                           { label: "Grupo experimental", value: `${getScalar("nExperimental")} participantes` },
                           { label: "Grupo control", value: `${getScalar("nControl")} participantes` },
-                          { label: "Mediciones", value: "2 (Pretest y Postest)" },
-                          { label: "Efecto esperado", value: QUASI_EFFECT_LEVELS.find((l) => l.id === (getScalar("efectoIntervencion") || "moderado"))?.nombre ?? "Moderado" },
+                          { label: "Mediciones", value: (getScalar("mediciones") || "2") === "3" ? "3 (Pre, Post y Seguimiento)" : "2 (Pretest y Postest)" },
+                          { label: "Efecto esperado", value: QUASI_EFFECT_LEVELS.find((l) => l.id === (getScalar("efectoIntervencion") || "moderado"))?.nombre ?? `Personalizado (${getScalar("efectoIntervencion")})` },
                           { label: "Dirección", value: getScalar("direccionEfecto") === "disminuye" ? "Disminución" : "Mejora" },
                           { label: "Control de resultados", value: getScalar("controlarResultados") === "0" ? "Desactivado (natural)" : "Activado" },
                           { label: "Preguntas", value: getScalar("item") },
