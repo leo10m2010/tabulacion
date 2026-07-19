@@ -1,4 +1,29 @@
-import type { TabConfig } from "./types";
+import type { TabConfig, UseTool } from "./types";
+
+// ── Usos por herramienta ─────────────────────────────────────────────────────
+// Todas las herramientas funcionan por usos (1 uso = 1 generación/corrida).
+// Debe coincidir con USE_TOOLS/PLAN_PRESETS del backend (node_app/server.js).
+export const USE_TOOLS: { id: UseTool; label: string }[] = [
+  { id: "tabulacion", label: "Tabulación" },
+  { id: "confiabilidad", label: "Confiabilidad" },
+  { id: "descriptiva", label: "Descriptiva" },
+  { id: "titulos", label: "Generador de Títulos" },
+  { id: "matriz", label: "Matriz de Consistencia" },
+  { id: "humanizador", label: "Humanizador" },
+  { id: "forms", label: "Forms" },
+];
+
+export const PLAN_PRESETS: Record<string, Record<UseTool, number>> = {
+  esencial: { tabulacion: 2, confiabilidad: 2, descriptiva: 3, titulos: 3, matriz: 1, humanizador: 5, forms: 2 },
+  tesista: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
+  institucion: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
+};
+
+export const PLAN_OPTIONS = [
+  { id: "esencial", label: "Esencial" },
+  { id: "tesista", label: "Tesista" },
+  { id: "institucion", label: "Institución" },
+];
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 // En produccion apunta a la API de Render por defecto; VITE_API_BASE_URL

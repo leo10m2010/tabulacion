@@ -4,7 +4,8 @@ import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
 import { changePassword } from "../../lib/api";
-import { formatDateTime, getSubscriptionLabel } from "../../lib/helpers";
+import { USE_TOOLS } from "../../lib/constants";
+import { formatDateTime } from "../../lib/helpers";
 import type { AuthUser } from "../../lib/types";
 
 // Sección "Mi cuenta": datos de la cuenta y cambio de contraseña
@@ -21,8 +22,6 @@ export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const usesLeft = authUser.role === "admin" ? "Ilimitados" : String(authUser.formsUsesLeft ?? 0);
 
   const submit = async () => {
     setMessage(null); setError(null);
@@ -46,7 +45,7 @@ export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh
   return (
     <div className="step-enter mx-auto max-w-3xl space-y-6">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight">Mi cuenta</h2>
+        <h2 className="font-display text-2xl font-bold tracking-tight">Mi cuenta</h2>
         <p className="mt-1 text-sm text-muted-foreground">Datos de tu cuenta y seguridad.</p>
       </div>
 
@@ -60,8 +59,6 @@ export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh
               ["Email", authUser.email],
               ["Rol", authUser.role === "admin" ? "Administrador" : "Usuario"],
               ["Plan", authUser.plan],
-              ["Suscripción (Tabulación)", getSubscriptionLabel(authUser)],
-              ["Usos de Forms disponibles", usesLeft],
               ["Último acceso", formatDateTime(authUser.lastLoginAt)],
             ].map(([k, v]) => (
               <div key={k} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
@@ -69,6 +66,31 @@ export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh
                 <p className="mt-0.5 truncate font-medium">{v}</p>
               </div>
             ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-base">Mis usos</CardTitle>
+          <CardDescription>
+            Cada herramienta funciona por usos: 1 uso = 1 generación o corrida. Pide recargas a tu administrador.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {USE_TOOLS.map((tool) => {
+              const left = authUser.role === "admin" ? "∞" : String(authUser.uses?.[tool.id] ?? 0);
+              const used = authUser.usesConsumed?.[tool.id] ?? 0;
+              return (
+                <div key={tool.id} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{tool.label}</p>
+                  <p className="mt-0.5 font-semibold tabular-nums">
+                    {left} <span className="text-xs font-normal text-muted-foreground">disponibles · {used} usados</span>
+                  </p>
+                </div>
+              );
+            })}
           </div>
         </CardContent>
       </Card>

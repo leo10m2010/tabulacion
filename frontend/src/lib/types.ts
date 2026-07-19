@@ -307,8 +307,10 @@ export interface AuthUser {
   createdAt: string;
   updatedAt: string;
   lastLoginAt: string | null;
-  // Tabulación va por suscripción (días); Forms va por usos (1 uso = 1
-  // corrida de llenado; null = ilimitados, admins).
+  // Usos por herramienta (1 uso = 1 generación/corrida; null = ilimitados,
+  // admins). formsUsesLeft/Used quedan como espejo legado de uses.forms.
+  uses?: Partial<Record<UseTool, number>> | null;
+  usesConsumed?: Partial<Record<UseTool, number>>;
   formsUsesLeft?: number | null;
   formsUsesUsed?: number;
   generationsCount?: number;
@@ -331,7 +333,9 @@ export interface AuthUsersResponse {
   error?: string;
 }
 
+export type UseTool = "tabulacion" | "confiabilidad" | "descriptiva" | "titulos" | "matriz" | "humanizador" | "forms";
+
 export type ThemeMode = "light" | "dark";
 export type AppView = "landing" | "app";
-export type AppSection = "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "titulos" | "matriz" | "humanizador" | "usuarios" | "cuenta";
+export type AppSection = "inicio" | "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "titulos" | "matriz" | "humanizador" | "usuarios" | "cuenta";
 export type WizardStep = 1 | 2 | 3;

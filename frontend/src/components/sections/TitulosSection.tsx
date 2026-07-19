@@ -11,6 +11,7 @@ import { base64ToUint8Array } from "../../lib/helpers";
 import type { AuthUser } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { SubscriptionWarning } from "../SubscriptionWarning";
+import { ToolSteps } from "../ToolSteps";
 import { springSoft } from "../motion-primitives";
 
 const POLL_INTERVAL_MS = 5000;
@@ -194,7 +195,7 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser }: {
     <div className="step-enter mx-auto max-w-3xl space-y-6">
       <div>
         <div className="flex items-center gap-2.5">
-          <h2 className="text-2xl font-bold tracking-tight">Generador de títulos de investigación</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Generador de títulos de investigación</h2>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
             <Sparkles className="h-3 w-3" />
             Con IA
@@ -206,10 +207,13 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser }: {
         </p>
       </div>
 
-      <SubscriptionWarning user={authUser}>
-        Tu suscripción de Tabulación está vencida: el generador de títulos usa la misma suscripción.
-        Pide al administrador que recargue tus días.
-      </SubscriptionWarning>
+      <ToolSteps steps={[
+        "Completa universidad, carrera y lugar de estudio",
+        "La IA busca tesis reales publicadas para no repetir títulos",
+        "Recibe 3 títulos originales listos en Word",
+      ]} />
+
+      <SubscriptionWarning user={authUser} tool="titulos" />
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>

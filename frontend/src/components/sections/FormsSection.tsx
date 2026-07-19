@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Check, KeyRound, Loader2, Server } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -15,7 +15,7 @@ export function FormsSection({ apiBaseUrl, authToken, authUser }: {
   authToken: string;
   authUser: AuthUser;
 }) {
-  const usesLeft = authUser.role === "admin" ? null : (authUser.formsUsesLeft ?? 0);
+  const usesLeft = authUser.role === "admin" ? null : (authUser.uses?.forms ?? authUser.formsUsesLeft ?? 0);
   const [apiKeyInfo, setApiKeyInfo] = useState<ApiKeyInfo | null>(null);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
   const [apiKeyBusy, setApiKeyBusy] = useState(false);
@@ -76,8 +76,8 @@ export function FormsSection({ apiBaseUrl, authToken, authUser }: {
   return (
     <div className="step-enter mx-auto max-w-3xl space-y-6">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight">Forms</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Servicios incluidos con tu suscripción.</p>
+        <h2 className="font-display text-2xl font-bold tracking-tight">Forms</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Rellena tus Google Forms; cada corrida consume 1 uso de Forms.</p>
       </div>
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
@@ -159,7 +159,7 @@ export function FormsSection({ apiBaseUrl, authToken, authUser }: {
                 </>,
                 <>
                   Abre la extensión e <strong className="text-foreground">inicia sesión</strong> con tu correo y
-                  contraseña de TesisTab: tu clave de API se configura sola. (También puedes pegar una clave
+                  contraseña de TesisHub: tu clave de API se configura sola. (También puedes pegar una clave
                   manual en "Avanzado".)
                 </>,
                 <>

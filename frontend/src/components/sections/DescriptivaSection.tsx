@@ -5,17 +5,13 @@ import {
   ArrowDownToLine,
   Check,
   ChevronDown,
-  FileText,
   Sparkles,
-  Upload,
   Wand2,
-  X,
 } from "lucide-react";
-import { Button } from "../ui/button";
 import { MagicButton } from "../ui/magic-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
-import { Textarea } from "../ui/textarea";
+import { TextDropZone } from "../TextDropZone";
 import { cn } from "../../lib/utils";
 import * as api from "../../lib/api";
 import { base64ToUint8Array, parseIntSafe, workbookToSheetRows } from "../../lib/helpers";
@@ -23,6 +19,7 @@ import type { AuthUser, DescriptivaResumen, TableRows } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { PreviewTable } from "../PreviewTable";
 import { SubscriptionWarning } from "../SubscriptionWarning";
+import { ToolSteps } from "../ToolSteps";
 import { AnimatedNumber, springSoft } from "../motion-primitives";
 
 const DEFAULT_N = 60;
@@ -66,6 +63,14 @@ const TIPO_LABELS: Record<string, string> = {
 
 const fmtElapsed = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
+// Ejemplo insertable desde el botón del editor (antes vivía como placeholder).
+const EJEMPLO_CUESTIONARIO = `CUESTIONARIO SOBRE CONSUMO DE BEBIDAS AZUCARADAS
+
+1. Edad: ____
+2. Género: a) Masculino  b) Femenino
+3. ¿Con qué frecuencia consumes bebidas azucaradas?
+   a) Todos los días  b) 4 a 6 veces por semana  c) 1 a 3 veces por semana  d) Rara vez  e) Nunca`;
+
 // Sección Tabulación Descriptiva: el usuario pega su cuestionario (o suelta un
 // .docx), la IA simula la base de datos como JSON y el backend construye el
 // Excel (base + frecuencias/porcentajes por ítem + baremo si corresponde). La
@@ -78,7 +83,6 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
   const reduce = useReducedMotion() ?? false;
   const [texto, setTexto] = useState("");
   const [docxFile, setDocxFile] = useState<File | null>(null);
-  const [dragging, setDragging] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [nStr, setNStr] = useState(String(DEFAULT_N));
   const [nivel, setNivel] = useState<string>("");
@@ -91,7 +95,6 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
   const [limits, setLimits] = useState({ defaultN: DEFAULT_N, minN: MIN_N, maxN: MAX_N });
   const xlsxUrlRef = useRef<string | null>(null);
   const pollRef = useRef<number | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Evita setState tras desmontar: la limpieza cancela el timeout pendiente,
   // pero una petición de polling ya en vuelo resuelve igual.
   const aliveRef = useRef(true);
@@ -128,6 +131,8 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
     issues.push(`El número de encuestados debe estar entre ${limits.minN} y ${limits.maxN}.`);
   }
   const canGenerate = (texto.trim().length >= 30 || docxFile !== null) && issues.length === 0;
+  // Conteo aproximado en vivo: líneas que empiezan con "1." / "2)" etc.
+  const preguntasDetectadas = (texto.match(/^\s*\d+[.)]/gm) ?? []).length;
 
   const fase = FASES.reduce((acc, f) => (elapsed >= f.desde ? f : acc), FASES[0]);
   // Progreso asintótico: avanza rápido al inicio y se acerca a 92% sin
@@ -225,16 +230,13 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
     }
   };
 
-  const clearFile = () => {
-    setDocxFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
+  const clearFile = () => setDocxFile(null);
 
   return (
     <div className="step-enter mx-auto max-w-3xl space-y-6">
       <div>
         <div className="flex items-center gap-2.5">
-          <h2 className="text-2xl font-bold tracking-tight">Tabulación descriptiva</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Tabulación descriptiva</h2>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
             <Sparkles className="h-3 w-3" />
             Con IA
@@ -246,10 +248,13 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
         </p>
       </div>
 
-      <SubscriptionWarning user={authUser}>
-        Tu suscripción de Tabulación está vencida: la tabulación descriptiva usa la misma suscripción.
-        Pide al administrador que recargue tus días.
-      </SubscriptionWarning>
+      <ToolSteps steps={[
+        "Pega tu cuestionario o sube el Word",
+        "La IA simula encuestados coherentes y calcula frecuencias",
+        "Descarga el Excel con base, resultados y baremo",
+      ]} />
+
+      <SubscriptionWarning user={authUser} tool="descriptiva" />
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>
@@ -263,92 +268,29 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          {/* Zona de entrada: textarea que también acepta soltar un .docx */}
-          <div
-            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              acceptFile(e.dataTransfer.files?.[0]);
-            }}
-            className={cn(
-              "relative rounded-xl transition-shadow duration-200",
-              dragging && "ring-2 ring-primary ring-offset-2 ring-offset-background",
-            )}
-          >
-            <AnimatePresence mode="wait" initial={false}>
-              {docxFile ? (
-                <motion.div
-                  key="file"
-                  initial={reduce ? false : { opacity: 0, scale: 0.97 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={reduce ? undefined : { opacity: 0, scale: 0.97 }}
-                  transition={springSoft}
-                  className="flex min-h-[220px] flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 px-6 py-8 text-center"
-                >
-                  <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
-                    <FileText className="h-6 w-6 text-primary" />
+          {/* Zona de entrada: editor con modos pegar/subir y contador en vivo */}
+          <TextDropZone
+            value={texto}
+            onChange={setTexto}
+            file={docxFile}
+            onFile={acceptFile}
+            onClearFile={clearFile}
+            disabled={phase === "working"}
+            placeholder={"Pega aquí tu cuestionario completo, con sus preguntas y alternativas tal como están en tu tesis."}
+            stats={
+              <>
+                {preguntasDetectadas > 0 && (
+                  <span className="rounded-md bg-accent px-1.5 py-0.5 text-accent-foreground">
+                    ≈ {preguntasDetectadas} pregunta{preguntasDetectadas === 1 ? "" : "s"}
                   </span>
-                  <div>
-                    <p className="text-sm font-semibold">{docxFile.name}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {(docxFile.size / 1024).toFixed(0)} KB · se convertirá a texto limpio antes de procesarlo
-                    </p>
-                  </div>
-                  <button
-                    onClick={clearFile}
-                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                    Quitar y pegar texto
-                  </button>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="texto"
-                  initial={reduce ? false : { opacity: 0, scale: 0.99 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={springSoft}
-                >
-                  <Textarea
-                    value={texto}
-                    onChange={(e) => setTexto(e.target.value)}
-                    disabled={phase === "working"}
-                    placeholder={"Ejemplo:\nCUESTIONARIO SOBRE CONSUMO DE BEBIDAS AZUCARADAS\n\n1. Edad: ____\n2. Género: a) Masculino  b) Femenino\n3. ¿Con qué frecuencia consumes bebidas azucaradas?\n   a) Todos los días  b) 4 a 6 veces por semana  c) 1 a 3 veces por semana  d) Rara vez  e) Nunca"}
-                    className="min-h-[220px] font-mono text-xs leading-relaxed"
-                  />
-                  <div className="mt-1.5 flex items-center justify-between px-1">
-                    <p className="text-[11px] text-muted-foreground">
-                      También puedes arrastrar y soltar tu Word aquí.
-                    </p>
-                    {texto.trim().length > 0 && (
-                      <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                        {texto.trim().length.toLocaleString()} caracteres
-                      </p>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          {!docxFile && (
-            <div className="flex flex-wrap items-center gap-3">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                className="hidden"
-                onChange={(e) => acceptFile(e.target.files?.[0])}
-              />
-              <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={phase === "working"}>
-                <Upload className="h-3.5 w-3.5" />
-                Subir un .docx
-              </Button>
-              <span className="text-xs text-muted-foreground">Solo Word (.docx), máximo 3 MB.</span>
-            </div>
-          )}
+                )}
+                {texto.trim().length > 0 && <span>{texto.trim().length.toLocaleString()} caracteres</span>}
+              </>
+            }
+            footerHint="Arrastra y suelta tu Word aquí · solo .docx, máximo 3 MB"
+            example={{ label: "Ver un ejemplo", text: EJEMPLO_CUESTIONARIO }}
+            fileNote="se convertirá a texto limpio antes de procesarlo"
+          />
 
           {/* Configuración avanzada (colapsada por defecto) */}
           <div className="overflow-hidden rounded-xl border border-border/60 bg-background/40">

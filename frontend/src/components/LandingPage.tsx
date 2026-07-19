@@ -1,12 +1,32 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowRight, Building2, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, Loader2, MessageCircle, Moon, Sun, UserRound } from "lucide-react";
+﻿import React, { useMemo, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import {
+  ArrowRight,
+  BarChart3,
+  Building2,
+  Check,
+  ChevronDown,
+  Download,
+  Feather,
+  FileSpreadsheet,
+  GraduationCap,
+  MessageCircle,
+  Moon,
+  PieChart,
+  Ruler,
+  Sigma,
+  SlidersHorizontal,
+  Sun,
+  TrendingUp,
+  UserRound,
+} from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import type { ThemeMode } from "../lib/types";
-import { AnimatedNumber, Reveal, TiltCard, springSoft } from "./motion-primitives";
+import { Reveal, springSoft } from "./motion-primitives";
 import { ToolsShowcase } from "./ToolsShowcase";
+import { ToolsMarquee } from "./ToolsMarquee";
 
 export function LandingPage({
   themeMode,
@@ -23,30 +43,58 @@ export function LandingPage({
   const CONTACT_EMAIL = "contacto@tutorica.com";
   const CONTACT_WHATSAPP = "51975212132"; // +51 975 212 132
   const openWhatsApp = () => {
-    const text = encodeURIComponent("Hola, me interesa el Plan Institucional de TesisTab.");
+    const text = encodeURIComponent("Hola, me interesa el Plan Institución de TesisHub.");
     window.open(`https://wa.me/${CONTACT_WHATSAPP}?text=${text}`, "_blank", "noopener");
   };
   const goToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
 
+  // Los tres planes funcionan por usos: cada generación o corrida consume 1
+  // uso de su herramienta, y el plan carga la cuota mensual de cada una.
   const plans = useMemo(
     () => [
       {
-        id: "pro",
-        name: "Plan Profesional",
-        audience: "Tesistas y asesores",
+        id: "esencial",
+        name: "Plan Esencial",
+        audience: "Para empezar",
         icon: UserRound,
+        priceMonthlyUsd: "USD 15",
+        priceYearlyUsd: "USD 150",
+        priceMonthlyPen: "S/ 49",
+        priceYearlyPen: "S/ 490",
+        description: "Para trabajos académicos puntuales o para probar el sistema en serio.",
+        highlights: [
+          "2 tabulaciones y 2 pruebas de confiabilidad",
+          "3 bases descriptivas con IA",
+          "3 generaciones de títulos y 1 matriz",
+          "5 humanizaciones de texto",
+          "2 corridas de Forms",
+        ],
+        cta: "Avanzar mi tesis",
+        featured: false,
+      },
+      {
+        id: "tesista",
+        name: "Plan Tesista",
+        audience: "Tesistas y asesores",
+        icon: GraduationCap,
         priceMonthlyUsd: "USD 29",
         priceYearlyUsd: "USD 290",
         priceMonthlyPen: "S/ 109",
         priceYearlyPen: "S/ 1,090",
-        description: "Ideal para quien trabaja su tesis de forma individual con asesor propio.",
-        highlights: ["1 acceso activo", "Generación de Excel y CSV", "Prueba de confiabilidad (Alfa de Cronbach)", "Baremos y dimensiones configurables", "Soporte por correo"],
-        cta: "Generar mi tabulación",
+        description: "La cuota completa para sacar adelante una tesis de principio a fin.",
+        highlights: [
+          "10 tabulaciones y 10 pruebas de confiabilidad",
+          "10 bases descriptivas y 10 generaciones de títulos",
+          "5 matrices de consistencia",
+          "30 humanizaciones de texto",
+          "10 corridas de Forms",
+        ],
+        cta: "Avanzar mi tesis",
         featured: true,
       },
       {
-        id: "business",
-        name: "Plan Institucional",
+        id: "institucion",
+        name: "Plan Institución",
         audience: "Universidades y consultoras",
         icon: Building2,
         priceMonthlyUsd: "USD 129",
@@ -54,40 +102,18 @@ export function LandingPage({
         priceMonthlyPen: "S/ 485",
         priceYearlyPen: "S/ 4,850",
         description: "Para equipos que gestionan múltiples tesis con control administrativo.",
-        highlights: ["Hasta 20 accesos", "Panel de administrador", "Proyectos ilimitados", "Usos de Forms para el equipo", "Soporte prioritario"],
+        highlights: [
+          "Hasta 20 cuentas, cada una con cuota Tesista",
+          "Panel de administrador",
+          "Recargas por herramienta para el equipo",
+          "Soporte prioritario",
+        ],
         cta: "Contáctanos",
         featured: false,
       },
     ],
     [],
   );
-
-  // Demo en bucle del flujo real del producto: calcula la tabla baremada,
-  // genera el Excel y lo entrega. La primera tabla usa datos reales de una
-  // generación (muestra de 289); las otras son variaciones de ejemplo.
-  const PREVIEW_TABLES = [
-    { dim: "Planificación", filas: [{ nivel: "Bajo", f: 133, pct: 46.0 }, { nivel: "Medio", f: 101, pct: 34.9 }, { nivel: "Alto", f: 55, pct: 19.0 }] },
-    { dim: "Transparencia", filas: [{ nivel: "Bajo", f: 121, pct: 41.9 }, { nivel: "Medio", f: 109, pct: 37.7 }, { nivel: "Alto", f: 59, pct: 20.4 }] },
-    { dim: "Cumplimiento", filas: [{ nivel: "Bajo", f: 96, pct: 33.2 }, { nivel: "Medio", f: 138, pct: 47.8 }, { nivel: "Alto", f: 55, pct: 19.0 }] },
-  ];
-  const [fase, setFase] = useState(0); // 0 tabla · 1 generando · 2 entregado
-  const [dataIdx, setDataIdx] = useState(0);
-
-  useEffect(() => {
-    if (reduce) return;
-    const duraciones = [4200, 2600, 3600];
-    const timer = window.setTimeout(() => {
-      setFase((f) => {
-        const next = (f + 1) % 3;
-        if (next === 0) setDataIdx((d) => (d + 1) % PREVIEW_TABLES.length);
-        return next;
-      });
-    }, duraciones[fase]);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fase, reduce]);
-
-  const tabla = PREVIEW_TABLES[dataIdx];
 
   const pasos = [
     { titulo: "Configura", desc: "Variables, dimensiones, indicadores y la escala de tu instrumento, guiado paso a paso." },
@@ -110,7 +136,7 @@ export function LandingPage({
     },
     {
       q: "¿Qué es Forms y cómo funciona?",
-      a: "Tutorica Forms rellena tu encuesta de Google Forms automáticamente, con perfiles y distribuciones configurables, desde una extensión de Chrome conectada a tu cuenta. Funciona por usos: cada corrida de llenado consume 1 uso, independiente de tu suscripción de Tabulación.",
+      a: "Forms rellena tu encuesta de Google Forms automáticamente, con perfiles y distribuciones configurables, desde una extensión de Chrome conectada a tu cuenta. Como todas las herramientas, funciona por usos: cada corrida de llenado consume 1 uso de Forms.",
     },
     {
       q: "¿Cuánto tarda en generarse?",
@@ -126,20 +152,21 @@ export function LandingPage({
     },
     {
       q: "¿Cómo pago y qué pasa si tengo dudas?",
-      a: "Hay planes en soles o dólares, con pago mensual o anual. Para el plan institucional o cualquier consulta, escríbenos por WhatsApp o al correo del pie de página.",
+      a: "Los planes funcionan por usos: cada plan carga una cuota de usos por herramienta (1 uso = 1 generación o corrida), en soles o dólares y con pago mensual o anual. Para el Plan Institución o cualquier consulta, escríbenos por WhatsApp o al correo del pie de página.",
     },
   ];
   const [faqAbierta, setFaqAbierta] = useState<number | null>(0);
 
+  // Bento de "qué incluye": 8 celdas exactas, dos destacadas con fondo tintado.
   const incluye = [
-    "Variables, dimensiones e indicadores configurables",
-    "Baremos e intervalos calculados automáticamente",
-    "Estadísticos por ítem: media, moda y desviación",
-    "Frecuencias y porcentajes por escala",
-    "Gráficos por ítem y por dimensión",
-    "Interpretaciones narrativas bajo cada figura",
-    "Correlación de Pearson entre variables",
-    "Descarga en Excel y CSV",
+    { icon: TrendingUp, title: "Correlación de Pearson", desc: "Entre tus variables, con nivel interpretado automáticamente.", span: true, tone: "mint" as const, figure: "0.977" },
+    { icon: Sigma, title: "Estadísticos por ítem", desc: "Media, moda y desviación estándar." },
+    { icon: BarChart3, title: "Frecuencias y porcentajes", desc: "Por escala y por nivel de baremo." },
+    { icon: PieChart, title: "Gráficos listos", desc: "Por ítem y por dimensión, con formato de figura." },
+    { icon: Ruler, title: "Baremos automáticos", desc: "Intervalos y valoraciones calculados por ti." },
+    { icon: Feather, title: "Interpretaciones narrativas", desc: "Un párrafo bajo cada figura, listo para tu capítulo de resultados.", span: true, tone: "amber" as const },
+    { icon: SlidersHorizontal, title: "Instrumento configurable", desc: "Variables, dimensiones e indicadores a tu medida.", span: true },
+    { icon: Download, title: "Excel y CSV", desc: "Fórmulas vivas que se recalculan si editas la base.", span: true },
   ];
 
   const heroStagger = {
@@ -152,457 +179,298 @@ export function LandingPage({
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4">
-      <header className="flex h-16 items-center justify-between">
-        <div className="flex items-center gap-2.5 text-lg font-semibold tracking-tight">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <FileSpreadsheet className="h-4 w-4" />
-          </span>
-          TesisTab
-        </div>
-        <nav className="hidden items-center gap-6 text-sm md:flex" aria-label="Secciones de la página">
-          {[
-            ["herramientas", "Herramientas"],
-            ["como-funciona", "Cómo funciona"],
-            ["planes", "Planes"],
-            ["faq", "FAQ"],
-          ].map(([id, label]) => (
+    // overflow-x-clip evita el scroll horizontal en móvil sin romper el
+    // sticky del header (clip no crea un scroll container, hidden sí).
+    <div className="overflow-x-clip bg-background">
+      {/* ── Header píldora sticky (única navegación y único "Iniciar sesión") ── */}
+      <div className="sticky top-3 z-40 px-4">
+        <header className="mx-auto flex h-14 w-full max-w-3xl items-center justify-between rounded-full border border-border/70 bg-card/80 pl-2 pr-2 shadow-soft backdrop-blur-xl">
+          <button
+            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            className="flex items-center gap-2 rounded-full py-1.5 pl-1.5 pr-3 transition-colors hover:bg-accent"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
+              <FileSpreadsheet className="h-4 w-4" />
+            </span>
+            <span className="font-display text-base font-semibold tracking-tight">TesisHub</span>
+          </button>
+          <nav className="hidden items-center md:flex" aria-label="Secciones de la página">
+            {[
+              ["herramientas", "Herramientas"],
+              ["como-funciona", "Cómo funciona"],
+              ["planes", "Planes"],
+              ["faq", "FAQ"],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => goToSection(id)}
+                className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-accent hover:text-foreground active:scale-95"
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+          <div className="flex items-center gap-1">
             <button
-              key={id}
-              onClick={() => goToSection(id)}
-              className="text-muted-foreground transition-colors hover:text-foreground"
+              onClick={onToggleTheme}
+              className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              aria-label={themeMode === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
             >
-              {label}
+              {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
-          ))}
-        </nav>
-        <div className="flex items-center gap-1.5">
-          <Button variant="ghost" size="sm" onClick={onToggleTheme} aria-label={themeMode === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}>
-            {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </Button>
-          <Button variant="outline" size="sm" onClick={onOpenApp}>
-            Iniciar sesión
-          </Button>
-        </div>
-      </header>
+            <Button size="sm" onClick={onOpenApp} className="rounded-full">
+              Iniciar sesión
+            </Button>
+          </div>
+        </header>
+      </div>
 
-      <section className="relative grid items-center gap-12 py-14 md:grid-cols-[6fr_5fr] md:py-20 lg:gap-16">
-        <div aria-hidden className="hero-dots pointer-events-none absolute -inset-x-8 -top-8 bottom-0 -z-10" />
-        <div aria-hidden className="pointer-events-none absolute right-0 top-1/2 -z-10 h-[420px] w-[560px] -translate-y-1/2 rounded-full bg-primary/15 blur-3xl" />
-
+      {/* ── Hero split: mensaje + producto real ── */}
+      <section className="mx-auto grid max-w-6xl items-center gap-12 px-4 pb-16 pt-14 md:pt-20 lg:grid-cols-[7fr_5fr] lg:gap-14">
         <motion.div variants={heroStagger} initial="hidden" animate="show">
           <motion.div
             variants={heroItem}
-            className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3.5 py-1.5 text-xs font-medium text-primary"
+            className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-accent px-3.5 py-1.5 text-xs font-medium text-accent-foreground"
           >
             <GraduationCap className="h-3.5 w-3.5" />
             Para tesis cuantitativas
           </motion.div>
-          <motion.h1 variants={heroItem} className="mt-5 text-4xl font-bold leading-[1.06] tracking-tight md:text-[3.4rem] md:leading-[1.05]">
-            La estadística de tu tesis, <span className="text-primary">lista en minutos.</span>
+          <motion.h1
+            variants={heroItem}
+            className="mt-5 text-balance font-display text-4xl font-bold leading-[1.05] tracking-tighter md:text-6xl"
+          >
+            El capítulo que más asusta de tu tesis, <span className="text-primary">listo en minutos.</span>
           </motion.h1>
           <motion.p variants={heroItem} className="mt-5 max-w-[46ch] text-base text-muted-foreground md:text-lg">
-            Tabula tu encuesta, valida tu instrumento con Alfa de Cronbach y descarga un Excel con fórmulas reales, gráficos e interpretaciones.
+            Pega tu encuesta y descarga tablas, figuras e interpretaciones listas para tu asesor, sin
+            fórmulas y sin pagar un estadístico.
           </motion.p>
           <motion.div variants={heroItem} className="mt-8 flex flex-wrap items-center gap-3">
             <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
               <Button size="lg" className="h-12 px-6 text-base" onClick={onOpenApp}>
-                Generar mi tabulación
+                Avanzar mi tesis
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </motion.div>
             <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
-              <Button
-                size="lg"
-                variant="outline"
-                className="h-12 px-6 text-base"
-                onClick={() => document.getElementById("planes")?.scrollIntoView({ behavior: "smooth" })}
-              >
+              <Button size="lg" variant="outline" className="h-12 px-6 text-base" onClick={() => goToSection("planes")}>
                 Ver planes
               </Button>
             </motion.div>
           </motion.div>
         </motion.div>
 
+        {/* Screenshot real del producto en marco de navegador */}
         <motion.div
+          initial={reduce ? false : { opacity: 0, y: 26 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ ...springSoft, delay: 0.2 }}
           className="relative"
-          initial={reduce ? false : { opacity: 0, y: 30, scale: 0.96 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ ...springSoft, delay: 0.25 }}
         >
-          {/* Satélite: correlación real del producto, flotando sobre la ventana */}
-          <motion.div
-            initial={reduce ? false : { opacity: 0, scale: 0.85, y: 12 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            transition={{ ...springSoft, delay: 0.65 }}
-            className="absolute -left-9 -top-7 z-10 hidden lg:block"
-          >
-            <motion.div
-              animate={reduce ? undefined : { y: [0, -13, 0], x: [0, 5, 0], rotate: [0, -1.4, 0] }}
-              transition={reduce ? undefined : { duration: 5, repeat: Infinity, ease: "easeInOut", delay: 0.4 }}
-              className="rounded-2xl border border-border bg-card px-4 py-3 shadow-xl"
-            >
-              <p className="text-[11px] font-medium text-muted-foreground">Correlación de Pearson</p>
-              <div className="mt-1 flex items-baseline gap-2">
-                <span className="font-mono text-2xl font-bold tracking-tight">0.977</span>
-                <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium text-accent-foreground">Muy alta</span>
-              </div>
-            </motion.div>
-          </motion.div>
-
-          {/* Satélite: la Figura con su mini gráfico de columnas, en vivo */}
-          <motion.div
-            initial={reduce ? false : { opacity: 0, scale: 0.85, y: 12 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            transition={{ ...springSoft, delay: 0.85 }}
-            className="absolute -bottom-9 -right-4 z-10 hidden lg:block"
-          >
-            <motion.div
-              animate={reduce ? undefined : { y: [0, -11, 0], x: [0, -6, 0], rotate: [0, 1.6, 0] }}
-              transition={reduce ? undefined : { duration: 6, repeat: Infinity, ease: "easeInOut", delay: 1.2 }}
-              className="w-[160px] rounded-2xl border border-border bg-card px-4 py-3 shadow-xl"
-            >
-              <p className="text-[11px] font-medium text-muted-foreground">Figura 1 · {tabla.dim}</p>
-              <div className="mt-2 flex h-16 items-end gap-2">
-                {tabla.filas.map((fila, i) => (
-                  <motion.div
-                    key={fila.nivel}
-                    className="h-full flex-1 origin-bottom rounded-t-md bg-gradient-to-t from-primary/60 to-primary"
-                    initial={reduce ? false : { scaleY: 0 }}
-                    animate={{ scaleY: fila.pct / 50 }}
-                    transition={{ type: "spring", stiffness: 80, damping: 15, delay: i * 0.08 }}
-                  />
-                ))}
-              </div>
-              <div className="mt-1.5 flex gap-2">
-                {tabla.filas.map((fila) => (
-                  <span key={fila.nivel} className="flex-1 text-center text-[9px] text-muted-foreground">
-                    {fila.nivel}
-                  </span>
-                ))}
-              </div>
-            </motion.div>
-          </motion.div>
-
-          <TiltCard>
-            <div className="rounded-3xl border border-border bg-card p-6 shadow-[0_40px_90px_-30px_hsl(var(--primary)/0.5)] ring-1 ring-primary/10">
-              <div className="mb-4 flex items-center justify-between border-b border-border pb-3">
-                <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
-                  <FileSpreadsheet className="h-3.5 w-3.5 text-primary" />
-                  Tabulacion_generada.xlsx
-                </div>
-                <AnimatePresence mode="wait" initial={false}>
-                  <motion.span
-                    key={fase}
-                    initial={reduce ? false : { opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -4 }}
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium",
-                      fase === 2 ? "bg-primary text-primary-foreground" : "bg-accent text-accent-foreground",
-                    )}
-                  >
-                    {fase === 1 && <Loader2 className="h-3 w-3 animate-spin" />}
-                    {fase === 2 && <Check className="h-3 w-3" />}
-                    {fase === 0 ? "Calculando" : fase === 1 ? "Generando" : "Listo"}
-                  </motion.span>
-                </AnimatePresence>
-              </div>
-              <div className="min-h-[280px]">
-                <AnimatePresence mode="wait" initial={false}>
-                  {fase === 0 && (
-                    <motion.div
-                      key={`tabla-${dataIdx}`}
-                      initial={reduce ? false : { opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      transition={{ duration: 0.35 }}
-                    >
-                      <p className="text-sm font-semibold">Tabla {dataIdx + 1}</p>
-                      <p className="text-sm text-muted-foreground">Frecuencia baremada · {tabla.dim}</p>
-                      <div className="mt-5 space-y-4">
-                        {tabla.filas.map((fila, i) => (
-                          <div key={fila.nivel}>
-                            <div className="flex items-baseline justify-between text-sm">
-                              <span className="font-medium">{fila.nivel}</span>
-                              <span className="font-mono text-sm">
-                                <span className="font-semibold">
-                                  <AnimatedNumber value={fila.f} />
-                                </span>{" "}
-                                <span className="text-muted-foreground">
-                                  · <AnimatedNumber value={fila.pct} decimals={1} suffix="%" />
-                                </span>
-                              </span>
-                            </div>
-                            <div className="mt-2 h-2.5 w-full">
-                              <motion.div
-                                className="h-full w-full origin-left rounded-full bg-gradient-to-r from-primary to-primary/65"
-                                initial={reduce ? false : { scaleX: 0 }}
-                                animate={{ scaleX: fila.pct / 100 }}
-                                transition={{ type: "spring", stiffness: 70, damping: 16, delay: 0.15 + i * 0.1 }}
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="mt-5 flex items-baseline justify-between border-t border-border pt-3 text-sm">
-                        <span className="font-semibold">Total</span>
-                        <span className="font-mono tabular-nums">289 encuestados</span>
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {fase === 1 && (
-                    <motion.div
-                      key="generando"
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      transition={{ duration: 0.35 }}
-                    >
-                      <p className="text-sm font-semibold">Generando tu Excel</p>
-                      <p className="text-sm text-muted-foreground">Con fórmulas reales, listas para tu informe</p>
-                      <div className="mt-6 space-y-4">
-                        {["Estadísticos por ítem", "Baremos y valoraciones", "Frecuencias y porcentajes", "Gráficos e interpretaciones"].map((etapa, i) => (
-                          <motion.div
-                            key={etapa}
-                            className="flex items-center gap-2.5 text-sm"
-                            initial={{ opacity: 0, x: -10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ ...springSoft, delay: 0.2 + i * 0.4 }}
-                          >
-                            <motion.span
-                              initial={{ scale: 0 }}
-                              animate={{ scale: 1 }}
-                              transition={{ ...springSoft, delay: 0.3 + i * 0.4 }}
-                              className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground"
-                            >
-                              <Check className="h-3 w-3" />
-                            </motion.span>
-                            {etapa}
-                          </motion.div>
-                        ))}
-                        <div className="flex items-center gap-2.5 pt-1 text-sm text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                          Armando el archivo...
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {fase === 2 && (
-                    <motion.div
-                      key="entregado"
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      transition={{ duration: 0.35 }}
-                      className="flex min-h-[280px] flex-col items-center justify-center text-center"
-                    >
-                      <motion.div
-                        initial={{ scale: 0.6, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        transition={springSoft}
-                        className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_18px_44px_-16px_hsl(var(--primary)/0.8)]"
-                      >
-                        <FileSpreadsheet className="h-8 w-8" />
-                      </motion.div>
-                      <p className="mt-4 text-base font-semibold">Tu Excel está listo</p>
-                      <p className="mt-1 text-sm text-muted-foreground">9 hojas, más de 30 gráficos e interpretaciones</p>
-                      <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }} className="mt-5">
-                        <Button size="sm" onClick={onOpenApp}>
-                          <Download className="h-4 w-4" />
-                          Descargar Excel
-                        </Button>
-                      </motion.div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-              <div className="mt-4 flex gap-1 border-t border-border pt-3">
-                {["Variable 1", "Dimensiones", "Ítems", "Relaciones"].map((tab, i) => (
-                  <span
-                    key={tab}
-                    className={cn(
-                      "rounded-md px-2.5 py-1 text-[11px] transition-colors",
-                      i === (fase === 0 ? 1 : fase === 1 ? 2 : 3)
-                        ? "bg-accent font-medium text-accent-foreground"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {tab}
-                  </span>
-                ))}
-              </div>
+          <div aria-hidden className="absolute -inset-3 -z-10 rounded-[32px] bg-accent/60 dark:bg-accent/30 md:-inset-6" />
+          <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-hero md:rotate-1">
+            <div className="flex items-center gap-1.5 border-b border-border bg-muted/60 px-4 py-2.5" aria-hidden>
+              <span className="h-2.5 w-2.5 rounded-full bg-border" />
+              <span className="h-2.5 w-2.5 rounded-full bg-border" />
+              <span className="h-2.5 w-2.5 rounded-full bg-border" />
             </div>
-          </TiltCard>
-          <p className="mt-3 text-center text-xs text-muted-foreground">
-            Demo del flujo real: calcula, genera y entrega tu Excel.
-          </p>
+            <img
+              src="/app-dashboard.jpg"
+              alt="Panel de TesisHub con las herramientas de estadística y redacción"
+              className="aspect-[4/3] w-full object-cover object-left-top"
+              loading="eager"
+            />
+          </div>
         </motion.div>
       </section>
 
-      <section id="herramientas" className="border-t border-border py-16">
-        <Reveal>
-          <h2 className="max-w-[22ch] text-2xl font-bold tracking-tight md:text-3xl">
-            De la encuesta al capítulo de resultados
-          </h2>
-          <p className="mt-2 max-w-[54ch] text-sm text-muted-foreground">
-            Tres herramientas conectadas: recolecta las respuestas, valida tu instrumento y tabula con formato de tesis.
-          </p>
-        </Reveal>
-        <Reveal delay={0.1} className="mt-9">
-          <ToolsShowcase onOpenApp={onOpenApp} onVerIncluye={() => goToSection("incluye")} />
-        </Reveal>
-      </section>
+      {/* ── Marquee de herramientas ── */}
+      <div className="mx-auto max-w-6xl px-4 pb-4">
+        <ToolsMarquee />
+      </div>
 
-      <section id="como-funciona" className="border-t border-border py-14">
-        <Reveal>
-          <h2 className="text-2xl font-bold tracking-tight md:text-3xl">De la encuesta al Excel en tres pasos</h2>
-        </Reveal>
-        <div className="mt-8 grid gap-8 md:grid-cols-3 md:gap-0 md:divide-x md:divide-border">
-          {pasos.map((paso, i) => (
-            <Reveal key={paso.titulo} delay={i * 0.1} className="md:px-8 md:first:pl-0 md:last:pr-0">
-              <h3 className="text-lg font-semibold text-primary">{paso.titulo}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{paso.desc}</p>
-            </Reveal>
-          ))}
-        </div>
-      </section>
-
-      <section id="incluye" className="border-t border-border py-14">
-        <div className="grid gap-10 md:grid-cols-[2fr_3fr]">
+      <div className="mx-auto max-w-6xl px-4">
+        <section id="herramientas" className="scroll-mt-24 border-t border-border py-16">
           <Reveal>
-            <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Todo lo que tu asesor espera ver</h2>
-            <p className="mt-3 max-w-[40ch] text-sm text-muted-foreground">
+            <h2 className="max-w-[22ch] font-display text-2xl font-bold tracking-tighter md:text-3xl">
+              De la encuesta al capítulo de resultados
+            </h2>
+            <p className="mt-2 max-w-[54ch] text-sm text-muted-foreground">
+              Tres herramientas conectadas: recolecta las respuestas, valida tu instrumento y tabula con formato de tesis.
+            </p>
+          </Reveal>
+          <Reveal delay={0.1} className="mt-9">
+            <ToolsShowcase onOpenApp={onOpenApp} onVerIncluye={() => goToSection("incluye")} />
+          </Reveal>
+        </section>
+
+        {/* ── Cómo funciona: timeline vertical ── */}
+        <section id="como-funciona" className="scroll-mt-24 border-t border-border py-16">
+          <Reveal>
+            <h2 className="font-display text-2xl font-bold tracking-tighter md:text-3xl">
+              De la encuesta al Excel en tres pasos
+            </h2>
+          </Reveal>
+          <ol className="mt-10 max-w-2xl space-y-0">
+            {pasos.map((paso, i) => (
+              <Reveal key={paso.titulo} delay={i * 0.1}>
+                <li className="relative flex gap-6 pb-10 last:pb-0">
+                  {i < pasos.length - 1 && (
+                    <span aria-hidden className="absolute left-[17px] top-10 h-[calc(100%-2.5rem)] w-px bg-border" />
+                  )}
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary font-display text-sm font-bold text-primary-foreground">
+                    {i + 1}
+                  </span>
+                  <div className="pt-1">
+                    <h3 className="font-display text-lg font-semibold tracking-tight">{paso.titulo}</h3>
+                    <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{paso.desc}</p>
+                  </div>
+                </li>
+              </Reveal>
+            ))}
+          </ol>
+        </section>
+
+        {/* ── Qué incluye: bento de 8 celdas ── */}
+        <section id="incluye" className="scroll-mt-24 border-t border-border py-16">
+          <Reveal>
+            <h2 className="font-display text-2xl font-bold tracking-tighter md:text-3xl">Todo lo que tu asesor espera ver</h2>
+            <p className="mt-2 max-w-[46ch] text-sm text-muted-foreground">
               El archivo sale con formato de tesis: tablas y figuras numeradas, fuente y elaboración en cada bloque.
             </p>
           </Reveal>
-          <ul className="grid content-start gap-x-8 gap-y-3.5 text-sm sm:grid-cols-2">
+          <div className="mt-9 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {incluye.map((item, i) => (
-              <motion.li
-                key={item}
-                className="flex items-start gap-2.5"
-                initial={reduce ? false : { opacity: 0, x: -14 }}
-                whileInView={{ opacity: 1, x: 0 }}
-                viewport={{ once: true, amount: 0.5 }}
-                transition={{ ...springSoft, delay: i * 0.05 }}
+              <Reveal
+                key={item.title}
+                delay={i * 0.05}
+                className={cn(item.span && "sm:col-span-2")}
               >
-                <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                {item}
-              </motion.li>
-            ))}
-          </ul>
-        </div>
-      </section>
-
-      <section id="planes" className="border-t border-border py-14">
-        <Reveal>
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Planes y precios</h2>
-              <p className="mt-2 text-sm text-muted-foreground">Paga en soles o dólares, mensual o anual.</p>
-            </div>
-            <div className="inline-flex rounded-xl border border-border bg-card p-1">
-              {(["monthly", "yearly"] as const).map((mode) => (
-                <button
-                  key={mode}
+                <div
                   className={cn(
-                    "rounded-lg px-4 py-1.5 text-sm font-medium transition-colors",
-                    billingMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                    "flex h-full flex-col rounded-2xl border p-5",
+                    item.tone === "mint"
+                      ? "border-primary/20 bg-accent"
+                      : item.tone === "amber"
+                        ? "border-amber-500/25 bg-amber-500/10"
+                        : "border-border/70 bg-card shadow-sm",
                   )}
-                  onClick={() => setBillingMode(mode)}
                 >
-                  {mode === "monthly" ? "Mensual" : "Anual"}
-                </button>
-              ))}
-            </div>
-          </div>
-        </Reveal>
-
-        <div className="mt-8 grid gap-6 md:grid-cols-2">
-          {plans.map((plan, i) => (
-            <Reveal key={plan.id} delay={i * 0.12}>
-              <motion.div
-                whileHover={reduce ? undefined : { y: -4 }}
-                transition={springSoft}
-                className={cn(
-                  "h-full rounded-2xl p-6 md:p-8",
-                  plan.featured ? "border-2 border-primary bg-accent/50" : "border border-border bg-card",
-                )}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                    <plan.icon className="h-4 w-4" />
-                    {plan.audience}
+                  <div className="flex items-start justify-between gap-3">
+                    <item.icon className={cn("h-5 w-5", item.tone === "amber" ? "text-amber-600 dark:text-amber-400" : "text-primary")} />
+                    {item.figure && (
+                      <span className="font-mono text-2xl font-bold tracking-tight text-accent-foreground">
+                        {item.figure}
+                        <span className="ml-2 align-middle font-sans text-[10px] font-medium text-muted-foreground">ejemplo</span>
+                      </span>
+                    )}
                   </div>
-                  {plan.featured && <Badge>Recomendado</Badge>}
+                  <h3 className="mt-3 font-display text-base font-semibold tracking-tight">{item.title}</h3>
+                  <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{item.desc}</p>
                 </div>
-                <h3 className="mt-3 text-xl font-bold tracking-tight">{plan.name}</h3>
-                <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
-                <div className="mt-6 flex items-baseline gap-2">
-                  <span className="text-4xl font-bold tracking-tight">
-                    {billingMode === "monthly" ? plan.priceMonthlyPen : plan.priceYearlyPen}
-                  </span>
-                  <span className="text-sm text-muted-foreground">
-                    / {billingMode === "monthly" ? "mes" : "año"} ({billingMode === "monthly" ? plan.priceMonthlyUsd : plan.priceYearlyUsd})
-                  </span>
-                </div>
-                <ul className="mt-6 space-y-2.5 text-sm">
-                  {plan.highlights.map((item) => (
-                    <li key={item} className="flex items-start gap-2.5">
-                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-                <Button
-                  className="mt-7 w-full"
-                  size="lg"
-                  variant={plan.featured ? "default" : "outline"}
-                  onClick={plan.id === "business" ? openWhatsApp : onOpenApp}
-                >
-                  {plan.id === "business" && <MessageCircle className="h-4 w-4" />}
-                  {plan.cta}
-                </Button>
-                {plan.id === "business" && (
-                  <p className="mt-3 text-center text-xs text-muted-foreground">
-                    o escríbenos a{" "}
-                    <a href={`mailto:${CONTACT_EMAIL}`} className="font-medium text-primary hover:underline">
-                      {CONTACT_EMAIL}
-                    </a>
-                  </p>
-                )}
-              </motion.div>
-            </Reveal>
-          ))}
-        </div>
-      </section>
+              </Reveal>
+            ))}
+          </div>
+        </section>
 
-      <section id="faq" className="border-t border-border py-16">
-        <Reveal className="text-center">
-          <span className="inline-flex rounded-full bg-foreground px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide text-background">
-            FAQ
-          </span>
-          <h2 className="mx-auto mt-4 max-w-[18ch] text-3xl font-bold leading-tight tracking-tight md:text-4xl">
-            Preguntas frecuentes
-          </h2>
-        </Reveal>
-        <div className="mx-auto mt-10 flex max-w-3xl flex-col gap-3">
-          {faqs.map((faq, i) => {
-            const abierta = faqAbierta === i;
-            return (
-              <Reveal key={faq.q} delay={i * 0.05}>
+        {/* ── Planes ── */}
+        <section id="planes" className="scroll-mt-24 border-t border-border py-16">
+          <Reveal>
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <h2 className="font-display text-2xl font-bold tracking-tighter md:text-3xl">Planes y precios</h2>
+                <p className="mt-2 text-sm text-muted-foreground">Por usos: cada plan carga tu cuota de cada herramienta. En soles o dólares, mensual o anual.</p>
+              </div>
+              <div className="inline-flex rounded-full border border-border bg-card p-1">
+                {(["monthly", "yearly"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    className={cn(
+                      "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+                      billingMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                    )}
+                    onClick={() => setBillingMode(mode)}
+                  >
+                    {mode === "monthly" ? "Mensual" : "Anual"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </Reveal>
+
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            {plans.map((plan, i) => (
+              <Reveal key={plan.id} delay={i * 0.12}>
                 <motion.div
-                  whileHover={reduce || abierta ? undefined : { y: -2 }}
+                  whileHover={reduce ? undefined : { y: -4 }}
                   transition={springSoft}
                   className={cn(
-                    "rounded-2xl border bg-card shadow-sm transition-colors",
-                    abierta ? "border-primary/40 shadow-md" : "border-border",
+                    "h-full rounded-2xl p-6 md:p-8",
+                    plan.featured ? "border-2 border-primary bg-accent/60 shadow-soft" : "border border-border/70 bg-card shadow-sm",
                   )}
                 >
+                  <div className="flex items-center justify-between">
+                    <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                      <plan.icon className="h-4 w-4" />
+                      {plan.audience}
+                    </div>
+                    {plan.featured && (
+                      <Badge className="border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-400">Recomendado</Badge>
+                    )}
+                  </div>
+                  <h3 className="mt-3 font-display text-xl font-bold tracking-tight">{plan.name}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
+                  <div className="mt-6 flex flex-wrap items-baseline gap-2">
+                    <span className="font-display text-3xl font-bold tabular-nums tracking-tight md:text-4xl">
+                      {billingMode === "monthly" ? plan.priceMonthlyPen : plan.priceYearlyPen}
+                    </span>
+                    <span className="text-sm text-muted-foreground">
+                      / {billingMode === "monthly" ? "mes" : "año"} ({billingMode === "monthly" ? plan.priceMonthlyUsd : plan.priceYearlyUsd})
+                    </span>
+                  </div>
+                  <ul className="mt-6 space-y-2.5 text-sm">
+                    {plan.highlights.map((item) => (
+                      <li key={item} className="flex items-start gap-2.5">
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                  <Button
+                    className="mt-7 w-full"
+                    size="lg"
+                    variant={plan.featured ? "default" : "outline"}
+                    onClick={plan.id === "institucion" ? openWhatsApp : onOpenApp}
+                  >
+                    {plan.id === "institucion" && <MessageCircle className="h-4 w-4" />}
+                    {plan.cta}
+                  </Button>
+                  {plan.id === "institucion" && (
+                    <p className="mt-3 text-center text-xs text-muted-foreground">
+                      o escríbenos a{" "}
+                      <a href={`mailto:${CONTACT_EMAIL}`} className="font-medium text-primary hover:underline">
+                        {CONTACT_EMAIL}
+                      </a>
+                    </p>
+                  )}
+                </motion.div>
+              </Reveal>
+            ))}
+          </div>
+        </section>
+
+        {/* ── FAQ: lista limpia ── */}
+        <section id="faq" className="scroll-mt-24 border-t border-border py-16">
+          <Reveal>
+            <h2 className="text-center font-display text-2xl font-bold tracking-tighter md:text-3xl">Preguntas frecuentes</h2>
+          </Reveal>
+          <div className="mx-auto mt-8 max-w-3xl divide-y divide-border">
+            {faqs.map((faq, i) => {
+              const abierta = faqAbierta === i;
+              return (
+                <div key={faq.q}>
                   <button
-                    className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left"
+                    className="flex w-full items-center justify-between gap-4 py-5 text-left"
                     aria-expanded={abierta}
                     onClick={() => setFaqAbierta(abierta ? null : i)}
                   >
@@ -623,109 +491,116 @@ export function LandingPage({
                     )}
                   >
                     <div className="min-h-0 overflow-hidden">
-                      <p className="px-6 pb-5 text-sm leading-relaxed text-muted-foreground">{faq.a}</p>
+                      <p className="pb-5 pr-9 text-sm leading-relaxed text-muted-foreground">{faq.a}</p>
                     </div>
                   </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* ── CTA final: banda esmeralda ── */}
+        <section className="py-16">
+          <Reveal>
+            <div className="rounded-[32px] bg-primary-deep px-6 py-14 text-center md:px-16 md:py-20">
+              <h2 className="mx-auto max-w-[18ch] text-balance font-display text-3xl font-bold leading-[1.08] tracking-tighter text-white md:text-5xl">
+                ¿Listo para avanzar tu tesis?
+              </h2>
+              <p className="mx-auto mt-4 max-w-[46ch] text-sm text-white/75 md:text-base">
+                Empieza hoy y entrega a tu asesor resultados con formato de tesis: tablas, figuras e interpretaciones.
+              </p>
+              <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+                <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
+                  <Button
+                    size="lg"
+                    className="h-12 bg-white px-8 text-base text-primary-deep shadow-none hover:bg-white/90"
+                    onClick={onOpenApp}
+                  >
+                    Avanzar mi tesis
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
                 </motion.div>
-              </Reveal>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="border-t border-border py-20 text-center md:py-28">
-        <Reveal>
-          <h2 className="mx-auto max-w-[16ch] text-4xl font-bold leading-[1.08] tracking-tight md:text-5xl">
-            ¿Listo para generar tu tabulación?
-          </h2>
-          <p className="mx-auto mt-5 max-w-[46ch] text-sm text-muted-foreground md:text-base">
-            Configura tu encuesta hoy y entrega a tu asesor un Excel con tablas, figuras e interpretaciones.
-          </p>
-          <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
-            <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
-              <Button size="lg" className="h-12 px-8 text-base shadow-lg" onClick={onOpenApp}>
-                Generar mi tabulación
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </motion.div>
-            <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
-              <Button size="lg" variant="outline" className="h-12 px-8 text-base" onClick={openWhatsApp}>
-                <MessageCircle className="h-4 w-4" />
-                Hablar por WhatsApp
-              </Button>
-            </motion.div>
-          </div>
-        </Reveal>
-      </section>
-
-      <footer className="border-t border-border pb-10 pt-14">
-        <div className="grid gap-10 md:grid-cols-[2fr_1fr_1fr_1fr]">
-          <div>
-            <div className="flex items-center gap-2.5 text-lg font-semibold tracking-tight">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <FileSpreadsheet className="h-4 w-4" />
-              </span>
-              TesisTab
+                <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
+                  <Button
+                    size="lg"
+                    variant="ghost"
+                    className="h-12 border border-white/30 px-8 text-base text-white hover:bg-white/10 hover:text-white"
+                    onClick={openWhatsApp}
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    Hablar por WhatsApp
+                  </Button>
+                </motion.div>
+              </div>
             </div>
-            <p className="mt-3 max-w-[32ch] text-sm text-muted-foreground">
-              Tabulación, confiabilidad y encuestas: la estadística de tu tesis, lista en minutos.
-            </p>
+          </Reveal>
+        </section>
+
+        {/* ── Footer ── */}
+        <footer className="border-t border-border pb-10 pt-14">
+          <div className="grid gap-10 md:grid-cols-[2fr_1fr_1fr_1fr]">
+            <div>
+              <div className="flex items-center gap-2.5 font-display text-lg font-semibold tracking-tight">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                  <FileSpreadsheet className="h-4 w-4" />
+                </span>
+                TesisHub
+              </div>
+              <p className="mt-3 max-w-[32ch] text-sm text-muted-foreground">
+                Tabulación, confiabilidad y encuestas: la estadística de tu tesis, lista en minutos.
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Producto</p>
+              <ul className="mt-4 space-y-3 text-sm">
+                <li><a href="#herramientas" className="text-muted-foreground hover:text-foreground">Herramientas</a></li>
+                <li><a href="#como-funciona" className="text-muted-foreground hover:text-foreground">Cómo funciona</a></li>
+                <li><a href="#incluye" className="text-muted-foreground hover:text-foreground">Qué incluye</a></li>
+                <li><a href="#planes" className="text-muted-foreground hover:text-foreground">Planes y precios</a></li>
+              </ul>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Soporte</p>
+              <ul className="mt-4 space-y-3 text-sm">
+                <li><a href="#faq" className="text-muted-foreground hover:text-foreground">Preguntas frecuentes</a></li>
+                <li>
+                  <button onClick={openWhatsApp} className="text-muted-foreground hover:text-foreground">
+                    WhatsApp +51 975 212 132
+                  </button>
+                </li>
+                <li>
+                  <a href={`mailto:${CONTACT_EMAIL}`} className="text-muted-foreground hover:text-foreground">
+                    {CONTACT_EMAIL}
+                  </a>
+                </li>
+                <li>
+                  <a href="/privacidad.html" className="text-muted-foreground hover:text-foreground">
+                    Política de privacidad
+                  </a>
+                </li>
+              </ul>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cuenta</p>
+              <ul className="mt-4 space-y-3 text-sm">
+                <li>
+                  <button onClick={onOpenApp} className="text-muted-foreground hover:text-foreground">
+                    Iniciar sesión
+                  </button>
+                </li>
+              </ul>
+            </div>
           </div>
 
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Producto</p>
-            <ul className="mt-4 space-y-3 text-sm">
-              <li><a href="#herramientas" className="text-muted-foreground hover:text-foreground">Herramientas</a></li>
-              <li><a href="#como-funciona" className="text-muted-foreground hover:text-foreground">Cómo funciona</a></li>
-              <li><a href="#incluye" className="text-muted-foreground hover:text-foreground">Qué incluye</a></li>
-              <li><a href="#planes" className="text-muted-foreground hover:text-foreground">Planes y precios</a></li>
-            </ul>
+          <div className="mt-12 border-t border-border pt-6 text-center text-xs text-muted-foreground">
+            © {new Date().getFullYear()} TesisHub. Todos los derechos reservados.
           </div>
-
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Soporte</p>
-            <ul className="mt-4 space-y-3 text-sm">
-              <li><a href="#faq" className="text-muted-foreground hover:text-foreground">Preguntas frecuentes</a></li>
-              <li>
-                <button onClick={openWhatsApp} className="text-muted-foreground hover:text-foreground">
-                  WhatsApp +51 975 212 132
-                </button>
-              </li>
-              <li>
-                <a href={`mailto:${CONTACT_EMAIL}`} className="text-muted-foreground hover:text-foreground">
-                  {CONTACT_EMAIL}
-                </a>
-              </li>
-              <li>
-                <a href="/privacidad.html" className="text-muted-foreground hover:text-foreground">
-                  Política de privacidad
-                </a>
-              </li>
-            </ul>
-          </div>
-
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cuenta</p>
-            <ul className="mt-4 space-y-3 text-sm">
-              <li>
-                <button onClick={onOpenApp} className="text-muted-foreground hover:text-foreground">
-                  Iniciar sesión
-                </button>
-              </li>
-              <li>
-                <button onClick={onOpenApp} className="text-muted-foreground hover:text-foreground">
-                  Generar mi tabulación
-                </button>
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        <div className="mt-12 border-t border-border pt-6 text-center text-xs text-muted-foreground">
-          © {new Date().getFullYear()} TesisTab. Todos los derechos reservados.
-        </div>
-      </footer>
+        </footer>
+      </div>
     </div>
   );
 }
-

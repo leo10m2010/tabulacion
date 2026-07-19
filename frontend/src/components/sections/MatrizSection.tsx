@@ -11,6 +11,7 @@ import { base64ToUint8Array } from "../../lib/helpers";
 import type { AuthUser, MatrizData } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { SubscriptionWarning } from "../SubscriptionWarning";
+import { ToolSteps } from "../ToolSteps";
 import { springSoft } from "../motion-primitives";
 
 const POLL_INTERVAL_MS = 5000;
@@ -210,7 +211,7 @@ export function MatrizSection({ apiBaseUrl, authToken, authUser }: {
     <div className="step-enter mx-auto max-w-5xl space-y-6">
       <div>
         <div className="flex items-center gap-2.5">
-          <h2 className="text-2xl font-bold tracking-tight">Matriz de consistencia</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Matriz de consistencia</h2>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
             <Sparkles className="h-3 w-3" />
             Con IA
@@ -222,10 +223,13 @@ export function MatrizSection({ apiBaseUrl, authToken, authUser }: {
         </p>
       </div>
 
-      <SubscriptionWarning user={authUser}>
-        Tu suscripción de Tabulación está vencida: la matriz de consistencia usa la misma suscripción.
-        Pide al administrador que recargue tus días.
-      </SubscriptionWarning>
+      <ToolSteps steps={[
+        "Pega el título de tu tesis (lo demás es opcional)",
+        "La IA redacta problema, objetivos, hipótesis y variables",
+        "Descarga tu matriz completa en Word apaisado",
+      ]} />
+
+      <SubscriptionWarning user={authUser} tool="matriz" />
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>

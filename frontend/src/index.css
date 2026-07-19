@@ -2,46 +2,58 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Paleta: neutros fríos con un solo acento azul cobalto (confianza académica)
-   calibrado para AA en ambos modos. */
+/* Paleta: blanco hueso + tinta fría con un solo acento esmeralda (el color
+   del Excel que entrega el producto) y ámbar reservado a detalles pequeños.
+   Calibrada para AA en ambos modos. */
 :root {
-  --background: 220 30% 98%;
-  --foreground: 224 25% 12%;
+  --background: 60 14% 97%;
+  --foreground: 210 20% 8%;
   --card: 0 0% 100%;
-  --card-foreground: 224 25% 12%;
-  --primary: 222 65% 40%;
-  --primary-foreground: 0 0% 98%;
-  --muted: 220 18% 93%;
-  --muted-foreground: 222 12% 40%;
-  --accent: 221 55% 94%;
-  --accent-foreground: 223 50% 20%;
+  --card-foreground: 210 20% 8%;
+  --primary: 160 79% 27%;
+  --primary-foreground: 0 0% 100%;
+  --primary-deep: 162 65% 14%;
+  --amber: 32 95% 44%;
+  --muted: 60 8% 92%;
+  --muted-foreground: 200 8% 38%;
+  --accent: 160 30% 93%;
+  --accent-foreground: 160 60% 16%;
   --danger: 2 76% 50%;
   --danger-foreground: 0 0% 100%;
-  --border: 220 16% 85%;
-  --input: 220 16% 85%;
-  --ring: 222 65% 40%;
+  --border: 50 8% 86%;
+  --input: 50 8% 86%;
+  --ring: 160 79% 27%;
 }
 
 .dark {
-  --background: 224 22% 8%;
-  --foreground: 218 15% 92%;
-  --card: 224 20% 11%;
-  --card-foreground: 218 15% 92%;
-  --primary: 218 80% 68%;
-  --primary-foreground: 224 45% 10%;
-  --muted: 223 15% 17%;
-  --muted-foreground: 218 10% 70%;
-  --accent: 223 16% 21%;
-  --accent-foreground: 218 16% 88%;
+  --background: 170 15% 6%;
+  --foreground: 150 10% 92%;
+  --card: 168 12% 9%;
+  --card-foreground: 150 10% 92%;
+  --primary: 158 55% 52%;
+  --primary-foreground: 170 30% 8%;
+  --primary-deep: 162 45% 12%;
+  --amber: 38 90% 55%;
+  --muted: 168 10% 15%;
+  --muted-foreground: 155 8% 65%;
+  --accent: 165 12% 14%;
+  --accent-foreground: 155 15% 85%;
   --danger: 2 72% 58%;
   --danger-foreground: 0 0% 100%;
-  --border: 223 14% 23%;
-  --input: 223 14% 23%;
-  --ring: 218 80% 68%;
+  --border: 165 10% 18%;
+  --input: 165 10% 18%;
+  --ring: 158 55% 52%;
 }
 
 * {
   @apply border-border;
+}
+
+/* Anillo de foco consistente en todo lo interactivo (teclado). Los inputs
+   traen su propio ring y lo anulan con focus-visible:outline-none. */
+:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
 }
 
 html {
@@ -56,17 +68,8 @@ html {
 
 body {
   @apply bg-background text-foreground antialiased;
-  font-family: "Outfit Variable", "Segoe UI", system-ui, sans-serif;
+  font-family: "Inter Variable", "Segoe UI", system-ui, sans-serif;
   transition: background-color 220ms ease, color 220ms ease;
-}
-
-/* Fondo del hero: patron de puntos sutil enmascarado hacia la zona del
-   preview, para dar profundidad sin ruido. */
-.hero-dots {
-  background-image: radial-gradient(hsl(var(--muted-foreground) / 0.35) 1px, transparent 1px);
-  background-size: 26px 26px;
-  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 65% 35%, black, transparent 70%);
-  mask-image: radial-gradient(ellipse 80% 70% at 65% 35%, black, transparent 70%);
 }
 
 /* Entrada de los pasos del wizard y del resultado (se remontan al cambiar de
@@ -85,5 +88,31 @@ body {
 @media (prefers-reduced-motion: no-preference) {
   .step-enter {
     animation: step-rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+/* Marquee infinito de herramientas: la pista contiene la lista duplicada,
+   asi que -50% equivale a un ciclo completo sin salto visible. */
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.marquee-track {
+  animation: marquee 32s linear infinite;
+}
+
+.marquee:hover .marquee-track {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
+  }
+
+  .marquee {
+    overflow-x: auto;
   }
 }

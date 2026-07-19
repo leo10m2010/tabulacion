@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
-  AlertTriangle, ArrowDownToLine, Check, Copy, Feather, FileText, Sparkles, Upload, X,
+  AlertTriangle, ArrowDownToLine, Check, Copy, Feather, Sparkles,
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { MagicButton } from "../ui/magic-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
-import { Textarea } from "../ui/textarea";
+import { TextDropZone } from "../TextDropZone";
 import { cn } from "../../lib/utils";
 import * as api from "../../lib/api";
 import { base64ToUint8Array } from "../../lib/helpers";
 import type { AuthUser, HumanizadorMetricas, HumanizadorMetricasLado } from "../../lib/types";
 import { SubscriptionWarning } from "../SubscriptionWarning";
+import { ToolSteps } from "../ToolSteps";
 import { springSoft } from "../motion-primitives";
 
 const POLL_INTERVAL_MS = 5000;
@@ -126,7 +127,6 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser }: {
   const reduce = useReducedMotion() ?? false;
   const [texto, setTexto] = useState("");
   const [docxFile, setDocxFile] = useState<File | null>(null);
-  const [dragging, setDragging] = useState(false);
   const [phase, setPhase] = useState<"idle" | "working">("idle");
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -135,7 +135,6 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser }: {
   const [copied, setCopied] = useState(false);
   const pollRef = useRef<number | null>(null);
   const docxUrlRef = useRef<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Evita setState tras desmontar: la limpieza cancela el timeout pendiente,
   // pero una petición de polling ya en vuelo resuelve igual.
   const aliveRef = useRef(true);
@@ -188,10 +187,7 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser }: {
     reader.readAsDataURL(file);
   });
 
-  const clearFile = () => {
-    setDocxFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
+  const clearFile = () => setDocxFile(null);
 
   const pollJob = (jobId: string, startedAt: number) => {
     pollRef.current = window.setTimeout(async () => {
@@ -267,7 +263,7 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser }: {
     <div className="step-enter mx-auto max-w-3xl space-y-6">
       <div>
         <div className="flex items-center gap-2.5">
-          <h2 className="text-2xl font-bold tracking-tight">Humanizador de texto académico</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Humanizador de texto académico</h2>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
             <Sparkles className="h-3 w-3" />
             Con IA
@@ -279,10 +275,13 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser }: {
         </p>
       </div>
 
-      <SubscriptionWarning user={authUser}>
-        Tu suscripción de Tabulación está vencida: el humanizador usa la misma suscripción.
-        Pide al administrador que recargue tus días.
-      </SubscriptionWarning>
+      <ToolSteps steps={[
+        "Pega tu texto o sube el Word (50 a 3,000 palabras)",
+        "Se reescribe por bloques conservando citas y cifras",
+        "Compara las métricas y descarga el resultado en Word",
+      ]} />
+
+      <SubscriptionWarning user={authUser} tool="humanizador" />
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>
@@ -295,95 +294,26 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser }: {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          {/* Zona de entrada: textarea que también acepta soltar un .docx */}
-          <div
-            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              acceptFile(e.dataTransfer.files?.[0]);
-            }}
-            className={cn(
-              "relative rounded-xl transition-shadow duration-200",
-              dragging && "ring-2 ring-primary ring-offset-2 ring-offset-background",
-            )}
-          >
-            <AnimatePresence mode="wait" initial={false}>
-              {docxFile ? (
-                <motion.div
-                  key="file"
-                  initial={reduce ? false : { opacity: 0, scale: 0.97 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={reduce ? undefined : { opacity: 0, scale: 0.97 }}
-                  transition={springSoft}
-                  className="flex items-center gap-4 rounded-xl border border-primary/30 bg-primary/5 px-5 py-6"
-                >
-                  <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
-                    <FileText className="h-6 w-6 text-primary" />
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold">{docxFile.name}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {(docxFile.size / 1024).toFixed(0)} KB · el servidor validará que tenga entre 50 y 3000 palabras
-                    </p>
-                  </div>
-                  <button
-                    onClick={clearFile}
-                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                    Quitar y pegar texto
-                  </button>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="texto"
-                  initial={reduce ? false : { opacity: 0, scale: 0.99 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={springSoft}
-                >
-                  <Textarea
-                    value={texto}
-                    onChange={(e) => setTexto(e.target.value)}
-                    disabled={phase === "working"}
-                    placeholder={"Pega aquí el fragmento de tu tesis (marco teórico, discusión, antecedentes...).\n\nLas citas como (García, 2020) y las cifras se conservan intactas."}
-                    className="min-h-[280px] text-sm leading-relaxed"
-                  />
-                  <div className="mt-1.5 flex items-center justify-between px-1">
-                    <p className="text-[11px] text-muted-foreground">
-                      También puedes arrastrar y soltar tu Word aquí.
-                    </p>
-                    {palabras > 0 && (
-                      <p className={cn(
-                        "font-mono text-[11px] tabular-nums",
-                        palabras > MAX_PALABRAS ? "font-semibold text-danger" : "text-muted-foreground",
-                      )}>
-                        {palabras.toLocaleString()} / {MAX_PALABRAS.toLocaleString()} palabras
-                      </p>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          {!docxFile && (
-            <div className="flex flex-wrap items-center gap-3">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                className="hidden"
-                onChange={(e) => acceptFile(e.target.files?.[0])}
-              />
-              <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={phase === "working"}>
-                <Upload className="h-3.5 w-3.5" />
-                Subir un .docx
-              </Button>
-              <span className="text-xs text-muted-foreground">Solo Word (.docx), máximo 3 MB.</span>
-            </div>
-          )}
+          {/* Zona de entrada: editor con modos pegar/subir y contador en vivo */}
+          <TextDropZone
+            value={texto}
+            onChange={setTexto}
+            file={docxFile}
+            onFile={acceptFile}
+            onClearFile={clearFile}
+            disabled={phase === "working"}
+            placeholder={"Pega aquí el fragmento de tu tesis (marco teórico, discusión, antecedentes...).\n\nLas citas como (García, 2020) y las cifras se conservan intactas."}
+            minHeightClass="min-h-[280px]"
+            stats={
+              palabras > 0 ? (
+                <span className={cn(palabras > MAX_PALABRAS && "font-semibold text-danger")}>
+                  {palabras.toLocaleString()} / {MAX_PALABRAS.toLocaleString()} palabras
+                </span>
+              ) : undefined
+            }
+            footerHint="Arrastra y suelta tu Word aquí · solo .docx, máximo 3 MB"
+            fileNote="el servidor validará que tenga entre 50 y 3000 palabras"
+          />
 
           {/* Aviso honesto: siempre visible, no solo en el resultado */}
           <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3">

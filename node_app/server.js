@@ -274,6 +274,125 @@ const isSubscriptionExpired = (user) => {
   return ts < Date.now();
 };
 
+// ── Usos por herramienta ─────────────────────────────────────────────────────
+// Todo el acceso funciona por usos (1 uso = 1 generacion/corrida). El admin
+// recarga cada herramienta por separado; los admins tienen usos ilimitados.
+const USE_TOOLS = ["tabulacion", "confiabilidad", "descriptiva", "titulos", "matriz", "humanizador", "forms"];
+const TOOL_LABELS = {
+  tabulacion: "Tabulación",
+  confiabilidad: "Confiabilidad",
+  descriptiva: "Descriptiva",
+  titulos: "Generador de Títulos",
+  matriz: "Matriz de Consistencia",
+  humanizador: "Humanizador",
+  forms: "Forms",
+};
+
+// Cuotas iniciales por plan al crear un usuario (el admin puede ajustar cada
+// herramienta despues). Institucion usa la cuota Tesista por cuenta.
+const PLAN_PRESETS = {
+  esencial: { tabulacion: 2, confiabilidad: 2, descriptiva: 3, titulos: 3, matriz: 1, humanizador: 5, forms: 2 },
+  tesista: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
+  institucion: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
+};
+
+// Garantiza user.uses/usesConsumed completos; migra el legado de Forms
+// (formsUsesLeft/formsUsesUsed) y mantiene esos campos como espejo para la
+// extension y datos antiguos.
+const normalizeUses = (user) => {
+  const src = user.uses && typeof user.uses === "object" ? user.uses : {};
+  const consumedSrc = user.usesConsumed && typeof user.usesConsumed === "object" ? user.usesConsumed : {};
+  const uses = {};
+  const consumed = {};
+  for (const tool of USE_TOOLS) {
+    let left = Number(src[tool]);
+    if (!Number.isFinite(left) || left < 0) {
+      left = tool === "forms" && Number.isFinite(Number(user.formsUsesLeft))
+        ? Math.max(0, Math.floor(Number(user.formsUsesLeft)))
+        : 0;
+    }
+    uses[tool] = Math.floor(left);
+    let used = Number(consumedSrc[tool]);
+    if (!Number.isFinite(used) || used < 0) {
+      used = tool === "forms" && Number.isFinite(Number(user.formsUsesUsed))
+        ? Math.max(0, Math.floor(Number(user.formsUsesUsed)))
+        : 0;
+    }
+    consumed[tool] = Math.floor(used);
+  }
+  user.uses = uses;
+  user.usesConsumed = consumed;
+  user.formsUsesLeft = uses.forms;
+  user.formsUsesUsed = consumed.forms;
+  return user;
+};
+
+const usesLeftOf = (owner, tool) => (
+  owner.role === "admin" ? null : (normalizeUses(owner).uses[tool] ?? 0)
+);
+
+// Descuenta 1 uso o lanza 403. En modo dev sin store (AUTH_REQUIRED=false) el
+// usuario sintetico no existe en users: acceso ilimitado.
+const consumeUse = (authUser, tool) => {
+  const owner = users.find((item) => item.id === authUser.id);
+  if (!owner) return null;
+  if (owner.role === "admin") return null;
+  normalizeUses(owner);
+  const left = owner.uses[tool] ?? 0;
+  if (left <= 0) {
+    throw new HttpError(403, `No te quedan usos de ${TOOL_LABELS[tool]}. Pide una recarga a tu administrador.`);
+  }
+  owner.uses[tool] = left - 1;
+  owner.usesConsumed[tool] = (owner.usesConsumed[tool] ?? 0) + 1;
+  owner.formsUsesLeft = owner.uses.forms;
+  owner.formsUsesUsed = owner.usesConsumed.forms;
+  // Forms conserva su mensaje historico ("Corrida de Forms") por
+  // compatibilidad con el historial existente.
+  logActivity(owner, tool === "forms"
+    ? `Corrida de Forms (quedan ${owner.uses.forms} usos)`
+    : `Uso de ${TOOL_LABELS[tool]} (quedan ${owner.uses[tool]})`);
+  owner.updatedAt = new Date().toISOString();
+  writeUsers();
+  return owner.uses[tool];
+};
+
+// Devuelve el uso si el trabajo termino en error (el usuario no recibio nada).
+const refundUse = (userId, tool) => {
+  const owner = users.find((item) => item.id === userId);
+  if (!owner || owner.role === "admin") return;
+  normalizeUses(owner);
+  owner.uses[tool] = (owner.uses[tool] ?? 0) + 1;
+  owner.usesConsumed[tool] = Math.max(0, (owner.usesConsumed[tool] ?? 0) - 1);
+  owner.formsUsesLeft = owner.uses.forms;
+  owner.formsUsesUsed = owner.usesConsumed.forms;
+  logActivity(owner, `Uso de ${TOOL_LABELS[tool]} devuelto (la generación falló)`);
+  owner.updatedAt = new Date().toISOString();
+  try {
+    writeUsers();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[usos] no se pudo persistir el reembolso de ${tool}:`, err);
+  }
+};
+
+// Limpia un objeto de usos recibido por API: solo herramientas conocidas,
+// enteros >= 0.
+const cleanUsesPayload = (raw) => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out = {};
+  let any = false;
+  for (const tool of USE_TOOLS) {
+    if (raw[tool] === undefined) continue;
+    const value = Number(raw[tool]);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new HttpError(400, `Los usos de ${TOOL_LABELS[tool]} deben ser 0 o más.`);
+    }
+    out[tool] = Math.floor(value);
+    any = true;
+  }
+  return any ? out : null;
+};
+
 const ensureUserStore = () => {
   fs.mkdirSync(path.dirname(USER_STORE_PATH), { recursive: true });
   if (!fs.existsSync(USER_STORE_PATH)) {
@@ -311,8 +430,10 @@ const sanitizeUser = (user) => ({
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
   lastLoginAt: user.lastLoginAt,
-  // Metricas y usos: Tabulacion va por suscripcion (dias); Forms va por usos
-  // (1 uso = 1 corrida de llenado; los admins tienen usos ilimitados: null).
+  // Usos por herramienta (1 uso = 1 generacion/corrida); admins ilimitados
+  // (null). formsUsesLeft se mantiene como espejo para clientes antiguos.
+  uses: user.role === "admin" ? null : { ...normalizeUses(user).uses },
+  usesConsumed: user.role === "admin" ? {} : { ...user.usesConsumed },
   formsUsesLeft: user.role === "admin" ? null : (Number.isFinite(user.formsUsesLeft) ? user.formsUsesLeft : 0),
   formsUsesUsed: user.formsUsesUsed ?? 0,
   generationsCount: user.generationsCount ?? 0,
@@ -363,10 +484,11 @@ const createUser = ({
   password,
   role = "user",
   status = "active",
-  plan = "pro",
+  plan = "tesista",
   subscriptionEndsAt,
   subscriptionDays,
   formsUses,
+  uses,
 }) => {
   const normalizedEmail = assertUniqueEmail(email);
   if (!["admin", "user"].includes(role)) {
@@ -377,15 +499,16 @@ const createUser = ({
   }
   const credentials = buildPassword(password);
   const nowIso = new Date().toISOString();
-  let subscriptionDate = toIsoOrNull(subscriptionEndsAt);
-  if (!subscriptionDate && Number.isFinite(Number(subscriptionDays))) {
-    subscriptionDate = addDaysIso(Number(subscriptionDays));
-  }
-  if (!subscriptionDate && role === "user") {
-    subscriptionDate = addDaysIso(30);
-  }
-  if (role === "admin") {
-    subscriptionDate = subscriptionDate ?? null;
+  const subscriptionDate = toIsoOrNull(subscriptionEndsAt)
+    ?? (Number.isFinite(Number(subscriptionDays)) ? addDaysIso(Number(subscriptionDays)) : null);
+  const planName = String(plan ?? "").trim() || "tesista";
+
+  // Usos iniciales: lo que mande el admin > preset del plan > cero. El campo
+  // legado formsUses (usos de Forms) se respeta si no vino en `uses`.
+  const initialUses = cleanUsesPayload(uses)
+    ?? (PLAN_PRESETS[planName] ? { ...PLAN_PRESETS[planName] } : {});
+  if (Number.isFinite(Number(formsUses)) && Number(formsUses) >= 0) {
+    initialUses.forms = Math.floor(Number(formsUses));
   }
 
   const user = {
@@ -394,21 +517,20 @@ const createUser = ({
     emailLower: normalizedEmail,
     role,
     status,
-    plan: String(plan ?? "").trim() || "pro",
+    plan: planName,
     subscriptionEndsAt: subscriptionDate,
     createdAt: nowIso,
     updatedAt: nowIso,
     lastLoginAt: null,
-    formsUsesLeft: Number.isFinite(Number(formsUses)) && Number(formsUses) > 0
-      ? Math.floor(Number(formsUses))
-      : 0,
-    formsUsesUsed: 0,
+    uses: initialUses,
+    usesConsumed: {},
     generationsCount: 0,
     lastGenerationAt: null,
     activity: [],
     tokenVersion: 1,
     ...credentials,
   };
+  normalizeUses(user);
   logActivity(user, "Cuenta creada");
 
   users.push(user);
@@ -466,23 +588,46 @@ const patchUser = (user, payload) => {
     // Restablecer la contraseña invalida todas las sesiones abiertas.
     next.tokenVersion = (next.tokenVersion ?? 1) + 1;
   }
-  // Usos de Forms: valor absoluto o recarga incremental (puede ser negativa
-  // para corregir, sin bajar de 0).
+  // Usos por herramienta: valor absoluto (uses) o recarga incremental
+  // (usesDelta, puede ser negativa para corregir, sin bajar de 0).
+  normalizeUses(next);
+  if (payload.uses !== undefined) {
+    const absolute = cleanUsesPayload(payload.uses);
+    if (absolute) {
+      next.uses = { ...next.uses, ...absolute };
+    }
+  }
+  if (payload.usesDelta !== undefined) {
+    const deltas = payload.usesDelta;
+    if (!deltas || typeof deltas !== "object" || Array.isArray(deltas)) {
+      throw new HttpError(400, "usesDelta debe ser un objeto {herramienta: cantidad}.");
+    }
+    for (const tool of USE_TOOLS) {
+      if (deltas[tool] === undefined) continue;
+      const delta = Number(deltas[tool]);
+      if (!Number.isFinite(delta) || delta === 0) {
+        throw new HttpError(400, `usesDelta.${tool} debe ser diferente de 0.`);
+      }
+      next.uses[tool] = Math.max(0, Math.floor((next.uses[tool] ?? 0) + delta));
+    }
+  }
+  // Campos legados de Forms: siguen funcionando mapeados a uses.forms.
   if (payload.formsUses !== undefined) {
     const uses = Number(payload.formsUses);
     if (!Number.isFinite(uses) || uses < 0) {
       throw new HttpError(400, "formsUses debe ser 0 o mayor.");
     }
-    next.formsUsesLeft = Math.floor(uses);
+    next.uses.forms = Math.floor(uses);
   }
   if (payload.formsUsesDelta !== undefined) {
     const delta = Number(payload.formsUsesDelta);
     if (!Number.isFinite(delta) || delta === 0) {
       throw new HttpError(400, "formsUsesDelta debe ser diferente de 0.");
     }
-    const current = Number.isFinite(next.formsUsesLeft) ? next.formsUsesLeft : 0;
-    next.formsUsesLeft = Math.max(0, Math.floor(current + delta));
+    next.uses.forms = Math.max(0, Math.floor((next.uses.forms ?? 0) + delta));
   }
+  next.formsUsesLeft = next.uses.forms;
+  next.formsUsesUsed = next.usesConsumed.forms;
 
   next.updatedAt = new Date().toISOString();
   return next;
@@ -623,12 +768,8 @@ const requireAuth = (req, opts = {}) => {
   if ((claims.ver ?? 1) !== (user.tokenVersion ?? 1)) {
     throw new HttpError(401, "Sesion invalidada por un cambio de contraseña. Inicia sesion de nuevo.");
   }
-  // Productos desacoplados: la sesion solo exige cuenta activa. Los dias de
-  // suscripcion se exigen unicamente donde aplica (/generate, Tabulacion);
-  // Forms va por usos y no depende de los dias.
-  if (opts.requireSubscription && isSubscriptionExpired(user)) {
-    throw new HttpError(403, `Suscripcion vencida (${user.subscriptionEndsAt ?? "sin fecha"}).`);
-  }
+  // La sesion solo exige cuenta activa: el acceso a cada herramienta se
+  // controla por usos (consumeUse) en su propio endpoint.
   if (opts.adminOnly && user.role !== "admin") {
     throw new HttpError(403, "Se requiere rol administrador.");
   }
@@ -715,12 +856,8 @@ const findKeyOwner = (apiKey) => {
   return users.find((item) => item.apiKeyHash === hashApiKey(key)) ?? null;
 };
 
-const formsUsesLeftOf = (owner) => (
-  owner.role === "admin" ? null : (Number.isFinite(owner.formsUsesLeft) ? owner.formsUsesLeft : 0)
-);
-
-// Forms va por usos, desacoplado de la suscripcion: la clave es valida
-// mientras la cuenta este activa; los usos se verifican al consumir.
+// Forms va por usos como todas las herramientas: la clave es valida mientras
+// la cuenta este activa; los usos se verifican al consumir.
 formsApp.setKeyValidator((apiKey) => {
   const owner = findKeyOwner(apiKey);
   if (!owner) return { valid: false, reason: "clave_desconocida" };
@@ -730,24 +867,22 @@ formsApp.setKeyValidator((apiKey) => {
     email: owner.email,
     plan: owner.plan,
     role: owner.role,
-    usesLeft: formsUsesLeftOf(owner),
+    usesLeft: usesLeftOf(owner, "forms"),
   };
 });
 
-// Forms funciona por usos: 1 uso = 1 corrida de llenado. El consumo ocurre al
-// crear el job (los admins tienen usos ilimitados: usesLeft null).
+// 1 uso de Forms = 1 corrida de llenado. El consumo ocurre al crear el job
+// (los admins tienen usos ilimitados: usesLeft null).
 formsApp.setUsageConsumer((apiKey) => {
   const owner = findKeyOwner(apiKey);
   if (!owner) return { ok: false, reason: "clave_desconocida" };
   if (owner.role === "admin") return { ok: true, usesLeft: null };
-  const left = formsUsesLeftOf(owner);
-  if (left <= 0) return { ok: false, reason: "sin_usos" };
-  owner.formsUsesLeft = left - 1;
-  owner.formsUsesUsed = (owner.formsUsesUsed ?? 0) + 1;
-  logActivity(owner, `Corrida de Forms (quedan ${owner.formsUsesLeft} usos)`);
-  owner.updatedAt = new Date().toISOString();
-  writeUsers();
-  return { ok: true, usesLeft: owner.formsUsesLeft };
+  try {
+    const left = consumeUse(owner, "forms");
+    return { ok: true, usesLeft: left };
+  } catch {
+    return { ok: false, reason: "sin_usos" };
+  }
 });
 
 const server = http.createServer(async (req, res) => {
@@ -883,13 +1018,13 @@ const server = http.createServer(async (req, res) => {
         reply(false, { reason: "usuario_inactivo" });
         return;
       }
-      // Forms va por usos: la suscripcion vencida no invalida la clave.
+      // Forms va por usos, igual que el resto de herramientas.
       reply(true, {
         email: owner.email,
         plan: owner.plan,
         role: owner.role,
         subscriptionEndsAt: owner.subscriptionEndsAt,
-        usesLeft: formsUsesLeftOf(owner),
+        usesLeft: usesLeftOf(owner, "forms"),
       });
       return;
     }
@@ -966,10 +1101,11 @@ const server = http.createServer(async (req, res) => {
         password: payload?.password,
         role: payload?.role ?? "user",
         status: payload?.status ?? "active",
-        plan: payload?.plan ?? "pro",
+        plan: payload?.plan ?? "tesista",
         subscriptionEndsAt: payload?.subscriptionEndsAt,
         subscriptionDays: payload?.subscriptionDays,
         formsUses: payload?.formsUses,
+        uses: payload?.uses,
       });
       sendJson(res, 201, { ok: true, user: sanitizeUser(user) });
       return;
@@ -1017,6 +1153,12 @@ const server = http.createServer(async (req, res) => {
       if (payload?.subscriptionEndsAt !== undefined) cambios.push("vencimiento de suscripción ajustado");
       if (payload?.formsUsesDelta !== undefined) cambios.push(`recarga de ${payload.formsUsesDelta} usos de Forms`);
       if (payload?.formsUses !== undefined) cambios.push(`usos de Forms fijados en ${payload.formsUses}`);
+      if (payload?.usesDelta && typeof payload.usesDelta === "object") {
+        for (const [tool, delta] of Object.entries(payload.usesDelta)) {
+          if (TOOL_LABELS[tool]) cambios.push(`recarga de ${delta} usos de ${TOOL_LABELS[tool]}`);
+        }
+      }
+      if (payload?.uses && typeof payload.uses === "object") cambios.push("usos por herramienta ajustados");
       if (payload?.password !== undefined) cambios.push("contraseña restablecida");
       if (payload?.role !== undefined) cambios.push(`rol cambiado a ${payload.role}`);
       if (payload?.plan !== undefined) cambios.push(`plan cambiado a ${payload.plan}`);
@@ -1062,10 +1204,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Generar Excel exige suscripcion vigente (Tabulacion va por dias; el
-    // resto de la cuenta, incluido Forms por usos, no depende de los dias).
+    // Generar Excel consume 1 uso de Tabulación (se devuelve si la
+    // generacion falla).
     if (req.method === "POST" && pathname === "/generate") {
-      const authUser = requireAuth(req, { requireSubscription: true });
+      const authUser = requireAuth(req);
       const payload = await parseJsonBody(req);
       const config = payload?.config && typeof payload.config === "object"
         ? payload.config
@@ -1075,7 +1217,14 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(400, "Debes enviar una configuracion valida (objeto JSON).");
       }
 
-      const artifacts = await generateArtifacts(config);
+      consumeUse(authUser, "tabulacion");
+      let artifacts;
+      try {
+        artifacts = await generateArtifacts(config);
+      } catch (err) {
+        refundUse(authUser.id, "tabulacion");
+        throw err;
+      }
       const responseMode = String(payload?.responseMode ?? "links").toLowerCase();
       registerGeneration(authUser, "Generó un Excel");
 
@@ -1122,15 +1271,22 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Prueba de confiabilidad (Alfa de Cronbach): un solo Excel de una hoja
-    // con datos simulados. Forma parte de Tabulacion, por eso exige la misma
-    // suscripcion vigente que /generate.
+    // con datos simulados. Consume 1 uso de Confiabilidad (se devuelve si
+    // la generacion falla).
     if (req.method === "POST" && pathname === "/cronbach") {
-      const authUser = requireAuth(req, { requireSubscription: true });
+      const authUser = requireAuth(req);
       const payload = await parseJsonBody(req);
       const config = payload?.config && typeof payload.config === "object"
         ? payload.config
         : payload;
-      const result = await generateCronbach(config);
+      consumeUse(authUser, "confiabilidad");
+      let result;
+      try {
+        result = await generateCronbach(config);
+      } catch (err) {
+        refundUse(authUser.id, "confiabilidad");
+        throw err;
+      }
       registerGeneration(authUser, `Generó una prueba de confiabilidad (α = ${result.alpha.toFixed(3)})`);
 
       sendJson(res, 200, {
@@ -1168,7 +1324,7 @@ const server = http.createServer(async (req, res) => {
     // Crea el job: valida el input de inmediato (errores claros para el
     // usuario) y deja la llamada a la IA corriendo en segundo plano.
     if (req.method === "POST" && pathname === "/descriptiva") {
-      const authUser = requireAuth(req, { requireSubscription: true });
+      const authUser = requireAuth(req);
       const payload = await parseJsonBody(req);
 
       let input;
@@ -1196,6 +1352,7 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(429, "El servidor esta ocupado generando otras bases; intenta en un par de minutos.");
       }
 
+      consumeUse(authUser, "descriptiva");
       const id = crypto.randomUUID();
       const job = {
         id,
@@ -1228,8 +1385,9 @@ const server = http.createServer(async (req, res) => {
           // El detalle tecnico queda solo en el log del servidor.
           // eslint-disable-next-line no-console
           console.error(`[descriptiva] job ${id} fallo:`, err);
+          refundUse(authUser.id, "descriptiva");
           job.status = "error";
-          job.error = "Hubo un problema generando tu base de datos, intenta de nuevo.";
+          job.error = "Hubo un problema generando tu base de datos, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + DESCRIPTIVA_DONE_TTL_MS;
         });
 
@@ -1271,7 +1429,7 @@ const server = http.createServer(async (req, res) => {
     // (errores claros para el usuario) y deja la llamada a la IA (con
     // busqueda web) corriendo en segundo plano.
     if (req.method === "POST" && pathname === "/titulos") {
-      const authUser = requireAuth(req, { requireSubscription: true });
+      const authUser = requireAuth(req);
       const payload = await parseJsonBody(req);
 
       let input;
@@ -1289,6 +1447,7 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(429, "El servidor esta ocupado generando otros titulos; intenta en un par de minutos.");
       }
 
+      consumeUse(authUser, "titulos");
       const id = crypto.randomUUID();
       const job = {
         id,
@@ -1319,8 +1478,9 @@ const server = http.createServer(async (req, res) => {
           // El detalle tecnico queda solo en el log del servidor.
           // eslint-disable-next-line no-console
           console.error(`[titulos] job ${id} fallo:`, err);
+          refundUse(authUser.id, "titulos");
           job.status = "error";
-          job.error = "Hubo un problema generando tus títulos, intenta de nuevo.";
+          job.error = "Hubo un problema generando tus títulos, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + TITULOS_DONE_TTL_MS;
         });
 
@@ -1362,7 +1522,7 @@ const server = http.createServer(async (req, res) => {
     // Valida el input de inmediato y deja la generacion (analisis + busqueda
     // de dimensiones + redaccion) corriendo en segundo plano.
     if (req.method === "POST" && pathname === "/matriz") {
-      const authUser = requireAuth(req, { requireSubscription: true });
+      const authUser = requireAuth(req);
       const payload = await parseJsonBody(req);
 
       let input;
@@ -1379,6 +1539,8 @@ const server = http.createServer(async (req, res) => {
       if (active.length >= MATRIZ_MAX_CONCURRENT) {
         throw new HttpError(429, "El servidor esta ocupado generando otras matrices; intenta en un par de minutos.");
       }
+
+      consumeUse(authUser, "matriz");
 
       const id = crypto.randomUUID();
       const job = {
@@ -1410,8 +1572,9 @@ const server = http.createServer(async (req, res) => {
           // El detalle tecnico queda solo en el log del servidor.
           // eslint-disable-next-line no-console
           console.error(`[matriz] job ${id} fallo:`, err);
+          refundUse(authUser.id, "matriz");
           job.status = "error";
-          job.error = "Hubo un problema generando tu matriz de consistencia, intenta de nuevo.";
+          job.error = "Hubo un problema generando tu matriz de consistencia, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + MATRIZ_DONE_TTL_MS;
         });
 
@@ -1452,7 +1615,7 @@ const server = http.createServer(async (req, res) => {
     // Texto pegado o .docx; el limite de 50-3000 palabras del .docx se valida
     // DENTRO del job (la conversion es async) y llega como error de usuario.
     if (req.method === "POST" && pathname === "/humanizador") {
-      const authUser = requireAuth(req, { requireSubscription: true });
+      const authUser = requireAuth(req);
       const payload = await parseJsonBody(req);
 
       let input;
@@ -1469,6 +1632,8 @@ const server = http.createServer(async (req, res) => {
       if (active.length >= HUMANIZADOR_MAX_CONCURRENT) {
         throw new HttpError(429, "El servidor esta ocupado humanizando otros textos; intenta en un par de minutos.");
       }
+
+      consumeUse(authUser, "humanizador");
 
       const id = crypto.randomUUID();
       const job = {
@@ -1499,13 +1664,14 @@ const server = http.createServer(async (req, res) => {
         .catch((err) => {
           // eslint-disable-next-line no-console
           console.error(`[humanizador] job ${id} fallo:`, err);
+          refundUse(authUser.id, "humanizador");
           job.status = "error";
           // Las validaciones de entrada detectadas dentro del job (p. ej. el
           // conteo de palabras del .docx) SI se muestran al usuario; el
           // detalle de errores tecnicos queda solo en el log.
           job.error = err?.isUserError
             ? err.message
-            : "Hubo un problema humanizando tu texto, intenta de nuevo.";
+            : "Hubo un problema humanizando tu texto, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + HUMANIZADOR_DONE_TTL_MS;
         });
 

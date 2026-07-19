@@ -1,4 +1,4 @@
-// Cliente de la API de TesisTab: centraliza fetch, headers y manejo de
+﻿// Cliente de la API de TesisHub: centraliza fetch, headers y manejo de
 // errores. Todas las funciones lanzan Error con el mensaje del servidor
 // (payload.error) o "Error HTTP <status>".
 import type {
@@ -160,7 +160,7 @@ export const listUsers = (apiBaseUrl: string, token: string) =>
 export const createUser = (
   apiBaseUrl: string,
   token: string,
-  data: { email: string; password: string; role: "admin" | "user"; plan: string; subscriptionDays: number; formsUses: number },
+  data: { email: string; password: string; role: "admin" | "user"; plan: string; uses: Record<string, number> },
 ) => request<{ ok?: boolean }>(apiBaseUrl, "/auth/users", { method: "POST", token, body: data });
 
 export const patchUser = (apiBaseUrl: string, token: string, userId: string, patch: Record<string, unknown>) =>

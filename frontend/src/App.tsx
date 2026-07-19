@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -7,31 +7,27 @@ import {
   Check,
   ChevronRight,
   Download,
-  Feather,
   FileSpreadsheet,
   FlaskConical,
   HelpCircle,
-  KeyRound,
-  Lightbulb,
+  LayoutDashboard,
   Loader2,
   LogOut,
   Moon,
   Palette,
-  ShieldCheck,
   Sparkles,
   Sun,
-  Table2,
   TrendingDown,
   TrendingUp,
   UserRound,
   Users,
-  Wand2,
   Zap,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { MagicButton } from "./components/ui/magic-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { Input } from "./components/ui/input";
+import { Select } from "./components/ui/select";
 import { Textarea } from "./components/ui/textarea";
 import { cn } from "./lib/utils";
 
@@ -53,6 +49,7 @@ import type {
 } from "./lib/types";
 import * as api from "./lib/api";
 import { CORRELATION_LEVELS, DEFAULT_API_BASE_URL, FALLBACK_CONFIG, LIST_GROUPS, QUASI_DEFAULTS, QUASI_EFFECT_LEVELS, themePalette } from "./lib/constants";
+import { NAV_GROUPS, NAV_TOOLS } from "./lib/nav";
 import {
   base64ToUint8Array,
   eid,
@@ -85,22 +82,13 @@ import { TitulosSection } from "./components/sections/TitulosSection";
 import { MatrizSection } from "./components/sections/MatrizSection";
 import { HumanizadorSection } from "./components/sections/HumanizadorSection";
 import { UsersSection } from "./components/sections/UsersSection";
+import { HomeSection } from "./components/sections/HomeSection";
 
-// Herramientas del menú (sidebar y tabs móviles se dibujan desde aquí).
-const NAV_TOOLS: { id: AppSection; label: string; mobileLabel?: string; icon: typeof FileSpreadsheet }[] = [
-  { id: "tabulacion", label: "Tabulación", icon: FileSpreadsheet },
-  { id: "descriptiva", label: "Descriptiva", mobileLabel: "IA", icon: Wand2 },
-  { id: "confiabilidad", label: "Confiabilidad", mobileLabel: "Alfa", icon: ShieldCheck },
-  { id: "forms", label: "Forms", icon: KeyRound },
-  { id: "titulos", label: "Generador de Títulos", mobileLabel: "Títulos", icon: Lightbulb },
-  { id: "matriz", label: "Matriz de Consistencia", mobileLabel: "Matriz", icon: Table2 },
-  { id: "humanizador", label: "Humanizador", mobileLabel: "Humanizar", icon: Feather },
-];
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [appView, setAppView] = useState<AppView>(() => resolveViewFromPath());
-  const [activeSection, setActiveSection] = useState<AppSection>("tabulacion");
+  const [activeSection, setActiveSection] = useState<AppSection>("inicio");
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
   const [step2Error, setStep2Error] = useState<string | null>(null);
   const [estructuraV1, setEstructuraV1] = useState<DimensionDef[]>([]);
@@ -583,45 +571,64 @@ export default function App() {
 
   // ── Render: App (authenticated) ────────────────────────────────────────────
   return (
-    <div className="flex min-h-[100dvh] bg-background transition-colors">
+    <div className="flex min-h-[100dvh] bg-[radial-gradient(ellipse_at_top,hsl(var(--accent)/0.45)_0%,hsl(var(--background))_55%)] transition-colors">
 
-      {/* ── Sidebar ── */}
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-border/60 bg-card/80 backdrop-blur-sm md:flex sticky top-0 h-screen">
+      {/* ── Sidebar: panel de vidrio flotante ── */}
+      <aside className="sticky top-0 hidden h-screen shrink-0 p-3 md:block">
+        <div className="flex h-full w-60 flex-col overflow-hidden rounded-3xl border border-border/60 bg-card/70 shadow-soft backdrop-blur-xl">
         {/* Logo */}
-        <div className="flex h-16 items-center gap-2 border-b border-border/60 px-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <div className="flex h-16 shrink-0 items-center gap-2.5 border-b border-border/60 px-4">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
             <FileSpreadsheet className="h-4 w-4" />
           </div>
-          <span className="font-bold tracking-tight">TesisTab</span>
+          <span className="font-display font-bold tracking-tight">TesisHub</span>
         </div>
 
         {/* Nav items */}
         <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-          <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Herramientas</p>
-          {NAV_TOOLS.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setActiveSection(item.id)}
-              className={cn(
-                "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
-                activeSection === item.id
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-              )}
-            >
-              <item.icon className="h-4 w-4 shrink-0" />
-              {item.label}
-              {activeSection === item.id && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
-            </button>
+          <button
+            onClick={() => setActiveSection("inicio")}
+            className={cn(
+              "flex w-full items-center gap-2.5 rounded-full px-3.5 py-2.5 text-sm font-medium transition-all active:scale-[0.99]",
+              activeSection === "inicio"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
+          >
+            <LayoutDashboard className="h-4 w-4 shrink-0" />
+            Inicio
+            {activeSection === "inicio" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
+          </button>
+
+          {NAV_GROUPS.map((group) => (
+            <div key={group.id}>
+              <p className="mb-2 mt-5 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{group.label}</p>
+              {group.tools.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveSection(item.id)}
+                  className={cn(
+                    "flex w-full items-center gap-2.5 rounded-full px-3.5 py-2.5 text-left text-sm font-medium leading-tight transition-all",
+                    activeSection === item.id
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                  )}
+                >
+                  <item.icon className="h-4 w-4 shrink-0" />
+                  {item.label}
+                  {activeSection === item.id && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
+                </button>
+              ))}
+            </div>
           ))}
 
           {isAdmin && (
             <>
-              <p className="mb-2 mt-4 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Administración</p>
+              <p className="mb-2 mt-5 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Administración</p>
               <button
                 onClick={() => setActiveSection("usuarios")}
                 className={cn(
-                  "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
+                  "flex w-full items-center gap-2.5 rounded-full px-3.5 py-2.5 text-sm font-medium transition-all active:scale-[0.99]",
                   activeSection === "usuarios"
                     ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
@@ -644,18 +651,6 @@ export default function App() {
             {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             {themeMode === "dark" ? "Modo claro" : "Modo oscuro"}
           </button>
-          {/* URL de la API: editable solo en dev local */}
-          {import.meta.env.DEV && (
-            <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2 space-y-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">API</p>
-              <input
-                value={apiBaseUrl}
-                onChange={(e) => setApiBaseUrl(e.target.value)}
-                className="w-full bg-transparent text-[11px] text-muted-foreground outline-none truncate"
-                placeholder="http://localhost:8080"
-              />
-            </div>
-          )}
           <button
             onClick={() => setActiveSection("cuenta")}
             className={cn(
@@ -677,16 +672,17 @@ export default function App() {
             Cerrar sesión
           </button>
         </div>
+        </div>
       </aside>
 
       {/* ── Main content ── */}
       <div className="flex flex-1 flex-col overflow-hidden">
 
         {/* Mobile topbar */}
-        <header className="flex h-14 items-center justify-between border-b border-border/60 bg-card/80 px-4 md:hidden">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border/60 bg-card/80 px-4 backdrop-blur-xl md:hidden">
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="h-5 w-5 text-primary" />
-            <span className="font-bold">TesisTab</span>
+            <span className="font-bold">TesisHub</span>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={toggleTheme} className="rounded-lg p-2 text-muted-foreground hover:bg-accent">
@@ -699,8 +695,9 @@ export default function App() {
         </header>
 
         {/* Mobile nav tabs */}
-        <div className="flex overflow-x-auto border-b border-border/60 bg-card/80 px-4 md:hidden">
+        <div className="sticky top-14 z-20 flex gap-1.5 overflow-x-auto border-b border-border/60 bg-card/80 px-3 py-2 backdrop-blur-xl md:hidden">
           {[
+            { id: "inicio" as AppSection, label: "Inicio", icon: LayoutDashboard },
             ...NAV_TOOLS,
             ...(isAdmin ? [{ id: "usuarios" as AppSection, label: "Usuarios", icon: Users }] : []),
             { id: "cuenta" as AppSection, label: "Cuenta", icon: UserRound },
@@ -709,8 +706,10 @@ export default function App() {
               key={item.id}
               onClick={() => setActiveSection(item.id)}
               className={cn(
-                "flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-all",
-                activeSection === item.id ? "border-primary text-primary" : "border-transparent text-muted-foreground",
+                "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all active:scale-95",
+                activeSection === item.id
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "bg-muted text-muted-foreground",
               )}
             >
               <item.icon className="h-3.5 w-3.5" />
@@ -720,21 +719,23 @@ export default function App() {
         </div>
 
         {/* Content */}
-        <main className="flex-1 overflow-auto p-6">
+        <main className="flex-1 overflow-auto px-4 py-6 md:px-10 md:py-9">
+
+          {/* ── Inicio (dashboard) ── */}
+          {activeSection === "inicio" && authUser && (
+            <HomeSection user={authUser} onNavigate={setActiveSection} />
+          )}
 
           {/* ── Tabulación Wizard ── */}
           {activeSection === "tabulacion" && authUser && (
             <div className="mx-auto max-w-3xl">
               <div className="mb-6">
-                <h2 className="text-2xl font-bold tracking-tight">Generar tabulación</h2>
+                <h2 className="font-display text-2xl font-bold tracking-tight">Generar tabulación</h2>
                 <p className="mt-1 text-sm text-muted-foreground">Completa los 3 pasos para generar tu archivo Excel.</p>
               </div>
 
               {/* Tabulación exige suscripción vigente; Forms va por usos y sigue disponible. */}
-              <SubscriptionWarning user={authUser}>
-                Tu suscripción de Tabulación está vencida: no podrás generar el Excel hasta que el
-                administrador recargue tus días. Forms sigue disponible con tus usos.
-              </SubscriptionWarning>
+              <SubscriptionWarning user={authUser} tool="tabulacion" />
 
               <WizardProgress currentStep={wizardStep} />
 
@@ -1745,15 +1746,16 @@ export default function App() {
                           <div className="mb-3 flex items-center justify-between">
                             <p className="text-sm font-medium">Vista previa del Excel</p>
                             {result.sheetNames.length > 0 && (
-                              <select
-                                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                              <Select
+                                wrapperClassName="w-48"
+                                className="h-8 rounded-lg pl-2.5 pr-8 text-xs"
                                 value={selectedSheet || result.sheetNames[0]}
                                 onChange={(e) => setSelectedSheet(e.target.value)}
                               >
                                 {result.sheetNames.map((name) => (
                                   <option key={name} value={name}>{name}</option>
                                 ))}
-                              </select>
+                              </Select>
                             )}
                           </div>
                           <PreviewTable rows={result.sheetData[selectedSheet || (result.sheetNames[0] ?? "")] ?? []} maxRows={10} />

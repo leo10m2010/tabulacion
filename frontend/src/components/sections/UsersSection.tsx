@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
-  CalendarPlus,
   ChevronDown,
   ChevronRight,
   Clock3,
@@ -24,6 +23,7 @@ import {
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
+import { Select } from "../ui/select";
 import {
   createUser,
   deleteUser,
@@ -33,44 +33,43 @@ import {
   restoreUsersBackup,
   revokeUserApiKey,
 } from "../../lib/api";
-import { formatDateTime, getSubscriptionLabel } from "../../lib/helpers";
+import { PLAN_OPTIONS, PLAN_PRESETS, USE_TOOLS } from "../../lib/constants";
+import { formatDateTime } from "../../lib/helpers";
 import { cn } from "../../lib/utils";
-import type { AuthUser } from "../../lib/types";
+import type { AuthUser, UseTool } from "../../lib/types";
 
 // Panel de administración de usuarios (solo admins). Autocontenido: todo el
 // estado y las llamadas a la API viven aquí; App solo lo monta cuando la
 // sección está activa (por eso carga usuarios en el mount).
 //
-// Modelo de acceso desacoplado: Tabulación va por suscripción (días de
-// vigencia); Forms va por usos (1 uso = 1 corrida; admins ilimitados). La
-// cuenta activa permite iniciar sesión aunque la suscripción esté vencida.
+// Modelo de acceso: TODAS las herramientas funcionan por usos (1 uso = 1
+// generación o corrida; admins ilimitados). El admin recarga cada
+// herramienta por separado desde el panel lateral.
 
-type StatusFilter = "todos" | "activos" | "por_vencer" | "vencidos" | "desactivados";
+type StatusFilter = "todos" | "activos" | "sin_usos" | "desactivados";
 type RoleFilter = "todos" | "admin" | "user";
 
-const MS_DAY = 24 * 60 * 60 * 1000;
+const totalUsesLeft = (user: AuthUser): number => (
+  USE_TOOLS.reduce((acc, tool) => acc + (user.uses?.[tool.id] ?? 0), 0)
+);
 
-const daysLeft = (user: AuthUser): number | null => {
-  if (user.role === "admin" || !user.subscriptionEndsAt) return null;
-  const ts = Date.parse(user.subscriptionEndsAt);
-  if (!Number.isFinite(ts)) return null;
-  return Math.ceil((ts - Date.now()) / MS_DAY);
-};
+const totalUsesConsumed = (user: AuthUser): number => (
+  USE_TOOLS.reduce((acc, tool) => acc + (user.usesConsumed?.[tool.id] ?? 0), 0)
+);
 
-const isExpired = (user: AuthUser) => {
-  if (user.role === "admin") return false;
-  const left = daysLeft(user);
-  return left === null || left <= 0;
-};
-
-const isExpiringSoon = (user: AuthUser) => {
-  const left = daysLeft(user);
-  return left !== null && left > 0 && left <= 7;
-};
+const isOutOfUses = (user: AuthUser) => user.role !== "admin" && totalUsesLeft(user) === 0;
 
 const usesLabel = (user: AuthUser) => (
-  user.role === "admin" ? "∞" : String(user.formsUsesLeft ?? 0)
+  user.role === "admin" ? "∞" : String(totalUsesLeft(user))
 );
+
+// Cuotas del preset del plan como strings editables para el formulario.
+const presetAsStrings = (plan: string): Record<UseTool, string> => {
+  const preset = PLAN_PRESETS[plan];
+  const out = {} as Record<UseTool, string>;
+  for (const tool of USE_TOOLS) out[tool.id] = String(preset?.[tool.id] ?? 0);
+  return out;
+};
 
 function StatCard({ icon, label, value, detail }: {
   icon: ReactNode;
@@ -91,15 +90,11 @@ function StatCard({ icon, label, value, detail }: {
 }
 
 function StatusChip({ user }: { user: AuthUser }) {
-  const left = daysLeft(user);
   if (user.status !== "active") {
     return <span className="rounded-md bg-danger/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-danger">Desactivado</span>;
   }
-  if (isExpired(user)) {
-    return <span className="rounded-md bg-danger/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-danger">Vencido</span>;
-  }
-  if (isExpiringSoon(user)) {
-    return <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">Vence en {left} día{left === 1 ? "" : "s"}</span>;
+  if (isOutOfUses(user)) {
+    return <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">Sin usos</span>;
   }
   return <span className="rounded-md bg-green-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-600 dark:text-green-400">Activo</span>;
 }
@@ -118,9 +113,8 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserRole, setNewUserRole] = useState<"admin" | "user">("user");
-  const [newUserPlan, setNewUserPlan] = useState("pro");
-  const [newUserDays, setNewUserDays] = useState("30");
-  const [newUserUses, setNewUserUses] = useState("10");
+  const [newUserPlan, setNewUserPlan] = useState("tesista");
+  const [newUserUsesByTool, setNewUserUsesByTool] = useState<Record<UseTool, string>>(() => presetAsStrings("tesista"));
   const [showCreate, setShowCreate] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -129,8 +123,9 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [customDays, setCustomDays] = useState("30");
-  const [customUses, setCustomUses] = useState("10");
+  // Selector de recargas por herramienta del panel lateral.
+  const [rechargeTool, setRechargeTool] = useState<UseTool>("tabulacion");
+  const [rechargeAmount, setRechargeAmount] = useState("5");
   const [resetPassword, setResetPassword] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -170,8 +165,8 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
 
   // Al cambiar de usuario seleccionado se limpian los campos de gestión.
   useEffect(() => {
-    setCustomDays("30");
-    setCustomUses("10");
+    setRechargeTool("tabulacion");
+    setRechargeAmount("5");
     setResetPassword("");
     setConfirmDeleteId(null);
   }, [selectedId]);
@@ -183,17 +178,22 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
     if (!email || !newUserPassword) { setUsersErrorMessage("Email y contraseña son obligatorios."); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setUsersErrorMessage("El email no tiene un formato válido."); return; }
     if (newUserPassword.length < 8) { setUsersErrorMessage("La contraseña debe tener al menos 8 caracteres."); return; }
-    const subscriptionDays = Number.parseInt(newUserDays, 10);
-    if (!Number.isFinite(subscriptionDays) || subscriptionDays <= 0) { setUsersErrorMessage("Los días de suscripción deben ser mayores a 0."); return; }
-    const formsUses = Number.parseInt(newUserUses, 10);
-    if (!Number.isFinite(formsUses) || formsUses < 0) { setUsersErrorMessage("Los usos de Forms deben ser 0 o más."); return; }
+    const uses: Record<string, number> = {};
+    for (const tool of USE_TOOLS) {
+      const value = Number.parseInt(newUserUsesByTool[tool.id], 10);
+      if (!Number.isFinite(value) || value < 0) {
+        setUsersErrorMessage(`Los usos de ${tool.label} deben ser 0 o más.`);
+        return;
+      }
+      uses[tool.id] = value;
+    }
     setIsUsersLoading(true);
     try {
       await createUser(apiBaseUrl, authToken, {
-        email, password: newUserPassword, role: newUserRole, plan: newUserPlan, subscriptionDays, formsUses,
+        email, password: newUserPassword, role: newUserRole, plan: newUserPlan, uses,
       });
-      setNewUserEmail(""); setNewUserPassword(""); setNewUserRole("user"); setNewUserPlan("pro");
-      setNewUserDays("30"); setNewUserUses("10");
+      setNewUserEmail(""); setNewUserPassword(""); setNewUserRole("user"); setNewUserPlan("tesista");
+      setNewUserUsesByTool(presetAsStrings("tesista"));
       setUsersErrorMessage(null); setUsersStatusMessage("Usuario creado correctamente.");
       await loadUsers();
     } catch (err) {
@@ -301,12 +301,11 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
   const stats = useMemo(() => {
     const total = managedUsers.length;
     const activos = managedUsers.filter((u) => u.status === "active").length;
-    const vencidos = managedUsers.filter((u) => isExpired(u)).length;
-    const porVencer = managedUsers.filter((u) => u.status === "active" && isExpiringSoon(u)).length;
+    const sinUsos = managedUsers.filter((u) => u.status === "active" && isOutOfUses(u)).length;
     const generaciones = managedUsers.reduce((acc, u) => acc + (u.generationsCount ?? 0), 0);
-    const usosRestantes = managedUsers.reduce((acc, u) => acc + (u.formsUsesLeft ?? 0), 0);
-    const usosConsumidos = managedUsers.reduce((acc, u) => acc + (u.formsUsesUsed ?? 0), 0);
-    return { total, activos, vencidos, porVencer, generaciones, usosRestantes, usosConsumidos };
+    const usosRestantes = managedUsers.reduce((acc, u) => acc + totalUsesLeft(u), 0);
+    const usosConsumidos = managedUsers.reduce((acc, u) => acc + totalUsesConsumed(u), 0);
+    return { total, activos, sinUsos, generaciones, usosRestantes, usosConsumidos };
   }, [managedUsers]);
 
   const filteredUsers = useMemo(() => {
@@ -314,10 +313,9 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
     return managedUsers.filter((u) => {
       if (term && !u.email.toLowerCase().includes(term)) return false;
       if (roleFilter !== "todos" && u.role !== roleFilter) return false;
-      if (statusFilter === "activos" && (u.status !== "active" || isExpired(u))) return false;
-      if (statusFilter === "por_vencer" && !(u.status === "active" && isExpiringSoon(u))) return false;
+      if (statusFilter === "activos" && u.status !== "active") return false;
+      if (statusFilter === "sin_usos" && !(u.status === "active" && isOutOfUses(u))) return false;
       if (statusFilter === "desactivados" && u.status !== "disabled") return false;
-      if (statusFilter === "vencidos" && !isExpired(u)) return false;
       return true;
     });
   }, [managedUsers, searchTerm, statusFilter, roleFilter]);
@@ -325,8 +323,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
   const statusFilters: { id: StatusFilter; label: string }[] = [
     { id: "todos", label: "Todos" },
     { id: "activos", label: "Activos" },
-    { id: "por_vencer", label: "Por vencer" },
-    { id: "vencidos", label: "Vencidos" },
+    { id: "sin_usos", label: "Sin usos" },
     { id: "desactivados", label: "Desactivados" },
   ];
   const roleFilters: { id: RoleFilter; label: string }[] = [
@@ -341,9 +338,9 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
     <div className="mx-auto max-w-5xl space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Gestión de usuarios</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Gestión de usuarios</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Tabulación va por suscripción (días); Forms va por usos (1 uso = 1 corrida de llenado).
+            Todas las herramientas funcionan por usos (1 uso = 1 generación o corrida). Recarga cada una por separado.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -398,9 +395,9 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
         />
         <StatCard
           icon={<Clock3 className="h-3.5 w-3.5" />}
-          label="Suscripciones"
-          value={String(stats.vencidos)}
-          detail={`vencidas · ${stats.porVencer} por vencer (≤7 días)`}
+          label="Sin usos"
+          value={String(stats.sinUsos)}
+          detail="cuentas activas con 0 usos"
         />
         <StatCard
           icon={<FileSpreadsheet className="h-3.5 w-3.5" />}
@@ -410,7 +407,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
         />
         <StatCard
           icon={<Ticket className="h-3.5 w-3.5" />}
-          label="Usos de Forms"
+          label="Usos totales"
           value={String(stats.usosRestantes)}
           detail={`disponibles · ${stats.usosConsumidos} consumidos`}
         />
@@ -436,38 +433,52 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                 <Input type="password" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} placeholder="Mínimo 8 caracteres" />
               </label>
             </div>
-            <div className="grid gap-3 sm:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2">
               <label className="block space-y-1.5">
                 <span className="flex items-center gap-1.5 text-sm font-medium"><UserRound className="h-3.5 w-3.5 text-muted-foreground" />Rol</span>
-                <select
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                <Select
                   value={newUserRole}
                   onChange={(e) => setNewUserRole(e.target.value as "admin" | "user")}
                 >
                   <option value="user">Usuario</option>
-                  <option value="admin">Administrador</option>
-                </select>
+                  <option value="admin">Administrador (usos ilimitados)</option>
+                </Select>
               </label>
               <label className="block space-y-1.5">
-                <span className="flex items-center gap-1.5 text-sm font-medium"><Sparkles className="h-3.5 w-3.5 text-muted-foreground" />Plan</span>
-                <select
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                <span className="flex items-center gap-1.5 text-sm font-medium"><Sparkles className="h-3.5 w-3.5 text-muted-foreground" />Plan (precarga los usos)</span>
+                <Select
                   value={newUserPlan}
-                  onChange={(e) => setNewUserPlan(e.target.value)}
+                  onChange={(e) => {
+                    setNewUserPlan(e.target.value);
+                    setNewUserUsesByTool(presetAsStrings(e.target.value));
+                  }}
                 >
-                  <option value="pro">Pro</option>
-                  <option value="business">Business</option>
-                </select>
-              </label>
-              <label className="block space-y-1.5">
-                <span className="flex items-center gap-1.5 text-sm font-medium"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" />Días de acceso</span>
-                <Input value={newUserDays} onChange={(e) => setNewUserDays(e.target.value)} placeholder="30" />
-              </label>
-              <label className="block space-y-1.5">
-                <span className="flex items-center gap-1.5 text-sm font-medium"><Ticket className="h-3.5 w-3.5 text-muted-foreground" />Usos de Forms</span>
-                <Input value={newUserUses} onChange={(e) => setNewUserUses(e.target.value)} placeholder="10" />
+                  {PLAN_OPTIONS.map((p) => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
+                  ))}
+                </Select>
               </label>
             </div>
+            {newUserRole !== "admin" && (
+              <div className="space-y-1.5">
+                <span className="flex items-center gap-1.5 text-sm font-medium">
+                  <Ticket className="h-3.5 w-3.5 text-muted-foreground" />
+                  Usos por herramienta
+                </span>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {USE_TOOLS.map((tool) => (
+                    <label key={tool.id} className="block space-y-1">
+                      <span className="text-[11px] text-muted-foreground">{tool.label}</span>
+                      <Input
+                        className="h-9 text-sm tabular-nums"
+                        value={newUserUsesByTool[tool.id]}
+                        onChange={(e) => setNewUserUsesByTool((prev) => ({ ...prev, [tool.id]: e.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-end">
               <Button onClick={handleCreateUser} disabled={isUsersLoading}>
                 {isUsersLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -558,8 +569,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
             <thead>
               <tr className="border-b border-border/70 text-left text-xs text-muted-foreground">
                 <th className="px-4 py-2.5 font-medium">Usuario</th>
-                <th className="px-3 py-2.5 font-medium">Suscripción</th>
-                <th className="px-3 py-2.5 text-right font-medium">Usos Forms</th>
+                <th className="px-3 py-2.5 text-right font-medium">Usos disponibles</th>
                 <th className="px-3 py-2.5 text-right font-medium">Excel</th>
                 <th className="px-3 py-2.5 font-medium">Último acceso</th>
                 <th className="w-8 px-2 py-2.5" />
@@ -588,10 +598,9 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                       <StatusChip user={user} />
                     </div>
                   </td>
-                  <td className="px-3 py-3 text-xs text-muted-foreground">{getSubscriptionLabel(user)}</td>
                   <td className="px-3 py-3 text-right text-sm tabular-nums">
                     <span className="font-semibold">{usesLabel(user)}</span>
-                    <span className="text-xs text-muted-foreground"> · {user.formsUsesUsed ?? 0} usados</span>
+                    <span className="text-xs text-muted-foreground"> · {totalUsesConsumed(user)} usados</span>
                   </td>
                   <td className="px-3 py-3 text-right font-semibold tabular-nums">{user.generationsCount ?? 0}</td>
                   <td className="px-3 py-3 text-xs text-muted-foreground">{formatDateTime(user.lastLoginAt)}</td>
@@ -638,7 +647,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
               {/* Resumen */}
               <div className="grid grid-cols-2 gap-2 text-xs">
                 {[
-                  ["Suscripción", getSubscriptionLabel(selectedUser)],
+                  ["Excel generados", String(selectedUser.generationsCount ?? 0)],
                   ["Último acceso", formatDateTime(selectedUser.lastLoginAt)],
                   ["Último Excel", selectedUser.lastGenerationAt ? formatDateTime(selectedUser.lastGenerationAt) : "Nunca"],
                   ["Clave API", selectedUser.hasApiKey ? `Activa ···${selectedUser.apiKeyLast4}` : "Sin clave"],
@@ -649,65 +658,72 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-2 gap-2 text-center">
-                <div className="rounded-lg border border-border/60 bg-background/60 px-2.5 py-2.5">
-                  <p className="text-xl font-semibold tabular-nums">{selectedUser.generationsCount ?? 0}</p>
-                  <p className="text-[11px] text-muted-foreground">Excel generados</p>
-                </div>
-                <div className="rounded-lg border border-border/60 bg-background/60 px-2.5 py-2.5">
-                  <p className="text-xl font-semibold tabular-nums">{usesLabel(selectedUser)}</p>
-                  <p className="text-[11px] text-muted-foreground">usos de Forms · {selectedUser.formsUsesUsed ?? 0} consumidos</p>
-                </div>
-              </div>
 
-              {/* Recargas */}
+              {/* Usos por herramienta + recargas */}
               <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recargas</p>
-                <div className="flex items-center gap-2">
-                  <Input
-                    className="h-9 w-20 text-sm tabular-nums"
-                    value={customDays}
-                    onChange={(e) => setCustomDays(e.target.value)}
-                    placeholder="30"
-                  />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="flex-1"
-                    onClick={() => {
-                      const days = Number.parseInt(customDays, 10);
-                      if (!Number.isFinite(days) || days <= 0) { setUsersErrorMessage("Los días deben ser un número mayor a 0."); return; }
-                      void patchManagedUser(selectedUser.id, { subscriptionDaysDelta: days }, `+${days} días para ${selectedUser.email}.`);
-                    }}
-                    disabled={isUsersLoading}
-                  >
-                    <CalendarPlus className="h-3.5 w-3.5" />
-                    Añadir días (Tabulación)
-                  </Button>
-                </div>
-                {selectedUser.role !== "admin" && (
-                  <div className="flex items-center gap-2">
-                    <Input
-                      className="h-9 w-20 text-sm tabular-nums"
-                      value={customUses}
-                      onChange={(e) => setCustomUses(e.target.value)}
-                      placeholder="10"
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1"
-                      onClick={() => {
-                        const uses = Number.parseInt(customUses, 10);
-                        if (!Number.isFinite(uses) || uses === 0) { setUsersErrorMessage("Los usos deben ser un número distinto de 0."); return; }
-                        void patchManagedUser(selectedUser.id, { formsUsesDelta: uses }, `${uses > 0 ? "+" : ""}${uses} usos de Forms para ${selectedUser.email}.`);
-                      }}
-                      disabled={isUsersLoading}
-                    >
-                      <Ticket className="h-3.5 w-3.5" />
-                      Añadir usos (Forms)
-                    </Button>
-                  </div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Usos por herramienta</p>
+                {selectedUser.role === "admin" ? (
+                  <p className="rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">
+                    Los administradores tienen usos ilimitados en todas las herramientas.
+                  </p>
+                ) : (
+                  <>
+                    <div className="overflow-hidden rounded-lg border border-border/60">
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {USE_TOOLS.map((tool) => {
+                            const left = selectedUser.uses?.[tool.id] ?? 0;
+                            const used = selectedUser.usesConsumed?.[tool.id] ?? 0;
+                            return (
+                              <tr key={tool.id} className="border-b border-border/40 last:border-b-0">
+                                <td className="px-2.5 py-1.5">{tool.label}</td>
+                                <td className={cn("px-2.5 py-1.5 text-right font-semibold tabular-nums", left === 0 && "text-amber-600 dark:text-amber-400")}>
+                                  {left}
+                                </td>
+                                <td className="px-2.5 py-1.5 text-right text-muted-foreground tabular-nums">{used} usados</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Select
+                        wrapperClassName="flex-1"
+                        className="h-9 pl-2.5"
+                        value={rechargeTool}
+                        onChange={(e) => setRechargeTool(e.target.value as UseTool)}
+                      >
+                        {USE_TOOLS.map((tool) => (
+                          <option key={tool.id} value={tool.id}>{tool.label}</option>
+                        ))}
+                      </Select>
+                      <Input
+                        className="h-9 w-20 text-sm tabular-nums"
+                        value={rechargeAmount}
+                        onChange={(e) => setRechargeAmount(e.target.value)}
+                        placeholder="5"
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const amount = Number.parseInt(rechargeAmount, 10);
+                          if (!Number.isFinite(amount) || amount === 0) { setUsersErrorMessage("Los usos deben ser un número distinto de 0 (negativo para corregir)."); return; }
+                          const label = USE_TOOLS.find((t) => t.id === rechargeTool)?.label ?? rechargeTool;
+                          void patchManagedUser(
+                            selectedUser.id,
+                            { usesDelta: { [rechargeTool]: amount } },
+                            `${amount > 0 ? "+" : ""}${amount} usos de ${label} para ${selectedUser.email}.`,
+                          );
+                        }}
+                        disabled={isUsersLoading}
+                      >
+                        <Ticket className="h-3.5 w-3.5" />
+                        Recargar
+                      </Button>
+                    </div>
+                  </>
                 )}
               </div>
 
@@ -717,8 +733,8 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                 <div className="grid grid-cols-2 gap-2">
                   <label className="block space-y-1">
                     <span className="text-[11px] text-muted-foreground">Rol</span>
-                    <select
-                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    <Select
+                      className="h-9 pl-2.5"
                       value={selectedUser.role}
                       disabled={isUsersLoading || isSelf}
                       title={isSelf ? "No puedes cambiar tu propio rol" : undefined}
@@ -726,20 +742,23 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                     >
                       <option value="user">Usuario</option>
                       <option value="admin">Administrador</option>
-                    </select>
+                    </Select>
                   </label>
                   <label className="block space-y-1">
                     <span className="text-[11px] text-muted-foreground">Plan</span>
-                    <select
-                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    <Select
+                      className="h-9 pl-2.5"
                       value={selectedUser.plan}
                       disabled={isUsersLoading}
                       onChange={(e) => void patchManagedUser(selectedUser.id, { plan: e.target.value }, `Plan actualizado para ${selectedUser.email}.`)}
                     >
-                      <option value="pro">Pro</option>
-                      <option value="business">Business</option>
-                      <option value="enterprise">Enterprise</option>
-                    </select>
+                      {PLAN_OPTIONS.map((p) => (
+                        <option key={p.id} value={p.id}>{p.label}</option>
+                      ))}
+                      {!PLAN_OPTIONS.some((p) => p.id === selectedUser.plan) && (
+                        <option value={selectedUser.plan}>{selectedUser.plan}</option>
+                      )}
+                    </Select>
                   </label>
                 </div>
                 <div className="flex items-end gap-2">

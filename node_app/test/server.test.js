@@ -243,25 +243,25 @@ test("claves de API: generar, validar, vencimiento y revocar", async () => {
   v = await validate("no-es-una-clave");
   assert.equal(v.valid, false);
 
-  // Usuario con suscripcion vencida: desacoplado — la clave de Forms sigue
-  // valida (va por usos), el login funciona, pero /generate exige dias.
+  // Usuario sin usos: la clave de Forms sigue valida (la cuenta esta activa),
+  // el login funciona, pero cada herramienta exige usos disponibles.
   const created = await fetch(`${BASE}/auth/users`, {
     method: "POST",
     headers: auth,
-    body: JSON.stringify({ email: "vencido@test.local", password: "ClaveVencida1!", subscriptionDays: 30 }),
+    body: JSON.stringify({
+      email: "vencido@test.local",
+      password: "ClaveVencida1!",
+      uses: { tabulacion: 0, confiabilidad: 0, descriptiva: 0, titulos: 0, matriz: 0, humanizador: 0, forms: 0 },
+    }),
   });
   const createdBody = await created.json();
+  assert.equal(created.status, 201);
   const expiredLogin = await login("vencido@test.local", "ClaveVencida1!");
   const expiredKeyRes = await fetch(`${BASE}/auth/api-key`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${expiredLogin.body.token}` },
   });
   const expiredKey = (await expiredKeyRes.json()).apiKey;
-  await fetch(`${BASE}/auth/users/${createdBody.user.id}`, {
-    method: "PATCH",
-    headers: auth,
-    body: JSON.stringify({ subscriptionEndsAt: "2020-01-01T00:00:00.000Z" }),
-  });
   v = await validate(expiredKey);
   assert.equal(v.valid, true);
   assert.equal(v.usesLeft, 0);
@@ -273,7 +273,8 @@ test("claves de API: generar, validar, vencimiento y revocar", async () => {
     body: JSON.stringify({ config: { muestra: "10", item: "4", variable: "1" }, responseMode: "inline" }),
   });
   assert.equal(genExpired.status, 403);
-  assert.match((await genExpired.json()).error, /Suscripcion vencida/);
+  assert.match((await genExpired.json()).error, /No te quedan usos/);
+  assert.equal(createdBody.user.uses.tabulacion, 0);
 
   // Revocar
   res = await fetch(`${BASE}/auth/api-key`, { method: "DELETE", headers: auth });

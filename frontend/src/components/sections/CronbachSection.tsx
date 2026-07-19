@@ -21,6 +21,7 @@ import type { AuthUser, TableRows } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { PreviewTable } from "../PreviewTable";
 import { SubscriptionWarning } from "../SubscriptionWarning";
+import { ToolSteps } from "../ToolSteps";
 
 const MAX_MUESTRA = 2000;
 const MAX_ITEMS = 60;
@@ -133,16 +134,19 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser }: {
   return (
     <div className="step-enter mx-auto max-w-3xl space-y-6">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight">Prueba de confiabilidad</h2>
+        <h2 className="font-display text-2xl font-bold tracking-tight">Prueba de confiabilidad</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Alfa de Cronbach por variable, con datos simulados de alta consistencia interna en una sola hoja de Excel.
         </p>
       </div>
 
-      <SubscriptionWarning user={authUser}>
-        Tu suscripción de Tabulación está vencida: la prueba de confiabilidad usa la misma suscripción.
-        Pide al administrador que recargue tus días.
-      </SubscriptionWarning>
+      <ToolSteps steps={[
+        "Escribe tu variable, sus dimensiones e ítems",
+        "El sistema simula respuestas con alta consistencia interna",
+        "Descarga el Excel con el α calculado y su interpretación",
+      ]} />
+
+      <SubscriptionWarning user={authUser} tool="confiabilidad" />
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>
