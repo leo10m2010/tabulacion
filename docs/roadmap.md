@@ -32,8 +32,8 @@ Todo esto espera a comprar un dominio (~$10/año). Es la dependencia más barata
 ## Pendiente en el frontend
 
 - **Peso del bundle**: 1,13 MB (382 kB comprimido). Las 9 secciones se importan estáticamente, así que la landing carga hasta el panel de administración. Con visitantes llegando de fuera, esto ya importa: `React.lazy` por sección.
-- **Sin tests**: ~8.000 líneas de TSX sin una sola prueba. Lo más rentable es empezar por `lib/helpers.ts` (baremos, conversiones), que es lógica pura.
-- **Sesión**: el token vive en `localStorage` sin refresco; a las 24 h el usuario se cae sin aviso.
+- **Tests**: ya hay Vitest con 20 pruebas sobre `lib/api.ts` y `lib/helpers.ts` (lógica pura y manejo de sesión), y corren en CI. Falta cubrir los componentes.
+- **Sesión**: el token sigue sin refrescarse; a las 24 h caduca. Ya no rompe la app (se cierra la sesión con un mensaje claro), pero el usuario tiene que volver a entrar.
 - **Duplicación de polling**: cuatro secciones de IA repiten el mismo bucle (extraer un hook `useAiJob`).
 - **Página de "Mejorar plan"** con los precios, hoy inexistente (el aviso solo dice "escríbenos").
 
@@ -98,6 +98,8 @@ Todo esto espera a comprar un dominio (~$10/año). Es la dependencia más barata
 ## Fase 5 — Almacenamiento de archivos
 
 **Objetivo**: los archivos del proyecto viven en la nube; el medidor "X GB de Y GB" del mock.
+
+**Cuenta de R2 ya creada** (Account ID `2953e58cfc392b7a60cc0850b069abe7`, endpoint S3 `https://2953e58cfc392b7a60cc0850b069abe7.r2.cloudflarestorage.com`). Faltan las llaves (Access Key ID y Secret), que se generan cuando se vaya a implementar — **no antes**: hoy no hay nada que guardar, porque los Excel y Word se generan, viajan en base64 y se descartan. El almacenamiento necesita primero el objeto Proyecto de la Fase 4, que es lo que le da dueño y sitio a cada archivo.
 
 - **Cloudflare R2 (recomendado sobre S3)**: API compatible con S3, 10 GB gratis y sin costo de egreso — relevante porque el producto descarga Exceles. **AWS S3** es la alternativa directa si se prefiere el ecosistema AWS: su capa gratuita es limitada (5 GB) y, sobre todo, **cobra por egreso**, que es justo lo que más hace este producto (descargar archivos). Con R2 esa factura no existe. Si ya se usa AWS para otra cosa, S3 simplifica la operación; si no, R2 sale más barato.
 - URLs prefirmadas para subir/descargar; cuota de GB por plan; medidor en la sidebar.

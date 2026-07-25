@@ -26,6 +26,28 @@ interface RequestOptions {
   body?: unknown;
 }
 
+// Error de la API que CONSERVA el código de estado. Antes se lanzaba un Error
+// pelado con solo el mensaje, así que quien llamaba no podía distinguir una
+// sesión caducada (401) de un dato inválido (400) o una caída (500) — salvo
+// comparando el texto en español, que es frágil y solo se hacía en un sitio.
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+// Se avisa UNA vez, de forma central, cuando el servidor rechaza la sesión.
+// Así cualquier pantalla —incluidas las que se escriban en el futuro— cierra
+// sesión correctamente sin tener que acordarse de manejarlo.
+type UnauthorizedHandler = (mensaje: string) => void;
+let onUnauthorized: UnauthorizedHandler | null = null;
+export const setUnauthorizedHandler = (handler: UnauthorizedHandler | null) => {
+  onUnauthorized = handler;
+};
+
 async function request<T>(apiBaseUrl: string, path: string, options: RequestOptions = {}): Promise<T> {
   const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}${path}`, {
     method: options.method ?? "GET",
@@ -36,7 +58,18 @@ async function request<T>(apiBaseUrl: string, path: string, options: RequestOpti
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
   const payload = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(payload.error ?? `Error HTTP ${res.status}`);
+  if (!res.ok) {
+    const mensaje = payload.error ?? `Error HTTP ${res.status}`;
+    // 401 = el servidor no reconoce esta sesión (expiró, se cambió la
+    // contraseña o se borró la cuenta). No tiene sentido que cada pantalla lo
+    // resuelva por su cuenta: se cierra la sesión aquí, una sola vez.
+    // Se excluye /auth/login: ahí un 401 significa "credenciales incorrectas",
+    // no una sesión perdida, y cerrar sesión sería absurdo.
+    if (res.status === 401 && options.token && onUnauthorized) {
+      onUnauthorized("Tu sesión expiró. Vuelve a iniciar sesión para continuar.");
+    }
+    throw new ApiError(res.status, mensaje);
+  }
   return payload;
 }
 

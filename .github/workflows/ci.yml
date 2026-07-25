@@ -48,7 +48,7 @@ jobs:
         working-directory: forms
 
   frontend:
-    name: Frontend (tipos + build)
+    name: Frontend (tipos + pruebas + build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,6 +62,8 @@ jobs:
       # `npm run build` ya incluye el chequeo de tipos, pero se ejecuta aparte
       # para que un error de tipos se distinga de un fallo de empaquetado.
       - run: npm run typecheck
+        working-directory: frontend
+      - run: npm test
         working-directory: frontend
       - run: npm run build
         working-directory: frontend

@@ -188,6 +188,30 @@ export default function App() {
     else localStorage.removeItem("authToken");
   }, [authToken]);
 
+  // Sesión rechazada por el servidor (expiró, cambió la contraseña o se borró
+  // la cuenta). Antes solo lo detectaba /generate, comparando si el mensaje
+  // contenía la palabra "token": en el resto de la app la sesión moría en
+  // silencio y todo fallaba sin explicar por qué.
+  useEffect(() => {
+    api.setUnauthorizedHandler((mensaje) => {
+      olvidarSesion();
+      setAuthError(mensaje);
+    });
+    return () => api.setUnauthorizedHandler(null);
+  }, []);
+
+  // Token ya vencido al abrir la app: se descarta aquí en vez de dejar que
+  // falle la primera petición y el usuario vea un error técnico.
+  useEffect(() => {
+    const expira = localStorage.getItem("authExpiresAt");
+    if (!expira) return;
+    const ts = Date.parse(expira);
+    if (Number.isFinite(ts) && ts <= Date.now()) {
+      olvidarSesion();
+      setAuthError("Tu sesión expiró. Vuelve a iniciar sesión para continuar.");
+    }
+  }, []);
+
   // Despierta la API apenas se abre la app: si el hosting suspende el servidor
   // por inactividad (arranque en frío), el login y la generación lo encuentran
   // ya caliente.
@@ -503,7 +527,7 @@ export default function App() {
       if (!payload.token || !payload.user) throw new Error(payload.error ?? "Respuesta inválida del servidor.");
       setAuthToken(payload.token);
       setAuthUser(payload.user);
-      localStorage.setItem("loginEmail", email);
+      recordarSesion(email, payload.tokenExpiresAt);
       setStatusMessage("Sesión iniciada.");
     } catch (err) {
       setAuthToken(""); setAuthUser(null);
@@ -523,6 +547,7 @@ export default function App() {
       if (!payload.token || !payload.user) throw new Error("Respuesta inválida del servidor.");
       setAuthToken(payload.token);
       setAuthUser(payload.user);
+      recordarSesion(payload.user.email, payload.tokenExpiresAt);
       if (payload.creado) {
         const usos = payload.user.uses ?? null;
         const incluidas = usos
@@ -549,14 +574,33 @@ export default function App() {
   // mensaje de confirmación, en vez de dejar al usuario en una app cuyo token
   // acaba de dejar de valer.
   const handleAccountDeleted = (mensaje: string) => {
-    setAuthToken(""); setAuthUser(null);
+    olvidarSesion();
+    // La cuenta ya no existe: no tiene sentido recordar su correo ni saludar
+    // como a alguien que vuelve.
+    localStorage.removeItem("loginEmail");
+    setAuthIntent("registro");
     setActiveSection("inicio"); setWizardStep(1);
     setWelcomeMessage(null);
     setAuthError(mensaje);
   };
 
-  const handleLogout = () => {
+  // Todo lo que sabe el navegador de la sesión se toca aquí, para que no haya
+  // restos: el correo recordado sobrevivía a cerrar sesión y a eliminar la
+  // cuenta, y la app te saludaba con "Bienvenido de vuelta" y el correo de una
+  // cuenta que ya no existía.
+  const recordarSesion = (email: string, expiraEn?: string) => {
+    localStorage.setItem("loginEmail", email);
+    if (expiraEn) localStorage.setItem("authExpiresAt", expiraEn);
+    setAuthIntent("login");
+  };
+
+  const olvidarSesion = () => {
+    localStorage.removeItem("authExpiresAt");
     setAuthToken(""); setAuthUser(null);
+  };
+
+  const handleLogout = () => {
+    olvidarSesion();
     setAuthError(null);
     setActiveSection("tabulacion"); setWizardStep(1);
     setStatusMessage("Sesión cerrada.");
@@ -609,9 +653,9 @@ export default function App() {
       setSelectedSheet(parsedWorkbook.names[0] ?? "");
       setStatusMessage("Tabulación generada correctamente.");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "No se pudo generar la tabulación.";
-      setErrorMessage(msg);
-      if (msg.toLowerCase().includes("token")) { setAuthToken(""); setAuthUser(null); }
+      // El 401 lo resuelve el manejador central (api.setUnauthorizedHandler):
+      // aquí solo se informa del fallo.
+      setErrorMessage(err instanceof Error ? err.message : "No se pudo generar la tabulación.");
       setStatusMessage("Ocurrió un error.");
     } finally {
       setIsGenerating(false);
