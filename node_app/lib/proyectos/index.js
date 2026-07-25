@@ -11,6 +11,8 @@
 import crypto from "crypto";
 
 export const MAX_NOMBRE = 120;
+// El titulo de la tesis es una frase larga; el nombre del proyecto es corto.
+export const MAX_TITULO = 300;
 export const MAX_VARIABLES = 2;
 export const MAX_DIMENSIONES = 20;
 export const MAX_INDICADORES = 30;
@@ -148,6 +150,10 @@ export const crearProyecto = ({ userId, nombre, instrumento }) => {
     id: crypto.randomUUID(),
     userId,
     nombre: nombreLimpio,
+    // El titulo definitivo, el que el usuario ELIGE entre las propuestas. Es
+    // la entrada del paso siguiente (la matriz de consistencia parte de el),
+    // asi que guardarlo evita copiarlo a mano de una herramienta a otra.
+    titulo: "",
     instrumento: normalizarInstrumento(instrumento),
     progreso: {},
     createdAt: ahora,
@@ -161,6 +167,15 @@ export const aplicarCambios = (proyecto, cambios) => {
     const nombreLimpio = limpiar(cambios.nombre, MAX_NOMBRE);
     if (!nombreLimpio) fallar("El nombre del proyecto no puede quedar vacío.");
     siguiente.nombre = nombreLimpio;
+  }
+  if (cambios?.titulo !== undefined) {
+    siguiente.titulo = limpiar(cambios.titulo, MAX_TITULO);
+    // Elegir el titulo ES el paso, no generarlo: generar tres propuestas y no
+    // decidir ninguna no es avanzar. Borrarlo deshace el paso.
+    const progreso = normalizarProgreso(siguiente.progreso);
+    if (siguiente.titulo) progreso.titulos = new Date().toISOString();
+    else delete progreso.titulos;
+    siguiente.progreso = progreso;
   }
   if (cambios?.instrumento !== undefined) {
     siguiente.instrumento = normalizarInstrumento(cambios.instrumento);

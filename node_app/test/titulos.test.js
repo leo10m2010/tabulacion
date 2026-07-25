@@ -8,7 +8,7 @@ process.env.FIRECRAWL_API_KEY = "";
 import JSZip from "jszip";
 import { loadTitulosPrompts, buildSystemPrompt, buildSeleccionSystemPrompt } from "../lib/titulos/prompt.js";
 import { resolveRepositoryDomain } from "../lib/titulos/universities.js";
-import { normalizeTitulosInput, generateTitulos, cleanTitulosContent } from "../lib/titulos/index.js";
+import { normalizeTitulosInput, generateTitulos, cleanTitulosContent, extraerTitulos } from "../lib/titulos/index.js";
 import { stripToolCallMarkup, buildBaseUserContent, parseSeleccion } from "../lib/titulos/openrouter.js";
 import {
   searchWithFallback, buildQueries, buildTargetedQueries, gatherSearchContext,
@@ -206,6 +206,44 @@ test("cleanTitulosContent sin marcador devuelve el contenido intacto", () => {
 
 test("cleanTitulosContent tolera TÍTULO 1 sin espacio y sin tilde", () => {
   assert.ok(cleanTitulosContent("ruido previo **TITULO1** resto").startsWith("**TITULO1**"));
+});
+
+// ── extraerTitulos (para poder ELEGIR uno, no copiarlo a mano) ───────────────
+
+const TRES_TITULOS = "**TÍTULO 1**\n"
+  + "\"Sistema de control interno y gestión administrativa en la Municipalidad de Lima, 2026\"\n\n"
+  + "**1. PROBLEMA Y PROPÓSITO A ABORDAR**\nTexto del problema...\n\n---\n\n"
+  + "**TÍTULO 2**\n"
+  + "\"Clima organizacional y satisfacción laboral en el Hospital Regional de Ica, 2026\"\n\n"
+  + "**1. PROBLEMA Y PROPÓSITO A ABORDAR**\nOtro texto...\n\n---\n\n"
+  + "**TÍTULO 3**\n"
+  + "\"Marketing digital y decisión de compra en las MYPES de Gamarra, 2026\"\n\n"
+  + "**1. PROBLEMA Y PROPÓSITO A ABORDAR**\nMás texto...";
+
+test("extraerTitulos saca los tres titulos limpios, sin comillas ni markdown", () => {
+  const titulos = extraerTitulos(TRES_TITULOS);
+  assert.equal(titulos.length, 3);
+  assert.equal(titulos[0], "Sistema de control interno y gestión administrativa en la Municipalidad de Lima, 2026");
+  assert.equal(titulos[2], "Marketing digital y decisión de compra en las MYPES de Gamarra, 2026");
+  assert.ok(titulos.every((t) => !t.includes("\"") && !t.includes("*")));
+});
+
+test("extraerTitulos tolera negrita alrededor del titulo", () => {
+  const md = "**TÍTULO 1**\n**Gestión de residuos sólidos en Villa El Salvador, 2026**\n\n**1. PROBLEMA**\n...";
+  assert.deepEqual(extraerTitulos(md), ["Gestión de residuos sólidos en Villa El Salvador, 2026"]);
+});
+
+test("extraerTitulos salta el bloque si el titulo no está donde toca", () => {
+  // Si la IA devuelve otra estructura, mejor no ofrecer nada que ofrecer basura
+  // como si fuera el titulo de la tesis.
+  const raro = "**TÍTULO 1**\n**1. PROBLEMA Y PROPÓSITO**\nTexto suelto sin título arriba.";
+  assert.deepEqual(extraerTitulos(raro), []);
+});
+
+test("extraerTitulos con formato inesperado devuelve lista vacia, no revienta", () => {
+  assert.deepEqual(extraerTitulos("Texto sin ningún marcador de título."), []);
+  assert.deepEqual(extraerTitulos(null), []);
+  assert.deepEqual(extraerTitulos(""), []);
 });
 
 // ── stripToolCallMarkup (tool_calls filtrados como texto, visto en produccion) ─

@@ -241,7 +241,7 @@ export const obtenerProyecto = (apiBaseUrl: string, token: string, id: string) =
 
 export const actualizarProyecto = (
   apiBaseUrl: string, token: string, id: string,
-  cambios: { nombre?: string; instrumento?: Instrumento },
+  cambios: { nombre?: string; titulo?: string; instrumento?: Instrumento },
 ) => request<{ proyecto: Proyecto }>(apiBaseUrl, `/proyectos/${id}`, {
   method: "PATCH", token, body: cambios,
 });

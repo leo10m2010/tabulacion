@@ -287,6 +287,51 @@ describe("progreso de la tesis", () => {
   });
 });
 
+describe("el título elegido", () => {
+  // Generar tres propuestas no es avanzar: avanzar es DECIDIR una. Y el título
+  // elegido es la entrada de la matriz de consistencia, así que guardarlo evita
+  // copiarlo a mano entre herramientas.
+  test("elegir un título lo guarda y da por hecho el paso", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "titulo@test.local");
+    const id = (await api("POST", "/proyectos", token, { nombre: "Mi tesis" })).body.proyecto.id;
+
+    const elegido = "Gestión administrativa y calidad de servicio en la Municipalidad de Lima, 2026";
+    const r = await api("PATCH", `/proyectos/${id}`, token, { titulo: elegido });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.proyecto.titulo, elegido);
+    assert.ok(r.body.proyecto.progreso.titulos, "elegir el título completa el paso");
+  });
+
+  test("un proyecto nuevo no tiene título ni ese paso hecho", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "titulo-nuevo@test.local");
+    const r = await api("POST", "/proyectos", token, { nombre: "Sin título aún" });
+    assert.equal(r.body.proyecto.titulo, "");
+    assert.equal(r.body.proyecto.progreso.titulos, undefined);
+  });
+
+  test("borrar el título deshace el paso", async () => {
+    // Si alguien se arrepiente, la ruta tiene que reflejarlo.
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "titulo-borrar@test.local");
+    const id = (await api("POST", "/proyectos", token, { nombre: "Arrepentido" })).body.proyecto.id;
+    await api("PATCH", `/proyectos/${id}`, token, { titulo: "Un título cualquiera" });
+    const r = await api("PATCH", `/proyectos/${id}`, token, { titulo: "   " });
+    assert.equal(r.body.proyecto.titulo, "");
+    assert.equal(r.body.proyecto.progreso.titulos, undefined);
+  });
+
+  test("renombrar el proyecto no toca el título", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "titulo-nombre@test.local");
+    const id = (await api("POST", "/proyectos", token, { nombre: "Corto" })).body.proyecto.id;
+    await api("PATCH", `/proyectos/${id}`, token, { titulo: "El título largo de la tesis" });
+    const r = await api("PATCH", `/proyectos/${id}`, token, { nombre: "Otro nombre" });
+    assert.equal(r.body.proyecto.titulo, "El título largo de la tesis");
+  });
+});
+
 describe("límite por plan", () => {
   test("el plan gratuito solo permite un proyecto", async () => {
     const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);

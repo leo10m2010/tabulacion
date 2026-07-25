@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowDownToLine, Check, Copy, GraduationCap, Sparkles } from "lucide-react";
+import { ArrowDownToLine, Check, Copy, GraduationCap, Loader2, Sparkles } from "lucide-react";
 import { Button } from "../ui/button";
 import { MagicButton } from "../ui/magic-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
@@ -8,7 +8,7 @@ import { Input } from "../ui/input";
 import { cn } from "../../lib/utils";
 import * as api from "../../lib/api";
 import { base64ToUint8Array } from "../../lib/helpers";
-import type { AuthUser, PasoTesis } from "../../lib/types";
+import type { AuthUser, Proyecto } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { SubscriptionWarning } from "../SubscriptionWarning";
 import { ToolSteps } from "../ToolSteps";
@@ -70,12 +70,12 @@ function MarkdownLite({ text }: { text: string }) {
 // pantalla (NO chat, sin historial ni turnos). El backend hace UNA llamada a
 // GLM-5.2 con la tool openrouter:web_search y devuelve 3 propuestas de
 // título desarrolladas según la carrera, universidad y lugar indicados.
-export function TitulosSection({ apiBaseUrl, authToken, authUser, onPasoHecho, onUpgrade }: {
+export function TitulosSection({ apiBaseUrl, authToken, authUser, proyecto, onProyectoActualizado, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
-  // Marca este paso como hecho en el proyecto activo, si hay uno.
-  onPasoHecho?: (paso: PasoTesis) => void;
+  proyecto: Proyecto | null;
+  onProyectoActualizado?: (p: Proyecto) => void;
   onUpgrade?: (herramienta: string) => void;
 }) {
   const reduce = useReducedMotion() ?? false;
@@ -88,6 +88,9 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser, onPasoHecho, o
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [contenido, setContenido] = useState<string | null>(null);
+  const [titulos, setTitulos] = useState<string[]>([]);
+  const [eligiendo, setEligiendo] = useState<string | null>(null);
+  const [errorTitulo, setErrorTitulo] = useState<string | null>(null);
   const [docx, setDocx] = useState<{ url: string; fileName: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const pollRef = useRef<number | null>(null);
@@ -141,8 +144,8 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser, onPasoHecho, o
             docxUrlRef.current = url;
             setDocx({ url, fileName: job.docxFileName ?? "Titulos_de_investigacion.docx" });
           }
+          setTitulos(job.titulos ?? []);
           setPhase("idle");
-          onPasoHecho?.("titulos");
           return;
         }
         if (job.status === "error") {
@@ -181,6 +184,25 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser, onPasoHecho, o
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo iniciar la generación.");
       setPhase("idle");
+    }
+  };
+
+  // Guardar el elegido en el proyecto. Aquí sí se avisa si falla: a diferencia
+  // de marcar un paso, esto es una decisión del usuario y creer que quedó
+  // guardada cuando no lo está le costaría el trabajo.
+  const elegirTitulo = async (titulo: string) => {
+    if (!proyecto) return;
+    setErrorTitulo(null);
+    setEligiendo(titulo);
+    try {
+      const { proyecto: actualizado } = await api.actualizarProyecto(
+        apiBaseUrl, authToken, proyecto.id, { titulo },
+      );
+      onProyectoActualizado?.(actualizado);
+    } catch (err) {
+      setErrorTitulo(err instanceof Error ? err.message : "No se pudo guardar el título elegido.");
+    } finally {
+      setEligiendo(null);
     }
   };
 
@@ -411,7 +433,54 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser, onPasoHecho, o
                 Revisa antecedentes y variables: son propuestas de partida, no reemplazan tu criterio ni el de tu asesor.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              {/* Elegir. De tres propuestas, una es LA tesis: guardarla en el
+                  proyecto evita copiarla a mano a la matriz, y es lo que de
+                  verdad completa este paso (generar tres y no decidir ninguna
+                  no es avanzar). Solo aparece con proyecto abierto y cuando la
+                  respuesta trajo los títulos separables. */}
+              {proyecto && titulos.length > 0 && (
+                <div className="rounded-xl border border-border/60 bg-background/80 p-4">
+                  <p className="text-sm font-medium">¿Con cuál te quedas?</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    El que elijas se guarda en {proyecto.nombre} y la matriz de consistencia parte de él.
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {titulos.map((t, i) => {
+                      const elegido = proyecto.titulo === t;
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => elegirTitulo(t)}
+                          disabled={eligiendo !== null}
+                          className={cn(
+                            "flex w-full items-start gap-3 rounded-xl border p-3 text-left transition-colors",
+                            elegido
+                              ? "border-primary/50 bg-primary/10"
+                              : "border-border/60 hover:border-primary/40 hover:bg-accent",
+                          )}
+                        >
+                          <span className={cn(
+                            "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold tabular-nums",
+                            elegido ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground",
+                          )}>
+                            {elegido ? <Check className="h-3 w-3" /> : i + 1}
+                          </span>
+                          <span className="flex-1 text-sm">{t}</span>
+                          {eligiendo === t && <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {errorTitulo && <p className="mt-2 text-xs text-danger">{errorTitulo}</p>}
+                  {proyecto.titulo && !eligiendo && (
+                    <p className="mt-3 text-xs text-primary">
+                      Guardado. Ya puedes seguir con la matriz de consistencia.
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="rounded-xl border border-border/60 bg-background/80 p-4">
                 <MarkdownLite text={contenido} />
               </div>

@@ -32,6 +32,40 @@ export const cleanTitulosContent = (content) => {
   return text.slice(match.index).trim();
 };
 
+// Extrae los titulos propuestos como lista, para que el usuario pueda ELEGIR
+// uno en vez de copiarlo a mano.
+//
+// Usa la misma estructura en la que ya se apoya el .docx (ver splitByTitulo en
+// docx.js): un encabezado **TÍTULO N** y, debajo, el titulo en si como primera
+// linea con contenido. Si el formato llega distinto devuelve lista vacia y el
+// frontend simplemente no ofrece elegir: nunca rompe la generacion, que es lo
+// que el usuario vino a buscar.
+const TITULO_HEADING_RE = /\*\*\s*T[IÍí]TULO\s*(\d+)/i;
+const SECTION_HEADING_RE = /^\*\*\s*(\d+)\.\s*(.+?)\s*\*\*$/;
+
+export const extraerTitulos = (contenido) => {
+  const lineas = String(contenido ?? "").split("\n");
+  const titulos = [];
+  let buscando = false;
+
+  for (const cruda of lineas) {
+    if (TITULO_HEADING_RE.test(cruda)) { buscando = true; continue; }
+    if (!buscando) continue;
+    const linea = cruda.trim();
+    if (linea === "" || /^[-—_*]{3,}$/.test(linea)) continue;
+    // Si lo primero es un encabezado de seccion, este bloque no trae el titulo
+    // en el sitio esperado; se pasa al siguiente en vez de guardar basura.
+    if (SECTION_HEADING_RE.test(linea)) { buscando = false; continue; }
+    const limpio = linea
+      .replace(/^[*_`>#\s]+|[*_`\s]+$/g, "")
+      .replace(/^["“«]|["”»]$/g, "")
+      .trim();
+    if (limpio) titulos.push(limpio.slice(0, 300));
+    buscando = false;
+  }
+  return titulos;
+};
+
 const MAX_TEXT_LENGTH = 200;
 
 const requireNonEmptyText = (value, label) => {

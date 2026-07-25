@@ -167,6 +167,9 @@ export interface TitulosJobResponse {
   status: "processing" | "done" | "error";
   error?: string | null;
   contenido?: string;
+  // Los títulos sueltos, para poder elegir uno. Vacío si la respuesta de la IA
+  // no vino con la estructura esperada; entonces solo se muestra el texto.
+  titulos?: string[];
   webSearchRequests?: number | null;
   docxBase64?: string;
   docxFileName?: string;
@@ -375,6 +378,9 @@ export interface Proyecto {
   id: string;
   userId: string;
   nombre: string;
+  // El título definitivo, el que el usuario eligió entre las propuestas. Es la
+  // entrada del paso siguiente (la matriz parte de él).
+  titulo: string;
   instrumento: Instrumento;
   progreso: Partial<Record<PasoTesis, string>>;
   createdAt: string;

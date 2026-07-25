@@ -12,6 +12,9 @@ import type { AppSection, PasoTesis, Proyecto } from "./types";
 export interface PasoRuta {
   id: PasoTesis;
   label: string;
+  // Etiqueta para la franja de progreso, donde caben siete en una fila. Sin
+  // esto, "Matriz de consistencia" sale como "Matriz de ...", que no dice nada.
+  corto?: string;
   // Qué se lleva el usuario al terminarlo. Se muestra tal cual, así que dice
   // el resultado concreto, no el nombre de la herramienta otra vez.
   resultado: string;
@@ -22,7 +25,7 @@ export interface PasoRuta {
 
 export const RUTA: PasoRuta[] = [
   { id: "titulos", label: "Título", resultado: "Un título viable y verificado", seccion: "titulos" },
-  { id: "matriz", label: "Matriz de consistencia", resultado: "Problemas, objetivos, hipótesis y variables", seccion: "matriz" },
+  { id: "matriz", label: "Matriz de consistencia", corto: "Matriz", resultado: "Problemas, objetivos, hipótesis y variables", seccion: "matriz" },
   { id: "instrumento", label: "Instrumento", resultado: "Dimensiones, indicadores, ítems y baremo", seccion: "proyectos" },
   { id: "confiabilidad", label: "Confiabilidad", resultado: "Alfa de Cronbach de tu instrumento", seccion: "confiabilidad" },
   { id: "tabulacion", label: "Tabulación", resultado: "El Excel con fórmulas, gráficos y correlación", seccion: "tabulacion" },

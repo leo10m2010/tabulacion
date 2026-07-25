@@ -44,7 +44,7 @@ const backendArchivo = (rutaBase) => {
 
   // Los proyectos guardados antes de que existiera el progreso no lo traen.
   // Se rellena al leer para que nadie aguas abajo tenga que comprobarlo.
-  const conProgreso = (p) => (p && !p.progreso ? { ...p, progreso: {} } : p);
+  const conProgreso = (p) => (p ? { ...p, progreso: p.progreso ?? {}, titulo: p.titulo ?? "" } : p);
 
   return {
     async init() { fs.mkdirSync(path.dirname(ruta), { recursive: true }); },
@@ -102,6 +102,7 @@ const backendPostgres = async () => {
     id: r.id,
     userId: r.user_id,
     nombre: r.nombre,
+    titulo: r.titulo ?? "",
     instrumento: r.instrumento,
     progreso: r.progreso ?? {},
     createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
@@ -128,6 +129,9 @@ const backendPostgres = async () => {
       await pool.query(
         `ALTER TABLE ${TABLA} ADD COLUMN IF NOT EXISTS progreso JSONB NOT NULL DEFAULT '{}'::jsonb`,
       );
+      await pool.query(
+        `ALTER TABLE ${TABLA} ADD COLUMN IF NOT EXISTS titulo TEXT NOT NULL DEFAULT ''`,
+      );
     },
     async listarDeUsuario(userId) {
       const r = await pool.query(
@@ -145,14 +149,15 @@ const backendPostgres = async () => {
     },
     async guardar(proyecto) {
       await pool.query(
-        `INSERT INTO ${TABLA} (id, user_id, nombre, instrumento, progreso, created_at, updated_at)
-         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)
+        `INSERT INTO ${TABLA} (id, user_id, nombre, titulo, instrumento, progreso, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
          ON CONFLICT (id) DO UPDATE
            SET nombre = EXCLUDED.nombre,
+               titulo = EXCLUDED.titulo,
                instrumento = EXCLUDED.instrumento,
                progreso = EXCLUDED.progreso,
                updated_at = EXCLUDED.updated_at`,
-        [proyecto.id, proyecto.userId, proyecto.nombre,
+        [proyecto.id, proyecto.userId, proyecto.nombre, proyecto.titulo ?? "",
           JSON.stringify(proyecto.instrumento), JSON.stringify(proyecto.progreso ?? {}),
           proyecto.createdAt, proyecto.updatedAt],
       );

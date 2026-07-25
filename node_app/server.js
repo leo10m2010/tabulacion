@@ -57,7 +57,7 @@ import {
   normalizeDescriptivaInput,
 } from "./lib/descriptiva/index.js";
 import { docxToMarkdown } from "./lib/descriptiva/docx.js";
-import { generateTitulos, normalizeTitulosInput } from "./lib/titulos/index.js";
+import { extraerTitulos, generateTitulos, normalizeTitulosInput } from "./lib/titulos/index.js";
 import { generateMatriz, normalizeMatrizInput } from "./lib/matriz/index.js";
 import { generateHumanizacion, normalizeHumanizadorInput } from "./lib/humanizador/index.js";
 
@@ -1976,6 +1976,8 @@ const server = http.createServer(async (req, res) => {
           ok: true,
           status: "done",
           contenido: job.result.contenido,
+          // Los titulos sueltos, para poder elegir uno sin copiarlo a mano.
+          titulos: extraerTitulos(job.result.contenido),
           webSearchRequests: job.result.webSearchRequests ?? null,
           docxBase64: job.result.docxBuffer.toString("base64"),
           docxFileName: "Titulos_de_investigacion.docx",

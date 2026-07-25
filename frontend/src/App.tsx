@@ -681,7 +681,8 @@ export default function App() {
               apiBaseUrl={apiBaseUrl}
               authToken={authToken}
               authUser={authUser}
-              onPasoHecho={marcarPasoActivo}
+              proyecto={proyectoActivo}
+              onProyectoActualizado={seleccionarProyecto}
               onUpgrade={irAPlanes}
             />
           )}

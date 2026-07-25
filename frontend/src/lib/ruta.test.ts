@@ -11,6 +11,7 @@ const proyecto = (progreso: Partial<Record<PasoTesis, string>>): Proyecto => ({
   id: "p1",
   userId: "u1",
   nombre: "Tesis de prueba",
+  titulo: "",
   instrumento: { escala: [], variables: [] },
   progreso,
   createdAt: "2026-01-01T00:00:00.000Z",

@@ -97,7 +97,10 @@ export function MatrizSection({ apiBaseUrl, authToken, authUser, proyecto, onPro
   onUpgrade?: (herramienta: string) => void;
 }) {
   const reduce = useReducedMotion() ?? false;
-  const [titulo, setTitulo] = useState("");
+  // Arranca con el título que el usuario eligió en el paso anterior: es
+  // exactamente la entrada de esta herramienta y volver a escribirlo (o pegarlo
+  // mal) era el copiado a mano que el proyecto viene a quitar. Queda editable.
+  const [titulo, setTitulo] = useState(proyecto?.titulo ?? "");
   const [universidad, setUniversidad] = useState("");
   const [carrera, setCarrera] = useState("");
   const [poblacion, setPoblacion] = useState("");
