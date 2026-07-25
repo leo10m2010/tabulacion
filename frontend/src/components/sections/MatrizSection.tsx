@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowDownToLine, Check, Copy, Sparkles, Table2 } from "lucide-react";
+import { ArrowDownToLine, Check, Copy, FolderPlus, Sparkles, Table2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { MagicButton } from "../ui/magic-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
@@ -8,7 +8,8 @@ import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import * as api from "../../lib/api";
 import { base64ToUint8Array } from "../../lib/helpers";
-import type { AuthUser, MatrizData } from "../../lib/types";
+import { matrizAInstrumento, tieneContenido } from "../../lib/instrumento";
+import type { AuthUser, MatrizData, Proyecto } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { SubscriptionWarning } from "../SubscriptionWarning";
 import { ToolSteps } from "../ToolSteps";
@@ -85,10 +86,12 @@ function CellList({ items }: { items: string[] }) {
 // El backend analiza el título (conector "y"/"en"/"para", tipo, enfoque,
 // nivel, diseño), busca dimensiones reales con autor citable para cada
 // variable y devuelve la matriz en JSON + Word apaisado.
-export function MatrizSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
+export function MatrizSection({ apiBaseUrl, authToken, authUser, proyecto, onProyectoActualizado, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  proyecto: Proyecto | null;
+  onProyectoActualizado?: (p: Proyecto) => void;
   onUpgrade?: (herramienta: string) => void;
 }) {
   const reduce = useReducedMotion() ?? false;
@@ -104,6 +107,8 @@ export function MatrizSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
   const [matriz, setMatriz] = useState<MatrizData | null>(null);
   const [docx, setDocx] = useState<{ url: string; fileName: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  // Guardar la matriz en el proyecto: "idle" | "confirmar" | "guardando" | "listo"
+  const [guardadoProyecto, setGuardadoProyecto] = useState<"idle" | "confirmar" | "guardando" | "listo">("idle");
   const pollRef = useRef<number | null>(null);
   const docxUrlRef = useRef<string | null>(null);
   // Evita setState tras desmontar: la limpieza cancela el timeout pendiente,
@@ -203,6 +208,25 @@ export function MatrizSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       window.alert("No se pudo copiar; selecciona el texto manualmente.");
+    }
+  };
+
+  // Guardar las variables y dimensiones de la matriz en el proyecto evita
+  // volver a teclearlas en el editor del instrumento. La escala de respuesta
+  // que ya tuviera el proyecto se conserva: la matriz no la define.
+  const guardarEnProyecto = async () => {
+    if (!matriz || !proyecto) return;
+    setGuardadoProyecto("guardando");
+    const instrumento = matrizAInstrumento(matriz.variables, proyecto.instrumento.escala);
+    try {
+      const { proyecto: actualizado } = await api.actualizarProyecto(
+        apiBaseUrl, authToken, proyecto.id, { instrumento },
+      );
+      onProyectoActualizado?.(actualizado);
+      setGuardadoProyecto("listo");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo guardar en el proyecto.");
+      setGuardadoProyecto("idle");
     }
   };
 
@@ -400,7 +424,36 @@ export function MatrizSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
                   <Check className="h-5 w-5" />
                   Matriz de consistencia lista
                 </CardTitle>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Solo con proyecto activo: sin él no hay dónde guardarlo. */}
+                  {proyecto && (guardadoProyecto === "listo" ? (
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-primary">
+                      <Check className="h-3.5 w-3.5" />
+                      Guardado en {proyecto.nombre}
+                    </span>
+                  ) : guardadoProyecto === "confirmar" ? (
+                    <>
+                      <span className="text-xs text-muted-foreground">
+                        Reemplaza el instrumento del proyecto (pierdes sus ítems)
+                      </span>
+                      <Button size="sm" variant="outline" onClick={guardarEnProyecto}>Reemplazar</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setGuardadoProyecto("idle")}>Cancelar</Button>
+                    </>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={guardadoProyecto === "guardando"}
+                      // Si el proyecto ya tiene ítems escritos, guardar los
+                      // borraría. Se pregunta antes en vez de perderlos.
+                      onClick={() => (tieneContenido(proyecto.instrumento)
+                        ? setGuardadoProyecto("confirmar")
+                        : guardarEnProyecto())}
+                    >
+                      <FolderPlus className="h-3.5 w-3.5" />
+                      Guardar en mi proyecto
+                    </Button>
+                  ))}
                   <Button size="sm" variant="outline" onClick={copyAll}>
                     {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
                     {copied ? "Copiado" : "Copiar todo"}

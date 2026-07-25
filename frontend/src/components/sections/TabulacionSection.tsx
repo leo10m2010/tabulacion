@@ -46,7 +46,9 @@ import {
   toStringValue,
   workbookToSheetRows,
 } from "../../lib/helpers";
+import { instrumentoATabConfig } from "../../lib/instrumento";
 import { validarConfig } from "../../lib/wizard-validation";
+import { TraerDelProyecto } from "../TraerDelProyecto";
 import { FieldHint, HierarchyEditor, ListEditorField, StepTip } from "../wizard-fields";
 import { PreviewTable } from "../PreviewTable";
 import { PreviewCharts } from "../PreviewCharts";
@@ -60,6 +62,7 @@ import type {
   EstructuraDimension,
   ItemDef,
   GeneratedResult,
+  Proyecto,
   TabConfig,
   TemplateInfo,
   WizardStep,
@@ -71,10 +74,11 @@ import type {
 // herramienta sin sección propia, mientras las otras diez sí la tenían. Todo su
 // estado (configuración, paso del asistente, estructura de dimensiones,
 // resultado y enlaces de descarga) vive aquí, que es donde se usa.
-export function TabulacionSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
+export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  proyecto: Proyecto | null;
   onUpgrade?: (herramienta: string) => void;
 }) {
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
@@ -197,6 +201,19 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, onUpgrade }
   );
 
   // ── Handlers ───────────────────────────────────────────────────────────────
+  // Trae el instrumento del proyecto activo al asistente. No pisa la muestra,
+  // el tema ni el control de correlación: eso es de esta generación, no del
+  // instrumento. Lo traído queda editable como cualquier otro campo.
+  const traerInstrumento = () => {
+    if (!proyecto) return;
+    const { config: siguiente, estructuraV1: e1, estructuraV2: e2 } =
+      instrumentoATabConfig(proyecto.instrumento, config);
+    setConfig(siguiente);
+    setEstructuraV1(e1);
+    setEstructuraV2(e2);
+    setStep2Error(null);
+  };
+
   const setScalar = (key: string, value: string) => setConfig((prev) => {
     const updates: TabConfig = { ...prev, [key]: value };
     const resizeBaremo = (n: number, nombreKey: string, otherKeys: string[]) => {
@@ -372,6 +389,11 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, onUpgrade }
           {/* Step 1: Datos básicos */}
           {wizardStep === 1 && (
             <div className="step-enter space-y-5">
+              <TraerDelProyecto
+                proyecto={proyecto}
+                descripcion="Rellena variables, dimensiones, indicadores, ítems y baremo con el instrumento que ya definiste."
+                acciones={[{ label: "Traer del proyecto", aplicar: traerInstrumento }]}
+              />
               <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
                 <CardHeader>
                   <CardTitle>Datos de tu encuesta</CardTitle>

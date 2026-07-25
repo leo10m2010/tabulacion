@@ -594,6 +594,7 @@ export default function App() {
               apiBaseUrl={apiBaseUrl}
               authToken={authToken}
               authUser={authUser}
+              proyecto={proyectoActivo}
               onUpgrade={irAPlanes}
             />
           )}
@@ -604,7 +605,13 @@ export default function App() {
           )}
 
           {activeSection === "confiabilidad" && authUser && (
-            <CronbachSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} onUpgrade={irAPlanes} />
+            <CronbachSection
+              apiBaseUrl={apiBaseUrl}
+              authToken={authToken}
+              authUser={authUser}
+              proyecto={proyectoActivo}
+              onUpgrade={irAPlanes}
+            />
           )}
 
           {/* ── Integraciones (clave de API + Tutorica Forms) ── */}
@@ -619,7 +626,14 @@ export default function App() {
 
           {/* ── Matriz de Consistencia (IA) ── */}
           {activeSection === "matriz" && authUser && (
-            <MatrizSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} onUpgrade={irAPlanes} />
+            <MatrizSection
+              apiBaseUrl={apiBaseUrl}
+              authToken={authToken}
+              authUser={authUser}
+              proyecto={proyectoActivo}
+              onProyectoActualizado={seleccionarProyecto}
+              onUpgrade={irAPlanes}
+            />
           )}
 
           {/* ── Humanizador de texto académico (IA) ── */}

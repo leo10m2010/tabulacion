@@ -17,11 +17,13 @@ import { cn } from "../../lib/utils";
 import * as api from "../../lib/api";
 import { ALPHA_LEVELS } from "../../lib/constants";
 import { base64ToUint8Array, eid, parseIntSafe, workbookToSheetRows } from "../../lib/helpers";
-import type { AuthUser, TableRows } from "../../lib/types";
+import type { AuthUser, InstrumentoVariable, Proyecto, TableRows } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { PreviewTable } from "../PreviewTable";
 import { SubscriptionWarning } from "../SubscriptionWarning";
 import { ToolSteps } from "../ToolSteps";
+import { TraerDelProyecto } from "../TraerDelProyecto";
+import type { AccionTraer } from "../TraerDelProyecto";
 
 const MAX_MUESTRA = 2000;
 const MAX_ITEMS = 60;
@@ -56,10 +58,11 @@ const interpretacionAlfa = (alpha: number) => {
 // nombre de la variable, sus dimensiones con la cantidad de ítems y el N de
 // encuestados, y genera un Excel de una sola hoja con datos simulados de alta
 // consistencia interna y las fórmulas vivas (VARP, COUNT y el α en celda).
-export function CronbachSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
+export function CronbachSection({ apiBaseUrl, authToken, authUser, proyecto, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  proyecto: Proyecto | null;
   onUpgrade?: (herramienta: string) => void;
 }) {
   const [variable, setVariable] = useState("");
@@ -85,6 +88,27 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser, onUpgrade }: 
 
   const setDim = (id: string, patch: Partial<DimRow>) =>
     setDims((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
+
+  // El alfa se calcula por variable, así que se trae una a la vez. Si el
+  // instrumento tiene dos, se ofrece un botón por cada una en vez de elegir
+  // por el usuario cuál quiere validar.
+  const traerVariable = (v: InstrumentoVariable) => {
+    setVariable(v.nombre);
+    setDims(v.dimensiones.map((d) => ({
+      id: eid(),
+      nombre: d.nombre,
+      items: String(d.indicadores.reduce((acc, ind) => acc + ind.items.length, 0)),
+    })));
+    setError(null);
+  };
+
+  const variablesDelProyecto = proyecto?.instrumento.variables ?? [];
+  const accionesTraer: AccionTraer[] = variablesDelProyecto.map((v, i) => ({
+    label: variablesDelProyecto.length === 1
+      ? "Traer del proyecto"
+      : `Traer ${v.nombre || `variable ${i + 1}`}`,
+    aplicar: () => traerVariable(v),
+  }));
 
   const handleGenerate = async () => {
     setError(null);
@@ -148,6 +172,12 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser, onUpgrade }: 
       ]} />
 
       <SubscriptionWarning user={authUser} tool="confiabilidad" onUpgrade={onUpgrade} />
+
+      <TraerDelProyecto
+        proyecto={proyecto}
+        descripcion="Rellena la variable y sus dimensiones con la cantidad de ítems del instrumento."
+        acciones={accionesTraer}
+      />
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>
