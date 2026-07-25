@@ -115,6 +115,14 @@ export default function App() {
   const [result, setResult] = useState<GeneratedResult | null>(null);
   const [downloadLinks, setDownloadLinks] = useState<DownloadLinks | null>(null);
 
+  // Configuración pública del servidor (métodos de acceso y planes). Se pide
+  // antes de iniciar sesión; si falla, la app sigue funcionando con el acceso
+  // por correo y sin botón de Google.
+  const [googleClientId, setGoogleClientId] = useState<string>("");
+  // Mensaje de bienvenida tras crear la cuenta con Google. Sin esto, alguien
+  // que acaba de entrar ve herramientas bloqueadas y cree que está roto.
+  const [welcomeMessage, setWelcomeMessage] = useState<string | null>(null);
+
   const [templateInfo, setTemplateInfo] = useState<TemplateInfo | null>(null);
   const [authToken, setAuthToken] = useState<string>(() => localStorage.getItem("authToken") ?? "");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -151,6 +159,19 @@ export default function App() {
   // por inactividad (arranque en frío), el login y la generación lo encuentran
   // ya caliente.
   useEffect(() => { api.pingHealth(apiBaseUrl); }, [apiBaseUrl]);
+
+  // Métodos de acceso disponibles. Se ignora el error a propósito: si /config
+  // no responde, simplemente no se ofrece Google y queda el acceso por correo.
+  useEffect(() => {
+    let isMounted = true;
+    api.fetchPublicConfig(apiBaseUrl)
+      .then((cfg) => {
+        if (!isMounted) return;
+        setGoogleClientId(cfg.auth?.google?.enabled ? (cfg.auth.google.clientId ?? "") : "");
+      })
+      .catch(() => {});
+    return () => { isMounted = false; };
+  }, [apiBaseUrl]);
 
   // Cronómetro de la generación para informar el progreso por etapas.
   useEffect(() => {
@@ -458,6 +479,38 @@ export default function App() {
     }
   };
 
+  // Google: entrar y registrarse son la misma acción. El backend devuelve
+  // `creado` para saber si acaba de nacer la cuenta y darle la bienvenida.
+  const handleGoogleCredential = async (credential: string) => {
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      const payload = await api.loginWithGoogle(apiBaseUrl, credential);
+      if (!payload.token || !payload.user) throw new Error("Respuesta inválida del servidor.");
+      setAuthToken(payload.token);
+      setAuthUser(payload.user);
+      if (payload.creado) {
+        const usos = payload.user.uses ?? null;
+        const incluidas = usos
+          ? NAV_TOOLS.filter((t) => (usos[t.id as keyof typeof usos] ?? 0) > 0).map((t) => t.label)
+          : [];
+        setWelcomeMessage(
+          incluidas.length > 0
+            ? `¡Bienvenido! Tu cuenta gratuita ya está lista. Puedes usar ${incluidas.join(", ")}. `
+              + "El resto de herramientas se desbloquean al mejorar tu plan."
+            : "¡Bienvenido! Tu cuenta ya está lista.",
+        );
+        setActiveSection("inicio");
+      }
+      setStatusMessage("Sesión iniciada.");
+    } catch (err) {
+      setAuthToken(""); setAuthUser(null);
+      setAuthError(err instanceof Error ? err.message : "No se pudo entrar con Google.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     setAuthToken(""); setAuthUser(null);
     setAuthError(null);
@@ -557,6 +610,9 @@ export default function App() {
         authError={authError}
         authLoading={authLoading}
         onLogin={handleLogin}
+        googleClientId={googleClientId}
+        onGoogleCredential={handleGoogleCredential}
+        onAuthErrorChange={setAuthError}
       />
     );
   }
@@ -720,6 +776,22 @@ export default function App() {
 
         {/* Content */}
         <main className="flex-1 overflow-auto px-4 py-6 md:px-10 md:py-9">
+
+          {/* Bienvenida tras crear la cuenta: dice qué herramientas incluye el
+              plan gratuito, para que las bloqueadas no parezcan un error. */}
+          {welcomeMessage && (
+            <div className="mb-6 flex items-start gap-3 rounded-2xl border border-primary/30 bg-primary/5 p-4">
+              <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <p className="flex-1 text-sm text-foreground">{welcomeMessage}</p>
+              <button
+                onClick={() => setWelcomeMessage(null)}
+                className="shrink-0 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                aria-label="Cerrar mensaje de bienvenida"
+              >
+                Entendido
+              </button>
+            </div>
+          )}
 
           {/* ── Inicio (dashboard) ── */}
           {activeSection === "inicio" && authUser && (

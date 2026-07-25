@@ -4,11 +4,16 @@ import { motion } from "motion/react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { springSoft } from "./motion-primitives";
+import { GoogleSignInButton } from "./GoogleSignInButton";
 import type { ThemeMode } from "../lib/types";
 
-// Pantalla de inicio de sesión. El email/contraseña viven aquí; App recibe
-// el submit vía onLogin y mantiene token/usuario.
-export function LoginScreen({ apiBaseUrl, onApiBaseUrlChange, themeMode, onToggleTheme, onBackToLanding, authError, authLoading, onLogin }: {
+// Pantalla de acceso. Con Google NO hay pantalla de registro aparte: entrar y
+// registrarse son la misma acción (si la cuenta no existe, el backend la crea
+// con el plan gratuito). Por eso hay un solo botón arriba.
+//
+// El formulario de correo se queda debajo, más discreto, porque es por donde
+// entran las cuentas que crea el administrador (las de pago e instituciones).
+export function LoginScreen({ apiBaseUrl, onApiBaseUrlChange, themeMode, onToggleTheme, onBackToLanding, authError, authLoading, onLogin, googleClientId, onGoogleCredential, onAuthErrorChange }: {
   apiBaseUrl: string;
   onApiBaseUrlChange: (url: string) => void;
   themeMode: ThemeMode;
@@ -17,6 +22,11 @@ export function LoginScreen({ apiBaseUrl, onApiBaseUrlChange, themeMode, onToggl
   authError: string | null;
   authLoading: boolean;
   onLogin: (email: string, password: string) => void;
+  // Vacío si el servidor no tiene Google configurado: en ese caso no se
+  // muestra el botón, en vez de pintar uno que fallaría al pulsarlo.
+  googleClientId: string;
+  onGoogleCredential: (credential: string) => void;
+  onAuthErrorChange: (mensaje: string) => void;
 }) {
   const [email, setEmail] = useState<string>(() => localStorage.getItem("loginEmail") ?? "");
   const [password, setPassword] = useState("");
@@ -36,13 +46,37 @@ export function LoginScreen({ apiBaseUrl, onApiBaseUrlChange, themeMode, onToggl
           <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-primary-foreground">
             <FileSpreadsheet className="h-5 w-5" />
           </span>
-          <h1 className="mt-5 font-display text-2xl font-bold tracking-tighter">Bienvenido de vuelta</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">Ingresa con tu cuenta para continuar con tu tesis.</p>
+          <h1 className="mt-5 font-display text-2xl font-bold tracking-tighter">
+            {googleClientId ? "Entra o crea tu cuenta" : "Bienvenido de vuelta"}
+          </h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            {googleClientId
+              ? "Con Google entras al instante. Si es tu primera vez, te creamos la cuenta gratis."
+              : "Ingresa con tu cuenta para continuar con tu tesis."}
+          </p>
 
           <div className="mt-7 space-y-4">
             {authError && (
               <div className="rounded-xl border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{authError}</div>
             )}
+
+            {googleClientId && (
+              <>
+                <GoogleSignInButton
+                  clientId={googleClientId}
+                  themeMode={themeMode}
+                  onCredential={onGoogleCredential}
+                  onError={onAuthErrorChange}
+                  disabled={authLoading}
+                />
+                <div className="flex items-center gap-3">
+                  <span className="h-px flex-1 bg-border" />
+                  <span className="text-xs text-muted-foreground">o con tu correo</span>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+              </>
+            )}
+
             <label className="block space-y-1.5">
               <span className="text-sm font-medium">Correo electrónico</span>
               {/* AUTOCOMPLETE: permite que el navegador recuerde el correo. */}

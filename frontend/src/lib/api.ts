@@ -45,9 +45,36 @@ export const pingHealth = (apiBaseUrl: string) => {
   fetch(`${apiBaseUrl.replace(/\/$/, "")}/health`).catch(() => {});
 };
 
+// ── Configuración pública ────────────────────────────────────────────────────
+// Se consulta ANTES de iniciar sesión: dice qué métodos de acceso ofrecer (y
+// con qué Client ID de Google) y qué incluye cada plan. Es la fuente única de
+// los planes; la copia de constants.ts solo sirve de valor inicial para que la
+// pantalla pinte sin esperar a la red.
+export interface PublicConfig {
+  auth: {
+    google: { enabled: boolean; clientId?: string };
+    emailRegistration: boolean;
+  };
+  planPredeterminado: string;
+  herramientas: { id: string; label: string }[];
+  planes: Record<string, Record<string, number>>;
+}
+
+export const fetchPublicConfig = (apiBaseUrl: string) =>
+  request<PublicConfig>(apiBaseUrl, "/config");
+
 // ── Sesión ───────────────────────────────────────────────────────────────────
 export const login = (apiBaseUrl: string, email: string, password: string) =>
   request<AuthLoginResponse>(apiBaseUrl, "/auth/login", { method: "POST", body: { email, password } });
+
+// Inicio de sesión con Google. Con Google NO hay diferencia entre entrar y
+// registrarse: si la cuenta no existe, el backend la crea con el plan
+// gratuito. `creado` distingue los dos casos solo para poder dar la bienvenida.
+export const loginWithGoogle = (apiBaseUrl: string, credential: string) =>
+  request<AuthLoginResponse & { creado?: boolean }>(apiBaseUrl, "/auth/google", {
+    method: "POST",
+    body: { credential },
+  });
 
 export const fetchMe = (apiBaseUrl: string, token: string) =>
   request<{ user?: AuthUser }>(apiBaseUrl, "/auth/me", { token });
