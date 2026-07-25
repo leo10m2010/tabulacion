@@ -23,6 +23,7 @@ import {
 // JSON si no. En el plan gratis de Render el disco es efimero y cada deploy
 // borraba todas las cuentas con sus usos y sus claves.
 import { closeStore, flushStore, initStore, persistUsers, usingPostgres } from "./lib/store/index.js";
+import { googleClientId, googleEnabled, verifyGoogleIdToken } from "./lib/google-auth.js";
 import {
   DEFAULT_N as DESCRIPTIVA_DEFAULT_N,
   MAX_N as DESCRIPTIVA_MAX_N,
@@ -1031,6 +1032,32 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Configuracion publica que el frontend necesita ANTES de iniciar sesion:
+    // que metodos de acceso ofrecer y que incluye cada plan.
+    //
+    // Sirve tambien de fuente unica de los planes: estaban duplicados a mano
+    // entre este archivo y frontend/src/lib/constants.ts, sincronizados solo
+    // por un comentario. El frontend conserva su copia como valor inicial (la
+    // pantalla debe pintar sin esperar a la red), pero manda esta.
+    //
+    // El Client ID de Google es publico por diseño: identifica a la aplicacion
+    // ante Google, no autoriza nada por si solo.
+    if (req.method === "GET" && pathname === "/config") {
+      sendJson(res, 200, {
+        ok: true,
+        auth: {
+          google: googleEnabled ? { enabled: true, clientId: googleClientId } : { enabled: false },
+          // Registro por correo: hoy apagado a proposito mientras no haya
+          // verificacion por correo (ver REGISTRATION_ENABLED).
+          emailRegistration: REGISTRATION_ENABLED,
+        },
+        planPredeterminado: REGISTER_PLAN,
+        herramientas: USE_TOOLS.map((id) => ({ id, label: TOOL_LABELS[id] })),
+        planes: PLAN_PRESETS,
+      });
+      return;
+    }
+
     if (req.method === "POST" && pathname === "/auth/login") {
       const payload = await parseJsonBody(req);
       const email = normalizeEmail(payload?.email);
@@ -1107,6 +1134,74 @@ const server = http.createServer(async (req, res) => {
       const signed = signToken(user);
       sendJson(res, 201, {
         ok: true,
+        token: signed.token,
+        tokenExpiresAt: signed.expiresAt,
+        user: sanitizeUser(user),
+      });
+      return;
+    }
+
+    // ── Inicio de sesion / alta con Google ──────────────────────────────────
+    // Es el camino de auto-registro recomendado: una cuenta de Google trae el
+    // correo YA VERIFICADO, sin necesidad de dominio propio ni de un servicio
+    // de envio de correo. Tambien evita el secuestro de cuentas que permitiria
+    // un registro por correo sin verificar (alguien se registra con el correo
+    // de otro y se queda esperando a que el dueño real entre con Google).
+    if (req.method === "POST" && pathname === "/auth/google") {
+      if (!googleEnabled) {
+        throw new HttpError(503, "El inicio de sesion con Google no esta disponible.");
+      }
+      const ip = getClientIp(req);
+      const payload = await parseJsonBody(req);
+
+      let perfil;
+      try {
+        perfil = await verifyGoogleIdToken(payload?.credential ?? payload?.idToken);
+      } catch (err) {
+        throw new HttpError(401, err.message);
+      }
+
+      const emailLower = normalizeEmail(perfil.email);
+      let user = users.find((item) => item.emailLower === emailLower);
+      let creado = false;
+
+      if (!user) {
+        // Alta nueva: cuenta el limite por IP, igual que el registro por
+        // correo. Que Google verifique el correo no impide que alguien tenga
+        // muchas cuentas de Google.
+        assertRegisterAllowed(ip);
+        user = createUser({
+          email: perfil.email,
+          // Sin contraseña utilizable: se entra por Google. Es aleatoria y no
+          // se le comunica a nadie, en vez de dejar el campo vacio (que haria
+          // que checkPassword se comportara de forma imprevisible).
+          password: crypto.randomBytes(24).toString("base64url"),
+          role: "user",
+          status: "active",
+          plan: REGISTER_PLAN,
+        });
+        registerRegistration(ip);
+        creado = true;
+        logActivity(user, "Se registró con Google (plan gratuito)");
+      } else if (user.status !== "active") {
+        throw new HttpError(403, "Usuario inactivo.");
+      } else {
+        logActivity(user, "Inició sesión con Google");
+      }
+
+      // Se guarda el identificador estable de Google (el correo de una cuenta
+      // puede cambiar; `sub` no).
+      user.googleSub = perfil.sub;
+      user.googleLinkedAt ??= new Date().toISOString();
+      user.lastLoginAt = new Date().toISOString();
+      user.updatedAt = user.lastLoginAt;
+      // Una cuenta recien creada no puede confirmarse antes de estar en firme.
+      await writeUsers();
+
+      const signed = signToken(user);
+      sendJson(res, creado ? 201 : 200, {
+        ok: true,
+        creado,
         token: signed.token,
         tokenExpiresAt: signed.expiresAt,
         user: sanitizeUser(user),
