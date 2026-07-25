@@ -80,13 +80,20 @@ const backendArchivo = (rutaUsuarios) => {
     }
   };
 
+  const rutaBorradas = path.join(path.dirname(rutaUsuarios), "deleted-accounts.json");
+
   return {
     async cargar() {
       fs.mkdirSync(path.dirname(rutaUsuarios), { recursive: true });
-      return { usuarios: leer(rutaUsuarios, []), pendientes: leer(rutaPendientes, []) };
+      return {
+        usuarios: leer(rutaUsuarios, []),
+        pendientes: leer(rutaPendientes, []),
+        borradas: leer(rutaBorradas, []),
+      };
     },
     async guardarUsuarios(json) { escribirAtomico(rutaUsuarios, json); },
     async guardarPendientes(json) { escribirAtomico(rutaPendientes, json); },
+    async guardarBorradas(json) { escribirAtomico(rutaBorradas, json); },
     async cerrar() {},
   };
 };
@@ -116,6 +123,7 @@ const backendPostgres = async () => {
   }
   const TABLA_USUARIOS = `${prefijo}users`;
   const TABLA_PENDIENTES = `${prefijo}pending_uses`;
+  const TABLA_BORRADAS = `${prefijo}deleted_accounts`;
 
   // El usuario se guarda entero como JSONB: los campos cambian a menudo en
   // esta etapa del producto y asi no hace falta migrar el esquema cada vez.
@@ -130,6 +138,14 @@ const backendPostgres = async () => {
       user_id    TEXT NOT NULL,
       tool       TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    -- Cuentas eliminadas por su propio dueño. Se guarda SOLO un hash del
+    -- correo, nunca el correo: lo justo para no regalar otra tanda de usos
+    -- gratuitos a quien borra y vuelve a registrarse, sin conservar datos
+    -- personales de alguien que pidio que se le borraran.
+    CREATE TABLE IF NOT EXISTS ${TABLA_BORRADAS} (
+      email_hash TEXT PRIMARY KEY,
+      deleted_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `;
 
@@ -162,6 +178,19 @@ const backendPostgres = async () => {
     ON CONFLICT (job_id) DO NOTHING;
   `;
 
+  const SQL_BORRADAS = `
+    WITH incoming AS (
+      SELECT (elem->>'emailHash') AS email_hash, (elem->>'at')::timestamptz AS deleted_at
+      FROM jsonb_array_elements($1::jsonb) AS elem
+    ), borrados AS (
+      DELETE FROM ${TABLA_BORRADAS} AS d
+      WHERE NOT EXISTS (SELECT 1 FROM incoming WHERE incoming.email_hash = d.email_hash)
+    )
+    INSERT INTO ${TABLA_BORRADAS} (email_hash, deleted_at)
+    SELECT email_hash, deleted_at FROM incoming
+    ON CONFLICT (email_hash) DO UPDATE SET deleted_at = EXCLUDED.deleted_at;
+  `;
+
   return {
     async cargar() {
       await pool.query(DDL);
@@ -169,15 +198,20 @@ const backendPostgres = async () => {
       const pendientes = await pool.query(
         `SELECT job_id, user_id, tool, created_at FROM ${TABLA_PENDIENTES}`,
       );
+      const borradas = await pool.query(
+        `SELECT email_hash, deleted_at FROM ${TABLA_BORRADAS}`,
+      );
       return {
         usuarios: usuarios.rows.map((r) => r.data),
         pendientes: pendientes.rows.map((r) => ({
           jobId: r.job_id, userId: r.user_id, tool: r.tool, at: r.created_at,
         })),
+        borradas: borradas.rows.map((r) => ({ emailHash: r.email_hash, at: r.deleted_at })),
       };
     },
     async guardarUsuarios(json) { await pool.query(SQL_USUARIOS, [json]); },
     async guardarPendientes(json) { await pool.query(SQL_PENDIENTES, [json]); },
+    async guardarBorradas(json) { await pool.query(SQL_BORRADAS, [json]); },
     async cerrar() { await pool.end(); },
   };
 };
@@ -186,29 +220,33 @@ const backendPostgres = async () => {
 let backend = null;
 let escritorUsuarios = null;
 let escritorPendientes = null;
+let escritorBorradas = null;
 
 export const initStore = async (rutaUsuarios) => {
   backend = usingPostgres ? await backendPostgres() : backendArchivo(rutaUsuarios);
   escritorUsuarios = crearEscritor((json) => backend.guardarUsuarios(json), "los usuarios");
   escritorPendientes = crearEscritor((json) => backend.guardarPendientes(json), "los usos pendientes");
+  escritorBorradas = crearEscritor((json) => backend.guardarBorradas(json), "las cuentas eliminadas");
   // Si la carga falla se propaga a proposito: arrancar con la lista vacia y
   // persistirla despues BORRARIA a todos los usuarios. Mejor no arrancar.
-  const { usuarios, pendientes } = await backend.cargar();
+  const { usuarios, pendientes, borradas } = await backend.cargar();
   // eslint-disable-next-line no-console
   console.log(
     `[store] ${usingPostgres ? "Postgres" : `archivo (${rutaUsuarios})`}: `
     + `${usuarios.length} usuario(s), ${pendientes.length} uso(s) pendiente(s).`,
   );
-  return { usuarios, pendientes };
+  return { usuarios, pendientes, borradas: borradas ?? [] };
 };
 
 export const persistUsers = (usuarios) => escritorUsuarios?.encolar(usuarios);
 export const persistPending = (pendientes) => escritorPendientes?.encolar(pendientes);
+export const persistDeleted = (borradas) => escritorBorradas?.encolar(borradas);
 
 // Espera a que no quede nada por escribir (arranque, tests, apagado ordenado).
 export const flushStore = async () => {
   await escritorUsuarios?.vaciar();
   await escritorPendientes?.vaciar();
+  await escritorBorradas?.vaciar();
 };
 
 export const closeStore = async () => {

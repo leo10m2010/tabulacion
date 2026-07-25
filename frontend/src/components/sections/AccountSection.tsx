@@ -1,20 +1,21 @@
 import { useState } from "react";
-import { KeyRound, Loader2, ShieldCheck } from "lucide-react";
+import { KeyRound, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
-import { changePassword } from "../../lib/api";
+import { changePassword, deleteOwnAccount } from "../../lib/api";
 import { USE_TOOLS } from "../../lib/constants";
 import { formatDateTime } from "../../lib/helpers";
 import type { AuthUser } from "../../lib/types";
 
 // Sección "Mi cuenta": datos de la cuenta y cambio de contraseña
 // self-service (antes solo el administrador podía restablecerla).
-export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh }: {
+export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh, onAccountDeleted }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
   onTokenRefresh: (token: string) => void;
+  onAccountDeleted: (mensaje: string) => void;
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -22,6 +23,23 @@ export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteConfirmEmail, setDeleteConfirmEmail] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const submitDelete = async () => {
+    setDeleteError(null);
+    setDeleting(true);
+    try {
+      const res = await deleteOwnAccount(apiBaseUrl, authToken, deleteConfirmEmail.trim());
+      // La sesión ya no vale: el usuario que la tenía dejó de existir.
+      onAccountDeleted([res.mensaje, res.avisoCuota].filter(Boolean).join(" "));
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "No se pudo eliminar la cuenta.");
+      setDeleting(false);
+    }
+  };
 
   const submit = async () => {
     setMessage(null); setError(null);
@@ -138,6 +156,72 @@ export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh
           </div>
         </CardContent>
       </Card>
+
+      {/* Eliminar la cuenta. No es una cortesía: la política de datos de Google
+          la exige a las aplicaciones que usan su inicio de sesión, y el derecho
+          de supresión del RGPD apunta a lo mismo. El administrador no aparece
+          aquí porque el servidor no permite que se borre a sí mismo. */}
+      {authUser.role !== "admin" && (
+        <Card className="rounded-2xl border-danger/40 bg-danger/[0.03] shadow-sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base text-danger">
+              <Trash2 className="h-4 w-4" />
+              Eliminar mi cuenta
+            </CardTitle>
+            <CardDescription>
+              Se borran tu cuenta, tus usos y tu historial. No se puede deshacer.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {deleteError && (
+              <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{deleteError}</div>
+            )}
+
+            {!confirmingDelete ? (
+              <Button
+                variant="outline"
+                className="border-danger/40 text-danger hover:bg-danger/10"
+                onClick={() => { setConfirmingDelete(true); setDeleteError(null); }}
+              >
+                <Trash2 className="h-4 w-4" />
+                Eliminar mi cuenta
+              </Button>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Para confirmar, escribe tu correo <span className="font-medium text-foreground">{authUser.email}</span>.
+                  {" "}Si vuelves a registrarte pronto con este correo, la cuenta se creará sin usos de cortesía.
+                </p>
+                <Input
+                  value={deleteConfirmEmail}
+                  onChange={(e) => setDeleteConfirmEmail(e.target.value)}
+                  placeholder={authUser.email}
+                  autoComplete="off"
+                />
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    onClick={() => { setConfirmingDelete(false); setDeleteConfirmEmail(""); setDeleteError(null); }}
+                    disabled={deleting}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    className="bg-danger text-white hover:bg-danger/90"
+                    onClick={submitDelete}
+                    // El botón solo se activa con el correo exacto: evita el
+                    // clic accidental en una acción irreversible.
+                    disabled={deleting || deleteConfirmEmail.trim().toLowerCase() !== authUser.email.toLowerCase()}
+                  >
+                    {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    Eliminar definitivamente
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

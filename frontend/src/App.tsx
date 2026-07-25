@@ -12,6 +12,7 @@ import {
   HelpCircle,
   LayoutDashboard,
   Loader2,
+  Lock,
   LogOut,
   Moon,
   Palette,
@@ -130,6 +131,16 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const isAdmin = authUser?.role === "admin";
+  // Una herramienta está bloqueada si al usuario no le quedan usos. Se sigue
+  // mostrando (con candado) en vez de esconderla: enseñar lo que hay detrás del
+  // plan de pago es justo lo que convierte, y esconderlo haría que el producto
+  // pareciera más pobre de lo que es. Los admins tienen usos ilimitados.
+  const isToolLocked = (id: AppSection) => {
+    if (isAdmin || !authUser) return false;
+    const usos = authUser.uses;
+    if (!usos || !(id in usos)) return false;
+    return (usos[id as keyof typeof usos] ?? 0) <= 0;
+  };
   // Diseño de investigación elegido: correlacional (histórico) o
   // cuasiexperimental (pretest-postest con grupo experimental y control).
   const isQuasi = toStringValue(config.diseno) === "cuasiexperimental";
@@ -511,6 +522,16 @@ export default function App() {
     }
   };
 
+  // La cuenta ya no existe: se cierra la sesión y se vuelve al login con el
+  // mensaje de confirmación, en vez de dejar al usuario en una app cuyo token
+  // acaba de dejar de valer.
+  const handleAccountDeleted = (mensaje: string) => {
+    setAuthToken(""); setAuthUser(null);
+    setActiveSection("inicio"); setWizardStep(1);
+    setWelcomeMessage(null);
+    setAuthError(mensaje);
+  };
+
   const handleLogout = () => {
     setAuthToken(""); setAuthUser(null);
     setAuthError(null);
@@ -659,22 +680,32 @@ export default function App() {
           {NAV_GROUPS.map((group) => (
             <div key={group.id}>
               <p className="mb-2 mt-5 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{group.label}</p>
-              {group.tools.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveSection(item.id)}
-                  className={cn(
-                    "flex w-full items-center gap-2.5 rounded-full px-3.5 py-2.5 text-left text-sm font-medium leading-tight transition-all",
-                    activeSection === item.id
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                  )}
-                >
-                  <item.icon className="h-4 w-4 shrink-0" />
-                  {item.label}
-                  {activeSection === item.id && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
-                </button>
-              ))}
+              {group.tools.map((item) => {
+                const locked = isToolLocked(item.id);
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveSection(item.id)}
+                    title={locked ? "Sin usos disponibles — pide una recarga" : undefined}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 rounded-full px-3.5 py-2.5 text-left text-sm font-medium leading-tight transition-all",
+                      activeSection === item.id
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : locked
+                          ? "text-muted-foreground/60 hover:bg-accent/60 hover:text-muted-foreground"
+                          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                    )}
+                  >
+                    <item.icon className="h-4 w-4 shrink-0" />
+                    {item.label}
+                    {/* El candado no impide entrar: la sección explica qué
+                        incluye y cómo desbloquearla. Bloquear el clic dejaría
+                        al usuario sin saber qué se está perdiendo. */}
+                    {locked && activeSection !== item.id && <Lock className="ml-auto h-3 w-3 shrink-0" />}
+                    {activeSection === item.id && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
+                  </button>
+                );
+              })}
             </div>
           ))}
 
@@ -1907,6 +1938,7 @@ export default function App() {
               authToken={authToken}
               authUser={authUser}
               onTokenRefresh={setAuthToken}
+              onAccountDeleted={handleAccountDeleted}
             />
           )}
 

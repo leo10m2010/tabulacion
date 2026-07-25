@@ -9,6 +9,42 @@ Acordado el 2026-07-18. Cada fase funciona por sí sola y deja valor aunque se p
 - Rename a **TesisHub** (decisión cerrada: el hub NO se llamará Tutorica).
 - Auditoría UX en `docs/ux-audit.md` (cuello de botella: el instrumento se re-define en cada herramienta).
 
+### Añadido el 2026-07-25 (revisión técnica + Fases 1 y 2 parciales)
+
+- **Persistencia en Postgres (Neon, región Oregon)**: `lib/store/` con dos backends (Postgres si hay `DATABASE_URL`, archivo JSON si no, para tests y desarrollo local). Antes, el disco efímero de Render borraba todas las cuentas en cada deploy. Escritura diferida con cola ordenada; se espera confirmación solo donde al usuario se le confirma algo irreproducible. Apagado ordenado en `SIGTERM`.
+- **Login con Google** (`POST /auth/google` + botón en la pantalla de acceso). Con Google, entrar y registrarse son la misma acción; el correo llega verificado sin necesitar dominio propio.
+- **Plan `free` y auto-registro**: cuotas repartidas por costo real — Tabulación y Confiabilidad (sin IA, solo CPU) se regalan; Descriptiva, Títulos y Matriz quedan en 0 porque cuestan dinero por generación. Límite de altas por IP.
+- **Eliminación de la propia cuenta** (`DELETE /auth/me`): requisito de la política de datos de Google y del RGPD, no una cortesía. Se confirma escribiendo el correo (no la contraseña: quien entró con Google no conoce la suya). Guarda solo un hash del correo borrado para no regalar otra cuota gratuita a quien borre y vuelva a registrarse.
+- **Herramientas bloqueadas visibles**: candado en la barra lateral y aviso dentro de la herramienta, en vez de esconderlas.
+- **Correcciones**: la generación del Excel salió a un worker (ya no degrada el servidor ni lo tumba por falta de memoria); race que hacía que un cambio de contraseña respondiera 200 sin cambiar nada; límite de login evadible rotando el correo; 0 vulnerabilidades en backend y Forms.
+- **CI en GitHub Actions** (Node 20, igual que Render) y chequeo de tipos en el build del frontend.
+
+## Bloqueado por no tener dominio propio
+
+Todo esto espera a comprar un dominio (~$10/año). Es la dependencia más barata que queda y desbloquea varias cosas a la vez:
+
+- **Correo transaccional** (Resend: 3.000/mes gratis, pero exige dominio verificado; `.vercel.app` no sirve para enviar correo). Sin él no hay:
+  - Verificación de correo → por eso el registro por correo está **apagado** (`REGISTRATION_ENABLED=false`) y el auto-registro va solo por Google.
+  - Recuperación de contraseña (hoy quien la olvida depende del admin).
+  - Avisos de renovación de la Fase 3.
+- **Marca propia** en vez de `tabulacion.vercel.app`, que resta credibilidad para cobrar.
+
+## Pendiente en el frontend
+
+- **Peso del bundle**: 1,13 MB (382 kB comprimido). Las 9 secciones se importan estáticamente, así que la landing carga hasta el panel de administración. Con visitantes llegando de fuera, esto ya importa: `React.lazy` por sección.
+- **Sin tests**: ~8.000 líneas de TSX sin una sola prueba. Lo más rentable es empezar por `lib/helpers.ts` (baremos, conversiones), que es lógica pura.
+- **Sesión**: el token vive en `localStorage` sin refresco; a las 24 h el usuario se cae sin aviso.
+- **Duplicación de polling**: cuatro secciones de IA repiten el mismo bucle (extraer un hook `useAiJob`).
+- **Página de "Mejorar plan"** con los precios, hoy inexistente (el aviso solo dice "escríbenos").
+
+## Pendiente en el backend
+
+- **`server.js` tiene ~2.100 líneas** y cuatro bloques de gestión de jobs de IA casi idénticos (~360 líneas repetidas). Extraer un `createJobRunner` deja cada herramienta en ~10 líneas; conviene hacerlo *cuando* se añada la herramienta siguiente.
+- **`MAX_MUESTRA` promete 2.000 encuestados**, pero con la memoria del plan gratis el máximo real medido es ~800. Hoy falla con un mensaje claro en vez de tumbar el proceso, pero la promesa sigue siendo falsa.
+- **`xlsx@0.18.5`** (frontend) tiene vulnerabilidad alta sin parche en npm; habría que pasar al paquete oficial de SheetJS o a `exceljs`.
+- **Sin logging estructurado**: no hay forma de rastrear el fallo de un usuario concreto.
+- **ESLint no existe**, pese a los comentarios `eslint-disable` repartidos por el código.
+
 ## Fase 1 — Login con Google + persistencia de usuarios
 
 **Objetivo**: registro sin fricción y cuentas que no se borren al reiniciar Render.
@@ -63,7 +99,7 @@ Acordado el 2026-07-18. Cada fase funciona por sí sola y deja valor aunque se p
 
 **Objetivo**: los archivos del proyecto viven en la nube; el medidor "X GB de Y GB" del mock.
 
-- **Cloudflare R2 (recomendado sobre S3)**: API compatible con S3, 10 GB gratis y sin costo de egreso — relevante porque el producto descarga Exceles. AWS S3 es la alternativa directa si se prefiere el ecosistema AWS.
+- **Cloudflare R2 (recomendado sobre S3)**: API compatible con S3, 10 GB gratis y sin costo de egreso — relevante porque el producto descarga Exceles. **AWS S3** es la alternativa directa si se prefiere el ecosistema AWS: su capa gratuita es limitada (5 GB) y, sobre todo, **cobra por egreso**, que es justo lo que más hace este producto (descargar archivos). Con R2 esa factura no existe. Si ya se usa AWS para otra cosa, S3 simplifica la operación; si no, R2 sale más barato.
 - URLs prefirmadas para subir/descargar; cuota de GB por plan; medidor en la sidebar.
 - Requiere Proyectos (Fase 4) para tener dónde colgar los archivos.
 

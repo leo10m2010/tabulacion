@@ -88,6 +88,16 @@ export const changePassword = (apiBaseUrl: string, token: string, currentPasswor
     body: { currentPassword, newPassword },
   });
 
+// Eliminar la propia cuenta. La confirmación es escribir el correo, NO la
+// contraseña: quien entró con Google tiene una contraseña aleatoria que nunca
+// ha visto, así que pedírsela dejaría fuera justo a la mayoría.
+export const deleteOwnAccount = (apiBaseUrl: string, token: string, confirmEmail: string) =>
+  request<{ ok?: boolean; mensaje?: string; avisoCuota?: string }>(apiBaseUrl, "/auth/me", {
+    method: "DELETE",
+    token,
+    body: { confirmEmail },
+  });
+
 export const fetchTemplateInfo = (apiBaseUrl: string, token: string) =>
   request<Partial<TemplateInfo>>(apiBaseUrl, "/template-info", { token });
 

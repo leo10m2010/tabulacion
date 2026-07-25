@@ -25,6 +25,12 @@ import {
 import { closeStore, flushStore, initStore, persistUsers, usingPostgres } from "./lib/store/index.js";
 import { googleClientId, googleEnabled, verifyGoogleIdToken } from "./lib/google-auth.js";
 import {
+  COOLDOWN_DAYS,
+  initDeletedAccounts,
+  recordDeletedAccount,
+  wasRecentlyDeleted,
+} from "./lib/deleted-accounts.js";
+import {
   DEFAULT_N as DESCRIPTIVA_DEFAULT_N,
   MAX_N as DESCRIPTIVA_MAX_N,
   MIN_N as DESCRIPTIVA_MIN_N,
@@ -334,6 +340,16 @@ const PLAN_PRESETS = {
   tesista: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
   institucion: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
 };
+
+// Cuota inicial de una cuenta nueva. Quien borro su cuenta hace poco vuelve a
+// entrar SIN cuota de cortesia: si no, bastaria con borrarse y registrarse otra
+// vez para tener usos gratuitos infinitos (ver lib/deleted-accounts.js).
+// `undefined` deja que createUser aplique el preset del plan.
+const usesForNewAccount = (emailLower) => (
+  wasRecentlyDeleted(emailLower)
+    ? Object.fromEntries(USE_TOOLS.map((tool) => [tool, 0]))
+    : undefined
+);
 
 // Garantiza user.uses/usesConsumed completos; migra el legado de Forms
 // (formsUsesLeft/formsUsesUsed) y mantiene esos campos como espejo para la
@@ -960,6 +976,7 @@ const canAccessResult = (user, item) => {
 const cargado = await initStore(USER_STORE_PATH);
 users = cargado.usuarios;
 initPendingUses(cargado.pendientes);
+initDeletedAccounts(cargado.borradas);
 ensureBootstrapAdmin();
 recoverPendingUses();
 // El admin inicial y los reembolsos deben estar en firme antes de atender.
@@ -1125,6 +1142,7 @@ const server = http.createServer(async (req, res) => {
         role: "user",
         status: "active",
         plan: REGISTER_PLAN,
+        uses: usesForNewAccount(normalizeEmail(email)),
       });
       registerRegistration(ip);
       logActivity(user, "Se registró desde la web (plan gratuito)");
@@ -1179,6 +1197,7 @@ const server = http.createServer(async (req, res) => {
           role: "user",
           status: "active",
           plan: REGISTER_PLAN,
+          uses: usesForNewAccount(emailLower),
         });
         registerRegistration(ip);
         creado = true;
@@ -1212,6 +1231,58 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && pathname === "/auth/me") {
       const user = requireAuth(req);
       sendJson(res, 200, { ok: true, user: sanitizeUser(user) });
+      return;
+    }
+
+    // ── Eliminar la propia cuenta ───────────────────────────────────────────
+    // Requisito, no cortesia: la politica de datos de usuario de Google exige
+    // ofrecer la eliminacion de la cuenta a las aplicaciones que usan su inicio
+    // de sesion, y el derecho de supresion del RGPD apunta a lo mismo.
+    if (req.method === "DELETE" && pathname === "/auth/me") {
+      const user = requireAuth(req);
+      const payload = await parseJsonBody(req);
+
+      // La confirmacion es escribir el propio correo, NO la contraseña: quien
+      // entro con Google tiene una contraseña aleatoria que nunca ha visto, asi
+      // que pedirsela dejaria fuera justo al grueso de los usuarios.
+      if (normalizeEmail(payload?.confirmEmail) !== user.emailLower) {
+        throw new HttpError(400, "Escribe tu correo exactamente como aparece en tu cuenta para confirmar.");
+      }
+      // El admin no se borra a si mismo: ademas de dejar el sistema sin
+      // administrador, el arranque lo recrearia desde ADMIN_EMAIL y la
+      // eliminacion seria una ilusion.
+      if (user.role === "admin") {
+        throw new HttpError(403, "Una cuenta de administrador no puede eliminarse a si misma.");
+      }
+
+      // Se anota ANTES de borrar: si el proceso muriera en medio, el peor caso
+      // es que la cuenta siga viva pero marcada, no que se regale otra cuota.
+      recordDeletedAccount(user.emailLower);
+
+      // Se van tambien los datos que quedaban en memoria a su nombre.
+      for (const [id, item] of results.entries()) {
+        if (item.ownerUserId === user.id) results.delete(id);
+      }
+      for (const jobs of [descriptivaJobs, titulosJobs, matrizJobs, humanizadorJobs]) {
+        for (const [id, job] of jobs.entries()) {
+          if (job.ownerUserId === user.id) {
+            jobs.delete(id);
+            clearPendingUse(id);
+          }
+        }
+      }
+
+      users = users.filter((item) => item.id !== user.id);
+      await writeUsers();
+      // eslint-disable-next-line no-console
+      console.log(`[cuenta] un usuario elimino su cuenta (quedan ${users.length}).`);
+      sendJson(res, 200, {
+        ok: true,
+        mensaje: "Tu cuenta y tus datos fueron eliminados.",
+        // Se dice explicitamente para que no sea una sorpresa desagradable si
+        // vuelve a registrarse al dia siguiente.
+        avisoCuota: `Si vuelves a registrarte con este correo dentro de ${COOLDOWN_DAYS} días, la cuenta se creará sin usos de cortesía.`,
+      });
       return;
     }
 
