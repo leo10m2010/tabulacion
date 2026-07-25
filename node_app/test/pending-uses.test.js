@@ -15,6 +15,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "node:url";
+import { esperarSalud } from "./helpers/servidor.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 18237;
@@ -28,16 +29,7 @@ let child;
 const storePath = () => path.join(tmpDir, "users.json");
 const pendingPath = () => path.join(tmpDir, "pending-uses.json");
 
-const waitForHealth = async () => {
-  for (let i = 0; i < 60; i += 1) {
-    try {
-      const res = await fetch(`${BASE}/health`);
-      if (res.ok) return;
-    } catch { /* aun no levanta */ }
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error("La API no levanto a tiempo.");
-};
+const waitForHealth = () => esperarSalud(BASE, child);
 
 const startServer = async () => {
   child = spawn(process.execPath, [path.join(SCRIPT_DIR, "..", "server.js")], {
@@ -50,7 +42,7 @@ const startServer = async () => {
       ADMIN_EMAIL,
       ADMIN_PASSWORD,
     },
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   });
   await waitForHealth();
 };

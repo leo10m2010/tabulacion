@@ -5,6 +5,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "node:url";
+import { esperarSalud } from "./helpers/servidor.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 18234;
@@ -15,16 +16,7 @@ const ADMIN_PASSWORD = "ClaveDePrueba123!";
 let child;
 let tmpDir;
 
-const waitForHealth = async () => {
-  for (let i = 0; i < 50; i += 1) {
-    try {
-      const res = await fetch(`${BASE}/health`);
-      if (res.ok) return;
-    } catch { /* aun no levanta */ }
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error("La API no levanto a tiempo.");
-};
+const waitForHealth = () => esperarSalud(BASE, child);
 
 before(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tabulacion-test-"));
@@ -40,7 +32,7 @@ before(async () => {
       LOGIN_MAX_ATTEMPTS: "3",
       LOGIN_WINDOW_SECONDS: "60",
     },
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   });
   await waitForHealth();
 });

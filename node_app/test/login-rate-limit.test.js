@@ -11,6 +11,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "node:url";
+import { esperarSalud } from "./helpers/servidor.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 18257;
@@ -37,15 +38,9 @@ before(async () => {
       LOGIN_MAX_ATTEMPTS_PER_IP: String(MAX_POR_IP),
       LOGIN_WINDOW_SECONDS: "900",
     },
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  for (let i = 0; i < 60; i += 1) {
-    try {
-      if ((await fetch(`${BASE}/health`)).ok) return;
-    } catch { /* aun no levanta */ }
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error("La API no levanto a tiempo.");
+  await esperarSalud(BASE, child);
 });
 
 after(() => {

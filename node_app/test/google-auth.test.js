@@ -17,6 +17,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "node:url";
+import { esperarSalud } from "./helpers/servidor.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_ID = "1234567890-pruebadetest.apps.googleusercontent.com";
@@ -35,15 +36,10 @@ const arrancar = async (puerto, env) => {
       ADMIN_PASSWORD: "ClaveDePrueba123!",
       ...env,
     },
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  for (let i = 0; i < 60; i += 1) {
-    try {
-      if ((await fetch(`http://127.0.0.1:${puerto}/health`)).ok) return { child, tmpDir };
-    } catch { /* aun no levanta */ }
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error("La API no levanto a tiempo.");
+  await esperarSalud(`http://127.0.0.1:${puerto}`, child);
+  return { child, tmpDir };
 };
 
 describe("Google configurado", () => {

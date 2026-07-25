@@ -12,6 +12,7 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "node:url";
 import { docxToMarkdown } from "../lib/descriptiva/docx.js";
+import { esperarSalud } from "./helpers/servidor.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SERVER = path.join(SCRIPT_DIR, "..", "server.js");
@@ -111,12 +112,7 @@ describe("la IA falla durante una generacion", () => {
     });
 
     try {
-      for (let i = 0; i < 60; i += 1) {
-        try {
-          if ((await fetch(`${BASE}/health`)).ok) break;
-        } catch { /* aun no levanta */ }
-        await new Promise((r) => setTimeout(r, 200));
-      }
+      await esperarSalud(BASE, hijo);
 
       const admin = await (await fetch(`${BASE}/auth/login`, {
         method: "POST",
