@@ -5,13 +5,14 @@
 # servicio Tutorica Forms (forms/) en el mismo proceso. El build instala las
 # dependencias de ambos paquetes.
 #
-# MODO PRUEBAS (plan gratuito, configuracion actual):
-# - Sin disco persistente: los usuarios que crees funcionan normal, pero se
-#   borran cuando el servicio se reinicia, despierta de la suspension o haces
-#   deploy. El admin inicial se recrea solo (ADMIN_EMAIL/ADMIN_PASSWORD).
+# PERSISTENCIA (actual): los usuarios viven en Postgres (Neon), no en el disco
+# del contenedor. Da igual que el disco sea efimero: las cuentas, sus usos y
+# sus claves ttab_ sobreviven a deploys, reinicios y suspensiones. Lo controla
+# DATABASE_URL; sin ella el servidor cae a un archivo JSON efimero, que solo
+# sirve para desarrollo local.
 #
-# MODO PRODUCCION (plan Starter o superior): descomenta el bloque `disk` y la
-# variable USER_STORE_PATH para que los usuarios persistan en /var/data.
+# El bloque `disk` de abajo quedo como alternativa historica (disco persistente
+# de Render, plan de pago). Con Postgres ya NO hace falta.
 services:
   - type: web
     name: tabulacion-api
@@ -70,6 +71,24 @@ services:
       # gratis es efimero y se borraba en cada uno. Se define en el dashboard.
       # Sin esta variable el servidor cae al archivo JSON efimero.
       - key: DATABASE_URL
+        sync: false
+      # Almacenamiento de archivos en Cloudflare R2 (Fase 5 del roadmap).
+      # Definidas ya en el dashboard, pero TODAVIA SIN USAR: no hay nada que
+      # guardar hasta que exista el objeto Proyecto (Fase 4) que le de dueño y
+      # sitio a cada archivo. El endpoint se deriva del account id.
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false
+      # Credenciales del cliente S3. Cuando se implemente, el token debe ser
+      # del tipo "Object Read & Write" acotado al bucket, NO "Admin": un token
+      # admin filtrado permite borrar buckets enteros.
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      # Token de la API de Cloudflare (distinto de las claves S3 de arriba).
+      - key: R2_API_TOKEN
         sync: false
       # - key: USER_STORE_PATH
       #   value: /var/data/users.json
