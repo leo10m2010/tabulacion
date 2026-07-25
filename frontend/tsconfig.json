@@ -6,6 +6,10 @@
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
     "strict": true,
+    // No se chequean los .d.ts de node_modules: los de Vitest referencian
+    // tipos de Node que este proyecto no incluye a proposito (es una app de
+    // navegador). El codigo propio se sigue comprobando entero.
+    "skipLibCheck": true,
     "noEmit": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
