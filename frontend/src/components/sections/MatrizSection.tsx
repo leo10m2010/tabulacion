@@ -9,7 +9,7 @@ import { Textarea } from "../ui/textarea";
 import * as api from "../../lib/api";
 import { base64ToUint8Array } from "../../lib/helpers";
 import { matrizAInstrumento, tieneContenido } from "../../lib/instrumento";
-import type { AuthUser, MatrizData, Proyecto } from "../../lib/types";
+import type { AuthUser, MatrizData, PasoTesis, Proyecto } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { SubscriptionWarning } from "../SubscriptionWarning";
 import { ToolSteps } from "../ToolSteps";
@@ -86,12 +86,14 @@ function CellList({ items }: { items: string[] }) {
 // El backend analiza el título (conector "y"/"en"/"para", tipo, enfoque,
 // nivel, diseño), busca dimensiones reales con autor citable para cada
 // variable y devuelve la matriz en JSON + Word apaisado.
-export function MatrizSection({ apiBaseUrl, authToken, authUser, proyecto, onProyectoActualizado, onUpgrade }: {
+export function MatrizSection({ apiBaseUrl, authToken, authUser, proyecto, onProyectoActualizado, onPasoHecho, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
   proyecto: Proyecto | null;
   onProyectoActualizado?: (p: Proyecto) => void;
+  // Marca este paso como hecho en el proyecto activo, si hay uno.
+  onPasoHecho?: (paso: PasoTesis) => void;
   onUpgrade?: (herramienta: string) => void;
 }) {
   const reduce = useReducedMotion() ?? false;
@@ -158,6 +160,7 @@ export function MatrizSection({ apiBaseUrl, authToken, authUser, proyecto, onPro
             setDocx({ url, fileName: job.docxFileName ?? "Matriz_de_consistencia.docx" });
           }
           setPhase("idle");
+          onPasoHecho?.("matriz");
           return;
         }
         if (job.status === "error") {

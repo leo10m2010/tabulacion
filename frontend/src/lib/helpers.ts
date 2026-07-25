@@ -38,6 +38,28 @@ export function formatDateTime(dateIso: string | null | undefined): string {
   return date.toLocaleString();
 }
 
+// "hace 2 h" en vez de "25/7/2026, 3:13:31 p. m.".
+//
+// En una lista de proyectos lo que importa es cuál se tocó hace poco, no el
+// segundo exacto. La fecha completa queda en el `title` para quien la necesite.
+export function tiempoRelativo(dateIso: string | null | undefined): string {
+  if (!dateIso) return "sin fecha";
+  const fecha = new Date(dateIso);
+  if (Number.isNaN(fecha.getTime())) return "fecha inválida";
+
+  const segundos = Math.round((Date.now() - fecha.getTime()) / 1000);
+  // Una fecha futura (relojes desfasados) no debe salir como "hace -3 min".
+  if (segundos < 60) return "recién";
+  const minutos = Math.round(segundos / 60);
+  if (minutos < 60) return `hace ${minutos} min`;
+  const horas = Math.round(minutos / 60);
+  if (horas < 24) return `hace ${horas} h`;
+  const dias = Math.round(horas / 24);
+  if (dias === 1) return "ayer";
+  if (dias < 30) return `hace ${dias} días`;
+  return fecha.toLocaleDateString();
+}
+
 export function getSubscriptionLabel(user: AuthUser): string {
   if (user.role === "admin") return "Sin vencimiento";
   if (!user.subscriptionEndsAt) return "Sin fecha";

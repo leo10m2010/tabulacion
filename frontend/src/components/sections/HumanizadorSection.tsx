@@ -10,7 +10,7 @@ import { TextDropZone } from "../TextDropZone";
 import { cn } from "../../lib/utils";
 import * as api from "../../lib/api";
 import { base64ToUint8Array } from "../../lib/helpers";
-import type { AuthUser, HumanizadorMetricas, HumanizadorMetricasLado } from "../../lib/types";
+import type { AuthUser, HumanizadorMetricas, HumanizadorMetricasLado, PasoTesis } from "../../lib/types";
 import { SubscriptionWarning } from "../SubscriptionWarning";
 import { ToolSteps } from "../ToolSteps";
 import { springSoft } from "../motion-primitives";
@@ -119,10 +119,12 @@ function MetricasComparison({ metricas }: { metricas: HumanizadorMetricas }) {
 // ritmo (burstiness) y el léxico (perplejidad) sin tocar citas APA, cifras
 // ni significado. El backend mide el resultado y aplica una repasada
 // dirigida cuando sigue sonando a máquina.
-export function HumanizadorSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
+export function HumanizadorSection({ apiBaseUrl, authToken, authUser, onPasoHecho, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  // Marca este paso como hecho en el proyecto activo, si hay uno.
+  onPasoHecho?: (paso: PasoTesis) => void;
   onUpgrade?: (herramienta: string) => void;
 }) {
   const reduce = useReducedMotion() ?? false;
@@ -208,6 +210,7 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser, onUpgrade 
             setDocx({ url, fileName: job.docxFileName ?? "Texto_humanizado.docx" });
           }
           setPhase("idle");
+          onPasoHecho?.("humanizador");
           return;
         }
         if (job.status === "error") {

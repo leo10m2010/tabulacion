@@ -8,7 +8,7 @@ import { Input } from "../ui/input";
 import { cn } from "../../lib/utils";
 import * as api from "../../lib/api";
 import { base64ToUint8Array } from "../../lib/helpers";
-import type { AuthUser } from "../../lib/types";
+import type { AuthUser, PasoTesis } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { SubscriptionWarning } from "../SubscriptionWarning";
 import { ToolSteps } from "../ToolSteps";
@@ -70,10 +70,12 @@ function MarkdownLite({ text }: { text: string }) {
 // pantalla (NO chat, sin historial ni turnos). El backend hace UNA llamada a
 // GLM-5.2 con la tool openrouter:web_search y devuelve 3 propuestas de
 // título desarrolladas según la carrera, universidad y lugar indicados.
-export function TitulosSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
+export function TitulosSection({ apiBaseUrl, authToken, authUser, onPasoHecho, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  // Marca este paso como hecho en el proyecto activo, si hay uno.
+  onPasoHecho?: (paso: PasoTesis) => void;
   onUpgrade?: (herramienta: string) => void;
 }) {
   const reduce = useReducedMotion() ?? false;
@@ -140,6 +142,7 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
             setDocx({ url, fileName: job.docxFileName ?? "Titulos_de_investigacion.docx" });
           }
           setPhase("idle");
+          onPasoHecho?.("titulos");
           return;
         }
         if (job.status === "error") {

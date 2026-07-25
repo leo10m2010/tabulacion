@@ -20,6 +20,7 @@ import { cn } from "./lib/utils";
 import type {
   AppIntent as AuthIntent,
   AppSection,
+  PasoTesis,
   Proyecto,
   AppView,
   AuthUser,
@@ -93,11 +94,27 @@ export default function App() {
     () => localStorage.getItem("proyectoActivoId"),
   );
 
+  // Cuántas tesis tiene en total. El inicio lo necesita para saber si ofrecer
+  // "cambiar de tesis" o "crear la primera".
+  const [proyectosTotal, setProyectosTotal] = useState(0);
+
   const seleccionarProyecto = (p: Proyecto | null) => {
     setProyectoActivo(p);
     setProyectoActivoId(p?.id ?? null);
     if (p) localStorage.setItem("proyectoActivoId", p.id);
     else localStorage.removeItem("proyectoActivoId");
+  };
+
+  // Marca un paso de la ruta como hecho en el proyecto activo.
+  //
+  // Es deliberadamente silencioso: si falla, el usuario ya tiene su Excel o su
+  // documento y lo único que se pierde es un tilde en la lista. Interrumpirlo
+  // con un error por eso sería peor que el problema.
+  const marcarPasoActivo = (paso: PasoTesis) => {
+    if (!proyectoActivoId || !authToken) return;
+    api.marcarPaso(apiBaseUrl, authToken, proyectoActivoId, paso)
+      .then((r) => setProyectoActivo(r.proyecto))
+      .catch(() => {});
   };
 
   const irAPlanes = (desdeHerramienta?: string) => {
@@ -169,6 +186,18 @@ export default function App() {
       });
     return () => { isMounted = false; };
   }, [apiBaseUrl, authToken, authUser, proyectoActivoId]);
+
+  // Cuántas tesis hay. Se relee al volver al inicio o a la lista, que es cuando
+  // el dato se usa y cuando pudo cambiar.
+  useEffect(() => {
+    if (!authToken || !authUser) return;
+    if (activeSection !== "inicio" && activeSection !== "proyectos") return;
+    let isMounted = true;
+    api.listarProyectos(apiBaseUrl, authToken)
+      .then((r) => { if (isMounted) setProyectosTotal(r.proyectos.length); })
+      .catch(() => {});
+    return () => { isMounted = false; };
+  }, [apiBaseUrl, authToken, authUser, activeSection]);
 
   // Despierta la API apenas se abre la app: si el hosting suspende el servidor
   // por inactividad (arranque en frío), el login y la generación lo encuentran
@@ -374,7 +403,9 @@ export default function App() {
         </div>
 
         {/* Nav items */}
-        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
+        {/* El menú no cabe entero en pantallas bajas: se desplaza, con una barra
+            fina del color del tema (ver .scroll-discreto en index.css). */}
+        <nav className="scroll-discreto flex-1 space-y-1 overflow-y-auto p-3">
           <button
             onClick={() => setActiveSection("inicio")}
             className={cn(
@@ -399,10 +430,21 @@ export default function App() {
             )}
           >
             <FolderOpen className="h-4 w-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate text-left">
-              {proyectoActivo ? proyectoActivo.nombre : "Mis proyectos"}
+            {/* La etiqueta no cambia: si el botón se llamara como el proyecto,
+                dejaría de leerse como el sitio al que se va. El proyecto activo
+                va debajo, que es información distinta. */}
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block truncate">Mis proyectos</span>
+              {proyectoActivo && (
+                <span className={cn(
+                  "block truncate text-[11px] font-normal",
+                  activeSection === "proyectos" ? "text-primary-foreground/80" : "text-muted-foreground",
+                )}>
+                  {proyectoActivo.nombre}
+                </span>
+              )}
             </span>
-            {activeSection === "proyectos" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
+            {activeSection === "proyectos" && <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0" />}
           </button>
 
           {NAV_GROUPS.map((group) => (
@@ -585,7 +627,12 @@ export default function App() {
 
           {/* ── Inicio (dashboard) ── */}
           {activeSection === "inicio" && authUser && (
-            <HomeSection user={authUser} onNavigate={setActiveSection} />
+            <HomeSection
+              user={authUser}
+              proyecto={proyectoActivo}
+              proyectosTotal={proyectosTotal}
+              onNavigate={setActiveSection}
+            />
           )}
 
           {/* ── Tabulación Wizard ── */}
@@ -595,21 +642,30 @@ export default function App() {
               authToken={authToken}
               authUser={authUser}
               proyecto={proyectoActivo}
+              onPasoHecho={marcarPasoActivo}
+              onUpgrade={irAPlanes}
+            />
+          )}
+
+          {/* ── Tabulación descriptiva (IA) ── */}
+          {activeSection === "descriptiva" && authUser && (
+            <DescriptivaSection
+              apiBaseUrl={apiBaseUrl}
+              authToken={authToken}
+              authUser={authUser}
+              onPasoHecho={marcarPasoActivo}
               onUpgrade={irAPlanes}
             />
           )}
 
           {/* ── Confiabilidad (Alfa de Cronbach) ── */}
-          {activeSection === "descriptiva" && authUser && (
-            <DescriptivaSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} onUpgrade={irAPlanes} />
-          )}
-
           {activeSection === "confiabilidad" && authUser && (
             <CronbachSection
               apiBaseUrl={apiBaseUrl}
               authToken={authToken}
               authUser={authUser}
               proyecto={proyectoActivo}
+              onPasoHecho={marcarPasoActivo}
               onUpgrade={irAPlanes}
             />
           )}
@@ -621,7 +677,13 @@ export default function App() {
 
           {/* ── Generador de Títulos de Investigación (IA) ── */}
           {activeSection === "titulos" && authUser && (
-            <TitulosSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} onUpgrade={irAPlanes} />
+            <TitulosSection
+              apiBaseUrl={apiBaseUrl}
+              authToken={authToken}
+              authUser={authUser}
+              onPasoHecho={marcarPasoActivo}
+              onUpgrade={irAPlanes}
+            />
           )}
 
           {/* ── Matriz de Consistencia (IA) ── */}
@@ -632,13 +694,20 @@ export default function App() {
               authUser={authUser}
               proyecto={proyectoActivo}
               onProyectoActualizado={seleccionarProyecto}
+              onPasoHecho={marcarPasoActivo}
               onUpgrade={irAPlanes}
             />
           )}
 
           {/* ── Humanizador de texto académico (IA) ── */}
           {activeSection === "humanizador" && authUser && (
-            <HumanizadorSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} onUpgrade={irAPlanes} />
+            <HumanizadorSection
+              apiBaseUrl={apiBaseUrl}
+              authToken={authToken}
+              authUser={authUser}
+              onPasoHecho={marcarPasoActivo}
+              onUpgrade={irAPlanes}
+            />
           )}
 
           {/* ── Usuarios (admin) ── */}

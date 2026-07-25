@@ -15,7 +15,7 @@ import { TextDropZone } from "../TextDropZone";
 import { cn } from "../../lib/utils";
 import * as api from "../../lib/api";
 import { base64ToUint8Array, parseIntSafe, workbookToSheetRows } from "../../lib/helpers";
-import type { AuthUser, DescriptivaResumen, TableRows } from "../../lib/types";
+import type { AuthUser, DescriptivaResumen, PasoTesis, TableRows } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { PreviewTable } from "../PreviewTable";
 import { SubscriptionWarning } from "../SubscriptionWarning";
@@ -75,10 +75,12 @@ const EJEMPLO_CUESTIONARIO = `CUESTIONARIO SOBRE CONSUMO DE BEBIDAS AZUCARADAS
 // .docx), la IA simula la base de datos como JSON y el backend construye el
 // Excel (base + frecuencias/porcentajes por ítem + baremo si corresponde). La
 // generación corre como job en el servidor y aquí solo se hace polling.
-export function DescriptivaSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
+export function DescriptivaSection({ apiBaseUrl, authToken, authUser, onPasoHecho, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  // Marca este paso como hecho en el proyecto activo, si hay uno.
+  onPasoHecho?: (paso: PasoTesis) => void;
   onUpgrade?: (herramienta: string) => void;
 }) {
   const reduce = useReducedMotion() ?? false;
@@ -178,6 +180,7 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser, onUpgrade 
       generatedAt: new Date().toISOString(),
     });
     setPhase("idle");
+    onPasoHecho?.("descriptiva");
   };
 
   const pollJob = (jobId: string, startedAt: number) => {

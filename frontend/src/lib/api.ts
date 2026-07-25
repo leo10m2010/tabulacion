@@ -15,6 +15,7 @@ import type {
   Instrumento,
   MatrizJobResponse,
   MatrizStartResponse,
+  PasoTesis,
   Proyecto,
   TabConfig,
   TemplateInfo,
@@ -247,6 +248,14 @@ export const actualizarProyecto = (
 
 export const eliminarProyecto = (apiBaseUrl: string, token: string, id: string) =>
   request<{ ok?: boolean }>(apiBaseUrl, `/proyectos/${id}`, { method: "DELETE", token });
+
+// Marca un paso de la tesis como hecho. Lo llama cada herramienta al terminar,
+// y nunca debe estorbar: si falla, el usuario ya tiene su resultado y lo único
+// que se pierde es el tilde en la lista de proyectos.
+export const marcarPaso = (apiBaseUrl: string, token: string, id: string, paso: PasoTesis) =>
+  request<{ proyecto: Proyecto }>(apiBaseUrl, `/proyectos/${id}/progreso`, {
+    method: "POST", token, body: { paso },
+  });
 
 // ── Usuarios (admin) ─────────────────────────────────────────────────────────
 export const listUsers = (apiBaseUrl: string, token: string) =>

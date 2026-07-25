@@ -31,6 +31,7 @@ import {
   crearProyecto,
   esErrorDeUsuario,
   limiteDelPlan,
+  marcarPaso,
 } from "./lib/proyectos/index.js";
 import {
   borrarProyecto,
@@ -1706,6 +1707,28 @@ const server = http.createServer(async (req, res) => {
       logActivity(user, `Creó el proyecto "${proyecto.nombre}"`);
       await writeUsers();
       sendJson(res, 201, { ok: true, proyecto });
+      return;
+    }
+
+    // Marca un paso de la tesis como hecho. Lo llama la herramienta al
+    // terminar, para que la lista de proyectos muestre en que anda cada tesis
+    // sin tener que guardar los archivos generados.
+    const progresoRoute = pathname.match(/^\/proyectos\/([0-9a-fA-F-]+)\/progreso$/);
+    if (progresoRoute && req.method === "POST") {
+      const user = requireAuth(req);
+      const proyecto = await obtenerProyecto(progresoRoute[1]);
+      if (!proyecto || proyecto.userId !== user.id) {
+        throw new HttpError(404, "Proyecto no encontrado.");
+      }
+      const payload = await parseJsonBody(req);
+      let actualizado;
+      try {
+        actualizado = marcarPaso(proyecto, String(payload?.paso ?? ""));
+      } catch (err) {
+        throw new HttpError(esErrorDeUsuario(err) ? 400 : 500, err.message);
+      }
+      await guardarProyecto(actualizado);
+      sendJson(res, 200, { ok: true, proyecto: actualizado });
       return;
     }
 

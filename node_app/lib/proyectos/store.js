@@ -42,15 +42,20 @@ const backendArchivo = (rutaBase) => {
     fs.renameSync(tmp, ruta);
   };
 
+  // Los proyectos guardados antes de que existiera el progreso no lo traen.
+  // Se rellena al leer para que nadie aguas abajo tenga que comprobarlo.
+  const conProgreso = (p) => (p && !p.progreso ? { ...p, progreso: {} } : p);
+
   return {
     async init() { fs.mkdirSync(path.dirname(ruta), { recursive: true }); },
     async listarDeUsuario(userId) {
       return leer()
         .filter((p) => p.userId === userId)
-        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+        .map(conProgreso);
     },
     async obtener(id) {
-      return leer().find((p) => p.id === id) ?? null;
+      return conProgreso(leer().find((p) => p.id === id)) ?? null;
     },
     async contarDeUsuario(userId) {
       return leer().filter((p) => p.userId === userId).length;
@@ -98,6 +103,7 @@ const backendPostgres = async () => {
     userId: r.user_id,
     nombre: r.nombre,
     instrumento: r.instrumento,
+    progreso: r.progreso ?? {},
     createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
     updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : r.updated_at,
   });
@@ -117,6 +123,11 @@ const backendPostgres = async () => {
         );
         CREATE INDEX IF NOT EXISTS ${TABLA}_user_idx ON ${TABLA} (user_id, updated_at DESC);
       `);
+      // Añadida despues de la primera version: las tablas ya creadas en Neon
+      // no la tienen, y IF NOT EXISTS deja el CREATE de arriba sin efecto.
+      await pool.query(
+        `ALTER TABLE ${TABLA} ADD COLUMN IF NOT EXISTS progreso JSONB NOT NULL DEFAULT '{}'::jsonb`,
+      );
     },
     async listarDeUsuario(userId) {
       const r = await pool.query(
@@ -134,14 +145,16 @@ const backendPostgres = async () => {
     },
     async guardar(proyecto) {
       await pool.query(
-        `INSERT INTO ${TABLA} (id, user_id, nombre, instrumento, created_at, updated_at)
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+        `INSERT INTO ${TABLA} (id, user_id, nombre, instrumento, progreso, created_at, updated_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)
          ON CONFLICT (id) DO UPDATE
            SET nombre = EXCLUDED.nombre,
                instrumento = EXCLUDED.instrumento,
+               progreso = EXCLUDED.progreso,
                updated_at = EXCLUDED.updated_at`,
         [proyecto.id, proyecto.userId, proyecto.nombre,
-          JSON.stringify(proyecto.instrumento), proyecto.createdAt, proyecto.updatedAt],
+          JSON.stringify(proyecto.instrumento), JSON.stringify(proyecto.progreso ?? {}),
+          proyecto.createdAt, proyecto.updatedAt],
       );
       return proyecto;
     },

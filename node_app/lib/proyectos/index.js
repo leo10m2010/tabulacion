@@ -28,6 +28,20 @@ export const PROYECTOS_POR_PLAN = {
   enterprise: 100,
 };
 
+// Los pasos de una tesis, en el orden en que se hacen. El progreso guarda solo
+// la fecha en que cada uno se completo: es lo unico que hace falta para que
+// alguien con quince tesis vea de un vistazo en que anda cada una, y no obliga
+// a guardar los archivos generados (eso es otra fase).
+export const PASOS = [
+  "titulos",
+  "matriz",
+  "instrumento",
+  "confiabilidad",
+  "tabulacion",
+  "descriptiva",
+  "humanizador",
+];
+
 const limpiar = (v, max) => String(v ?? "").trim().slice(0, max);
 
 class ProyectoError extends Error {}
@@ -105,6 +119,27 @@ export const normalizarInstrumento = (raw) => {
   return { escala, variables };
 };
 
+// Solo se conservan los pasos conocidos y con fecha valida: el progreso viene
+// del cliente y no puede convertirse en un saco de datos arbitrarios.
+export const normalizarProgreso = (raw) => {
+  const entrada = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const progreso = {};
+  for (const paso of PASOS) {
+    const fecha = Date.parse(entrada[paso]);
+    if (Number.isFinite(fecha)) progreso[paso] = new Date(fecha).toISOString();
+  }
+  return progreso;
+};
+
+export const marcarPaso = (proyecto, paso) => {
+  if (!PASOS.includes(paso)) fallar(`"${paso}" no es un paso conocido.`);
+  return {
+    ...proyecto,
+    progreso: { ...normalizarProgreso(proyecto.progreso), [paso]: new Date().toISOString() },
+    updatedAt: new Date().toISOString(),
+  };
+};
+
 export const crearProyecto = ({ userId, nombre, instrumento }) => {
   const nombreLimpio = limpiar(nombre, MAX_NOMBRE);
   if (!nombreLimpio) fallar("Ponle un nombre a tu proyecto.");
@@ -114,6 +149,7 @@ export const crearProyecto = ({ userId, nombre, instrumento }) => {
     userId,
     nombre: nombreLimpio,
     instrumento: normalizarInstrumento(instrumento),
+    progreso: {},
     createdAt: ahora,
     updatedAt: ahora,
   };
@@ -128,6 +164,15 @@ export const aplicarCambios = (proyecto, cambios) => {
   }
   if (cambios?.instrumento !== undefined) {
     siguiente.instrumento = normalizarInstrumento(cambios.instrumento);
+    // Definir el instrumento ES uno de los pasos: marcarlo aqui evita que el
+    // cliente tenga que acordarse de avisar por separado.
+    const items = siguiente.instrumento.variables.reduce((a, v) => a + (v.totalItems ?? 0), 0);
+    if (items > 0) {
+      siguiente.progreso = {
+        ...normalizarProgreso(siguiente.progreso),
+        instrumento: new Date().toISOString(),
+      };
+    }
   }
   siguiente.updatedAt = new Date().toISOString();
   return siguiente;

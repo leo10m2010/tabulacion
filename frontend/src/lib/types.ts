@@ -365,11 +365,18 @@ export interface Instrumento {
   variables: InstrumentoVariable[];
 }
 
+// Los pasos de una tesis. El proyecto guarda cuándo se completó cada uno (ver
+// lib/ruta.ts para el orden y las etiquetas).
+export type PasoTesis =
+  | "titulos" | "matriz" | "instrumento"
+  | "confiabilidad" | "tabulacion" | "descriptiva" | "humanizador";
+
 export interface Proyecto {
   id: string;
   userId: string;
   nombre: string;
   instrumento: Instrumento;
+  progreso: Partial<Record<PasoTesis, string>>;
   createdAt: string;
   updatedAt: string;
 }

@@ -116,3 +116,31 @@ body {
     overflow-x: auto;
   }
 }
+
+/* Barra lateral: el menu no cabe entero en pantallas bajas y hay que poder
+   desplazarlo. El scrollbar nativo del sistema partia el panel de vidrio con
+   una franja gris ancha; esto lo deja fino y del color del tema.
+
+   No se oculta: la barra ES el aviso de que el menu sigue mas abajo. Sin
+   ninguna senal, el menu parece terminar donde se corta. */
+.scroll-discreto {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+}
+
+.scroll-discreto::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scroll-discreto::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll-discreto::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted-foreground) / 0.35);
+  border-radius: 999px;
+}
+
+.scroll-discreto:hover::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted-foreground) / 0.55);
+}

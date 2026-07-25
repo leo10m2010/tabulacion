@@ -216,6 +216,77 @@ describe("validación del instrumento", () => {
   });
 });
 
+describe("progreso de la tesis", () => {
+  // Es lo que permite que alguien con quince tesis vea en que anda cada una
+  // sin abrirlas.
+  test("un proyecto nuevo empieza sin ningún paso hecho", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "progreso-nuevo@test.local");
+    const r = await api("POST", "/proyectos", token, { nombre: "Recién creado" });
+    assert.deepEqual(r.body.proyecto.progreso, {});
+  });
+
+  test("marcar un paso lo deja con fecha y no borra los anteriores", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "progreso@test.local");
+    const id = (await api("POST", "/proyectos", token, { nombre: "En curso" })).body.proyecto.id;
+
+    const uno = await api("POST", `/proyectos/${id}/progreso`, token, { paso: "titulos" });
+    assert.equal(uno.status, 200);
+    assert.ok(Date.parse(uno.body.proyecto.progreso.titulos), "guarda una fecha válida");
+
+    const dos = await api("POST", `/proyectos/${id}/progreso`, token, { paso: "tabulacion" });
+    assert.ok(dos.body.proyecto.progreso.titulos, "el paso anterior sigue ahí");
+    assert.ok(dos.body.proyecto.progreso.tabulacion);
+
+    // Y sobrevive a releer.
+    const leido = await api("GET", `/proyectos/${id}`, token);
+    assert.deepEqual(
+      Object.keys(leido.body.proyecto.progreso).sort(), ["tabulacion", "titulos"],
+    );
+  });
+
+  test("guardar el instrumento marca su paso solo", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "progreso-inst@test.local");
+    const id = (await api("POST", "/proyectos", token, { nombre: "Con instrumento" })).body.proyecto.id;
+    const r = await api("PATCH", `/proyectos/${id}`, token, { instrumento: INSTRUMENTO });
+    assert.ok(r.body.proyecto.progreso.instrumento, "definir el instrumento es un paso hecho");
+  });
+
+  test("un instrumento sin ítems no cuenta como paso hecho", async () => {
+    // Guardar variables y dimensiones desde la Matriz deja el instrumento a
+    // medias: decir que está listo seria mentirle al usuario.
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "progreso-vacio@test.local");
+    const id = (await api("POST", "/proyectos", token, { nombre: "A medias" })).body.proyecto.id;
+    const r = await api("PATCH", `/proyectos/${id}`, token, {
+      instrumento: {
+        escala: ["Sí", "No"],
+        variables: [{ nombre: "V", dimensiones: [{ nombre: "D", indicadores: [] }], baremo: [] }],
+      },
+    });
+    assert.equal(r.body.proyecto.progreso.instrumento, undefined);
+  });
+
+  test("un paso inventado se rechaza", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "progreso-malo@test.local");
+    const id = (await api("POST", "/proyectos", token, { nombre: "X" })).body.proyecto.id;
+    const r = await api("POST", `/proyectos/${id}/progreso`, token, { paso: "loquesea" });
+    assert.equal(r.status, 400, "no se guarda cualquier cosa que mande el cliente");
+  });
+
+  test("nadie marca pasos en el proyecto de otro", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const dueno = await crearUsuario(admin, "progreso-dueno@test.local");
+    const ajeno = await crearUsuario(admin, "progreso-ajeno@test.local");
+    const id = (await api("POST", "/proyectos", dueno, { nombre: "Mío" })).body.proyecto.id;
+    const r = await api("POST", `/proyectos/${id}/progreso`, ajeno, { paso: "titulos" });
+    assert.equal(r.status, 404);
+  });
+});
+
 describe("límite por plan", () => {
   test("el plan gratuito solo permite un proyecto", async () => {
     const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);

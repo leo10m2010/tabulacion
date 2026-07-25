@@ -62,6 +62,7 @@ import type {
   EstructuraDimension,
   ItemDef,
   GeneratedResult,
+  PasoTesis,
   Proyecto,
   TabConfig,
   TemplateInfo,
@@ -74,11 +75,13 @@ import type {
 // herramienta sin sección propia, mientras las otras diez sí la tenían. Todo su
 // estado (configuración, paso del asistente, estructura de dimensiones,
 // resultado y enlaces de descarga) vive aquí, que es donde se usa.
-export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, onUpgrade }: {
+export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, onPasoHecho, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
   proyecto: Proyecto | null;
+  // Marca este paso como hecho en el proyecto activo, si hay uno.
+  onPasoHecho?: (paso: PasoTesis) => void;
   onUpgrade?: (herramienta: string) => void;
 }) {
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
@@ -354,6 +357,7 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
       });
       setSelectedSheet(parsedWorkbook.names[0] ?? "");
       setStatusMessage("Tabulación generada correctamente.");
+      onPasoHecho?.("tabulacion");
     } catch (err) {
       // El 401 lo resuelve el manejador central (api.setUnauthorizedHandler):
       // aquí solo se informa del fallo.

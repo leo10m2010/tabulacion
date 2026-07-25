@@ -17,7 +17,7 @@ import { cn } from "../../lib/utils";
 import * as api from "../../lib/api";
 import { ALPHA_LEVELS } from "../../lib/constants";
 import { base64ToUint8Array, eid, parseIntSafe, workbookToSheetRows } from "../../lib/helpers";
-import type { AuthUser, InstrumentoVariable, Proyecto, TableRows } from "../../lib/types";
+import type { AuthUser, InstrumentoVariable, PasoTesis, Proyecto, TableRows } from "../../lib/types";
 import { FieldHint } from "../wizard-fields";
 import { PreviewTable } from "../PreviewTable";
 import { SubscriptionWarning } from "../SubscriptionWarning";
@@ -58,11 +58,13 @@ const interpretacionAlfa = (alpha: number) => {
 // nombre de la variable, sus dimensiones con la cantidad de ítems y el N de
 // encuestados, y genera un Excel de una sola hoja con datos simulados de alta
 // consistencia interna y las fórmulas vivas (VARP, COUNT y el α en celda).
-export function CronbachSection({ apiBaseUrl, authToken, authUser, proyecto, onUpgrade }: {
+export function CronbachSection({ apiBaseUrl, authToken, authUser, proyecto, onPasoHecho, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
   proyecto: Proyecto | null;
+  // Marca este paso como hecho en el proyecto activo, si hay uno.
+  onPasoHecho?: (paso: PasoTesis) => void;
   onUpgrade?: (herramienta: string) => void;
 }) {
   const [variable, setVariable] = useState("");
@@ -149,6 +151,7 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser, proyecto, onU
         previewRows: parsed.data[parsed.names[0] ?? ""] ?? [],
         generatedAt: new Date().toISOString(),
       });
+      onPasoHecho?.("confiabilidad");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo generar la prueba de confiabilidad.");
     } finally {
