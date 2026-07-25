@@ -9,12 +9,14 @@
     "plantilla": "node index.js --sin-datos",
     "api": "node server.js",
     "start": "node server.js",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test",
+    "test:db": "node --env-file=.env --test test/postgres-store.test.js"
   },
   "dependencies": {
     "docx": "^9.7.1",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
+    "pg": "^8.22.0",
     "xlsx-populate": "^1.21.0"
   }
 }

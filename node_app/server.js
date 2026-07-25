@@ -1,5 +1,4 @@
 import crypto from "crypto";
-import fs from "fs";
 import http from "http";
 import path from "path";
 import { createRequire } from "module";
@@ -10,9 +9,20 @@ import {
   MAX_MUESTRA,
   NIVELES_ALFA,
   NIVELES_CORRELACION,
-  generateArtifacts,
-  generateCronbach,
 } from "./generator.js";
+// La generacion del Excel corre en un hilo aparte: es CPU pura y sincrona, y
+// en el hilo principal congelaba el servidor entero mientras duraba.
+import { GenerationBusyError, runGeneration } from "./lib/generation/run.js";
+import {
+  addPendingUse,
+  clearPendingUse,
+  drainPendingUses,
+  initPendingUses,
+} from "./lib/pending-uses.js";
+// Persistencia del almacen de usuarios: Postgres si hay DATABASE_URL, archivo
+// JSON si no. En el plan gratis de Render el disco es efimero y cada deploy
+// borraba todas las cuentas con sus usos y sus claves.
+import { closeStore, flushStore, initStore, persistUsers, usingPostgres } from "./lib/store/index.js";
 import {
   DEFAULT_N as DESCRIPTIVA_DEFAULT_N,
   MAX_N as DESCRIPTIVA_MAX_N,
@@ -84,7 +94,21 @@ const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY ?? "").trim();
 
 // Limite de intentos de login fallidos por origen+email.
 const LOGIN_MAX_ATTEMPTS = Number.parseInt(process.env.LOGIN_MAX_ATTEMPTS ?? "5", 10);
+// Tope adicional por IP a secas: sin el, rotando el email cada intento se
+// evita por completo el limite anterior (relleno de credenciales). Mas alto
+// que el de IP+email porque varias personas legitimas pueden compartir IP.
+const LOGIN_MAX_ATTEMPTS_PER_IP = Number.parseInt(process.env.LOGIN_MAX_ATTEMPTS_PER_IP ?? "20", 10);
 const LOGIN_WINDOW_MS = Number.parseInt(process.env.LOGIN_WINDOW_SECONDS ?? "900", 10) * 1000;
+
+// ── Auto-registro (plan gratuito) ───────────────────────────────────────────
+// Se puede apagar sin tocar codigo si hiciera falta cerrar el registro.
+const REGISTRATION_ENABLED = !new Set(["0", "false", "no", "off"])
+  .has(String(process.env.REGISTRATION_ENABLED ?? "true").trim().toLowerCase());
+// Cuentas nuevas por IP. La ventana es larga (24 h por defecto) a proposito:
+// con una ventana corta se pueden crear cuentas en tandas indefinidamente.
+const REGISTER_MAX_PER_IP = Number.parseInt(process.env.REGISTER_MAX_PER_IP ?? "3", 10);
+const REGISTER_WINDOW_MS = Number.parseInt(process.env.REGISTER_WINDOW_SECONDS ?? "86400", 10) * 1000;
+const REGISTER_PLAN = String(process.env.REGISTER_PLAN ?? "free").trim() || "free";
 
 const results = new Map();
 let users = [];
@@ -252,6 +276,10 @@ const normalizeEmail = (email) => String(email ?? "").trim().toLowerCase();
 
 const isStrongPassword = (password) => String(password ?? "").length >= 8;
 
+// Validacion deliberadamente laxa: sirve para atajar erratas obvias, no para
+// decidir si un correo existe (eso solo lo prueba enviarle un mensaje).
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
 const toIsoOrNull = (input) => {
   if (input === null || input === undefined || String(input).trim() === "") return null;
   const d = new Date(String(input));
@@ -291,6 +319,16 @@ const TOOL_LABELS = {
 // Cuotas iniciales por plan al crear un usuario (el admin puede ajustar cada
 // herramienta despues). Institucion usa la cuota Tesista por cuenta.
 const PLAN_PRESETS = {
+  // Plan gratuito del auto-registro. Las cuotas siguen el costo REAL de cada
+  // herramienta, no un numero parejo:
+  //   - tabulacion y confiabilidad no usan IA (el Excel se construye por
+  //     codigo): solo cuestan CPU, asi que se pueden regalar.
+  //   - humanizador es la IA mas barata (sin busqueda web, textos cortos): un
+  //     uso alcanza para que el usuario vea la calidad.
+  //   - descriptiva, titulos y matriz cuestan dinero de verdad por generacion
+  //     (titulos ademas paga busqueda web): quedan en 0 y son el gancho de pago.
+  // Con 0 usos de IA, crearse cuentas de mas no le cuesta dinero al servicio.
+  free: { tabulacion: 2, confiabilidad: 2, descriptiva: 0, titulos: 0, matriz: 0, humanizador: 1, forms: 0 },
   esencial: { tabulacion: 2, confiabilidad: 2, descriptiva: 3, titulos: 3, matriz: 1, humanizador: 5, forms: 2 },
   tesista: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
   institucion: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
@@ -357,7 +395,7 @@ const consumeUse = (authUser, tool) => {
 };
 
 // Devuelve el uso si el trabajo termino en error (el usuario no recibio nada).
-const refundUse = (userId, tool) => {
+const refundUse = (userId, tool, motivo = "la generación falló") => {
   const owner = users.find((item) => item.id === userId);
   if (!owner || owner.role === "admin") return;
   normalizeUses(owner);
@@ -365,7 +403,7 @@ const refundUse = (userId, tool) => {
   owner.usesConsumed[tool] = Math.max(0, (owner.usesConsumed[tool] ?? 0) - 1);
   owner.formsUsesLeft = owner.uses.forms;
   owner.formsUsesUsed = owner.usesConsumed.forms;
-  logActivity(owner, `Uso de ${TOOL_LABELS[tool]} devuelto (la generación falló)`);
+  logActivity(owner, `Uso de ${TOOL_LABELS[tool]} devuelto (${motivo})`);
   owner.updatedAt = new Date().toISOString();
   try {
     writeUsers();
@@ -373,6 +411,38 @@ const refundUse = (userId, tool) => {
     // eslint-disable-next-line no-console
     console.error(`[usos] no se pudo persistir el reembolso de ${tool}:`, err);
   }
+};
+
+// ── Usos de jobs de IA: consumo con red de seguridad ────────────────────────
+// Los jobs viven en memoria. Anotar en disco el uso descontado permite
+// devolverlo si el proceso se reinicia antes de que el job termine.
+
+// Descuenta el uso y lo deja anotado como pendiente. `consumeUse` devuelve
+// null cuando no hay a quien cobrarle (admin, o usuario sintetico de
+// desarrollo): en ese caso no hay nada que anotar ni que devolver.
+const consumeUseForJob = (authUser, tool, jobId) => {
+  const left = consumeUse(authUser, tool);
+  if (left !== null) addPendingUse(jobId, authUser.id, tool);
+  return left;
+};
+
+// Cierra el job: si fallo devuelve el uso, y en ambos casos borra la anotacion
+// para que el arranque no lo vuelva a reembolsar.
+const settleJobUse = (jobId, userId, tool, { refund }) => {
+  if (refund) refundUse(userId, tool);
+  clearPendingUse(jobId);
+};
+
+// Al arrancar: todo uso anotado corresponde a un job que ya no existe (los
+// jobs no sobreviven al reinicio), asi que se devuelve.
+const recoverPendingUses = () => {
+  const pending = drainPendingUses();
+  if (pending.length === 0) return;
+  for (const item of pending) {
+    refundUse(item.userId, item.tool, "el servidor se reinició durante la generación");
+  }
+  // eslint-disable-next-line no-console
+  console.log(`[usos] ${pending.length} uso(s) devuelto(s): quedaron a medias en un reinicio anterior.`);
 };
 
 // Limpia un objeto de usos recibido por API: solo herramientas conocidas,
@@ -393,31 +463,23 @@ const cleanUsesPayload = (raw) => {
   return any ? out : null;
 };
 
-const ensureUserStore = () => {
-  fs.mkdirSync(path.dirname(USER_STORE_PATH), { recursive: true });
-  if (!fs.existsSync(USER_STORE_PATH)) {
-    fs.writeFileSync(USER_STORE_PATH, "[]", "utf-8");
-  }
-};
-
-const readUsers = () => {
-  ensureUserStore();
-  try {
-    const raw = fs.readFileSync(USER_STORE_PATH, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) throw new Error("El store no tiene formato de arreglo.");
-    users = parsed;
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[WARN] users.json ilegible (${err.message}). Iniciando con lista vacía.`);
-    users = [];
-  }
-};
-
+// La escritura es diferida (ver lib/store): la memoria es la fuente de verdad
+// en caliente y la persistencia sale por detras en una cola ordenada. Se
+// mantiene utilizable de forma sincrona a proposito — la llaman decenas de
+// sitios, incluido el callback de consumo de usos de Forms, que es sincrono
+// por contrato.
+//
+// Devuelve la promesa del vaciado para quien SI necesite durabilidad antes de
+// responder. La regla: si al usuario se le confirma algo que no puede
+// reconstruir (su clave de API, su contraseña nueva, la recarga que le hizo el
+// admin), hay que `await writeUsers()`. Si no, se ignora el retorno y la
+// escritura sale por detras.
+//
+// Nunca rechaza: los errores se registran dentro de la cola, asi que ignorar
+// la promesa no deja rechazos sin capturar.
 const writeUsers = () => {
-  const tempPath = `${USER_STORE_PATH}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(users, null, 2), "utf-8");
-  fs.renameSync(tempPath, USER_STORE_PATH);
+  persistUsers(users);
+  return flushStore();
 };
 
 const sanitizeUser = (user) => ({
@@ -806,13 +868,29 @@ const cleanupLoginAttempts = () => {
   }
 };
 
-const assertLoginAllowed = (key) => {
+const assertLoginAllowed = (key, max = LOGIN_MAX_ATTEMPTS) => {
   cleanupLoginAttempts();
   const entry = loginAttempts.get(key);
-  if (entry && entry.count >= LOGIN_MAX_ATTEMPTS) {
-    const retryInSec = Math.ceil((entry.firstAt + LOGIN_WINDOW_MS - Date.now()) / 1000);
-    throw new HttpError(429, `Demasiados intentos fallidos. Intenta de nuevo en ${Math.max(retryInSec, 1)} segundos.`);
+  if (entry && entry.count >= max) {
+    const retryInSec = Math.max(Math.ceil((entry.firstAt + LOGIN_WINDOW_MS - Date.now()) / 1000), 1);
+    const err = new HttpError(429, `Demasiados intentos fallidos. Intenta de nuevo en ${retryInSec} segundos.`);
+    err.retryAfterSeconds = retryInSec;
+    throw err;
   }
+};
+
+// El limite por IP+email no frena el ataque real: probando una contraseña
+// comun contra MUCHAS cuentas distintas, cada combinacion estrena su propio
+// contador y nunca se llega al tope. El limite por IP (mas holgado, para no
+// castigar a una universidad o un locutorio detras de un NAT) si lo corta.
+//
+// Seguro: si no se puede identificar la IP (proxy sin x-forwarded-for), NO se
+// aplica este tope. Si no, todas las peticiones compartirian un unico contador
+// y 20 fallos en total dejarian fuera a todos los usuarios a la vez. El limite
+// por IP+email sigue protegiendo cada cuenta.
+const assertLoginAllowedForIp = (ip) => {
+  if (!ip || ip === "unknown") return;
+  assertLoginAllowed(`ip|${ip}`, LOGIN_MAX_ATTEMPTS_PER_IP);
 };
 
 const registerLoginFailure = (key) => {
@@ -822,6 +900,37 @@ const registerLoginFailure = (key) => {
   } else {
     loginAttempts.set(key, { count: 1, firstAt: Date.now() });
   }
+};
+
+// ── Limite de registros por IP ──────────────────────────────────────────────
+// Mapa propio (no el de login): su ventana es mucho mas larga, y mezclarlos
+// haria que la limpieza de login borrara los contadores de registro antes de
+// tiempo.
+const registerAttempts = new Map();
+
+const assertRegisterAllowed = (ip) => {
+  const now = Date.now();
+  for (const [key, entry] of registerAttempts.entries()) {
+    if (now - entry.firstAt > REGISTER_WINDOW_MS) registerAttempts.delete(key);
+  }
+  // Sin IP identificable (proxy sin x-forwarded-for) no se aplica: un unico
+  // contador compartido bloquearia el registro a todo el mundo a la vez.
+  if (!ip || ip === "unknown") return;
+  const entry = registerAttempts.get(ip);
+  if (entry && entry.count >= REGISTER_MAX_PER_IP) {
+    const retryInSec = Math.max(Math.ceil((entry.firstAt + REGISTER_WINDOW_MS - now) / 1000), 1);
+    const err = new HttpError(429, "Se alcanzo el limite de cuentas nuevas desde esta conexion. "
+      + "Si necesitas otra cuenta, escribenos.");
+    err.retryAfterSeconds = retryInSec;
+    throw err;
+  }
+};
+
+const registerRegistration = (ip) => {
+  if (!ip || ip === "unknown") return;
+  const entry = registerAttempts.get(ip);
+  if (entry) entry.count += 1;
+  else registerAttempts.set(ip, { count: 1, firstAt: Date.now() });
 };
 
 const getClientIp = (req) => {
@@ -844,8 +953,16 @@ const canAccessResult = (user, item) => {
   return user.role === "admin" || item.ownerUserId === user.id;
 };
 
-readUsers();
+// Arranque. Si la carga del almacen falla se propaga a proposito y el proceso
+// no levanta: arrancar con la lista vacia y persistirla despues borraria a
+// todos los usuarios.
+const cargado = await initStore(USER_STORE_PATH);
+users = cargado.usuarios;
+initPendingUses(cargado.pendientes);
 ensureBootstrapAdmin();
+recoverPendingUses();
+// El admin inicial y los reembolsos deben estar en firme antes de atender.
+await flushStore();
 setInterval(cleanupExpired, 60_000).unref();
 
 // Forms valida las claves ttab_ en memoria (mismo proceso): lee la lista de
@@ -918,13 +1035,19 @@ const server = http.createServer(async (req, res) => {
       const payload = await parseJsonBody(req);
       const email = normalizeEmail(payload?.email);
       const password = String(payload?.password ?? "");
-      const rateKey = `${getClientIp(req)}|${email}`;
+      const ip = getClientIp(req);
+      const rateKey = `${ip}|${email}`;
+      assertLoginAllowedForIp(ip);
       assertLoginAllowed(rateKey);
       const user = users.find((item) => item.emailLower === email);
       if (!user || !checkPassword(password, user)) {
         registerLoginFailure(rateKey);
+        if (ip && ip !== "unknown") registerLoginFailure(`ip|${ip}`);
         throw new HttpError(401, "Credenciales invalidas.");
       }
+      // Solo se limpia el contador de ESTA cuenta. El de la IP se deja correr
+      // hasta que expire su ventana: si un login exitoso lo reiniciara, bastaria
+      // con entrar a una cuenta propia entre tanda y tanda para probar de nuevo.
       loginAttempts.delete(rateKey);
       if (user.status !== "active") {
         throw new HttpError(403, "Usuario inactivo.");
@@ -936,6 +1059,53 @@ const server = http.createServer(async (req, res) => {
       writeUsers();
       const signed = signToken(user);
       sendJson(res, 200, {
+        ok: true,
+        token: signed.token,
+        tokenExpiresAt: signed.expiresAt,
+        user: sanitizeUser(user),
+      });
+      return;
+    }
+
+    // ── Auto-registro (plan gratuito) ───────────────────────────────────────
+    // Publico: es lo que permite que alguien pruebe sin que un admin le cree
+    // la cuenta a mano. El plan free no incluye usos de las herramientas de IA
+    // (ver PLAN_PRESETS), asi que abrir el registro no expone el gasto de
+    // OpenRouter a desconocidos.
+    if (req.method === "POST" && pathname === "/auth/register") {
+      if (!REGISTRATION_ENABLED) {
+        throw new HttpError(403, "El registro esta cerrado por el momento.");
+      }
+      const ip = getClientIp(req);
+      assertRegisterAllowed(ip);
+
+      const payload = await parseJsonBody(req);
+      const email = String(payload?.email ?? "").trim();
+      const password = String(payload?.password ?? "");
+      if (!EMAIL_RE.test(email)) {
+        throw new HttpError(400, "Escribe un correo valido.");
+      }
+      if (!isStrongPassword(password)) {
+        throw new HttpError(400, "La contraseña debe tener al menos 8 caracteres.");
+      }
+      // Un email ya registrado responde 409 igual que en el alta de admin. No
+      // se disimula: sin verificacion por correo, ocultarlo no aporta nada
+      // (quien quiera comprobarlo lo hace igual desde el login) y en cambio
+      // deja al usuario sin saber por que no puede entrar.
+      const user = createUser({
+        email,
+        password,
+        role: "user",
+        status: "active",
+        plan: REGISTER_PLAN,
+      });
+      registerRegistration(ip);
+      logActivity(user, "Se registró desde la web (plan gratuito)");
+      // La cuenta debe estar en firme antes de devolver la sesion.
+      await writeUsers();
+
+      const signed = signToken(user);
+      sendJson(res, 201, {
         ok: true,
         token: signed.token,
         tokenExpiresAt: signed.expiresAt,
@@ -975,7 +1145,7 @@ const server = http.createServer(async (req, res) => {
         user.apiKeyCreatedAt = new Date().toISOString();
         user.updatedAt = user.apiKeyCreatedAt;
         logActivity(user, "Generó su clave de API");
-        writeUsers();
+        await writeUsers();
         // La clave en claro solo viaja en esta respuesta.
         sendJson(res, 200, { ok: true, apiKey, last4: user.apiKeyLast4, createdAt: user.apiKeyCreatedAt });
         return;
@@ -986,7 +1156,7 @@ const server = http.createServer(async (req, res) => {
         delete user.apiKeyCreatedAt;
         user.updatedAt = new Date().toISOString();
         logActivity(user, "Revocó su clave de API");
-        writeUsers();
+        await writeUsers();
         sendJson(res, 200, { ok: true });
         return;
       }
@@ -1048,7 +1218,7 @@ const server = http.createServer(async (req, res) => {
       user.tokenVersion = (user.tokenVersion ?? 1) + 1;
       logActivity(user, "Cambió su contraseña");
       user.updatedAt = new Date().toISOString();
-      writeUsers();
+      await writeUsers();
       const signed = signToken(user);
       sendJson(res, 200, { ok: true, token: signed.token, tokenExpiresAt: signed.expiresAt });
       return;
@@ -1076,7 +1246,7 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(400, "El respaldo tiene un formato invalido (faltan campos de usuario).");
       }
       users = incoming;
-      writeUsers();
+      await writeUsers();
       // Garantiza que el admin de ADMIN_EMAIL/ADMIN_PASSWORD siga entrando
       // aunque el respaldo venga de otro entorno.
       ensureBootstrapAdmin();
@@ -1107,6 +1277,9 @@ const server = http.createServer(async (req, res) => {
         formsUses: payload?.formsUses,
         uses: payload?.uses,
       });
+      // La cuenta debe estar en firme antes de confirmarla: el admin le pasa
+      // esas credenciales al usuario y no puede reconstruirlas.
+      await writeUsers();
       sendJson(res, 201, { ok: true, user: sanitizeUser(user) });
       return;
     }
@@ -1123,7 +1296,7 @@ const server = http.createServer(async (req, res) => {
       delete target.apiKeyCreatedAt;
       target.updatedAt = new Date().toISOString();
       logActivity(target, "Clave de API revocada por el administrador");
-      writeUsers();
+      await writeUsers();
       sendJson(res, 200, { ok: true, user: sanitizeUser(target) });
       return;
     }
@@ -1165,10 +1338,17 @@ const server = http.createServer(async (req, res) => {
       if (payload?.status !== undefined) cambios.push(payload.status === "active" ? "cuenta activada" : "cuenta desactivada");
       if (payload?.email !== undefined) cambios.push("email actualizado");
       if (cambios.length > 0) logActivity(updated, `Admin: ${cambios.join(", ")}`);
-      const idx = users.findIndex((item) => item.id === target.id);
-      users[idx] = updated;
-      writeUsers();
-      sendJson(res, 200, { ok: true, user: sanitizeUser(updated) });
+      // Se vuelcan los campos SOBRE el objeto que ya vive en `users`, en vez
+      // de sustituirlo (`users[idx] = updated`). La diferencia importa: otros
+      // handlers conservan una referencia a este objeto mientras esperan el
+      // cuerpo de su peticion (`await parseJsonBody`). Al sustituirlo, esa
+      // referencia quedaba huerfana y lo que escribieran despues se perdia al
+      // persistir — p. ej. un cambio de contraseña que respondia 200 sin haber
+      // cambiado nada. `patchUser` sigue validando sobre una copia, asi que un
+      // payload invalido no deja al usuario a medio modificar.
+      Object.assign(target, updated);
+      await writeUsers();
+      sendJson(res, 200, { ok: true, user: sanitizeUser(target) });
       return;
     }
 
@@ -1181,7 +1361,7 @@ const server = http.createServer(async (req, res) => {
       const target = users.find((item) => item.id === targetId);
       if (!target) throw new HttpError(404, "Usuario no encontrado.");
       users = users.filter((item) => item.id !== targetId);
-      writeUsers();
+      await writeUsers();
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -1220,9 +1400,10 @@ const server = http.createServer(async (req, res) => {
       consumeUse(authUser, "tabulacion");
       let artifacts;
       try {
-        artifacts = await generateArtifacts(config);
+        artifacts = await runGeneration("artifacts", config);
       } catch (err) {
         refundUse(authUser.id, "tabulacion");
+        if (err instanceof GenerationBusyError) throw new HttpError(429, err.message);
         throw err;
       }
       const responseMode = String(payload?.responseMode ?? "links").toLowerCase();
@@ -1282,9 +1463,10 @@ const server = http.createServer(async (req, res) => {
       consumeUse(authUser, "confiabilidad");
       let result;
       try {
-        result = await generateCronbach(config);
+        result = await runGeneration("cronbach", config);
       } catch (err) {
         refundUse(authUser.id, "confiabilidad");
+        if (err instanceof GenerationBusyError) throw new HttpError(429, err.message);
         throw err;
       }
       registerGeneration(authUser, `Generó una prueba de confiabilidad (α = ${result.alpha.toFixed(3)})`);
@@ -1352,8 +1534,12 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(429, "El servidor esta ocupado generando otras bases; intenta en un par de minutos.");
       }
 
-      consumeUse(authUser, "descriptiva");
       const id = crypto.randomUUID();
+      consumeUseForJob(authUser, "descriptiva", id);
+      // La anotacion del uso pendiente debe quedar en firme ANTES de
+      // lanzar el job: es lo que permite devolver el uso si el proceso
+      // muere a mitad de la generacion.
+      await writeUsers();
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -1372,6 +1558,7 @@ const server = http.createServer(async (req, res) => {
           job.warnings = generated.warnings;
           job.status = "done";
           job.expiresAt = Date.now() + DESCRIPTIVA_DONE_TTL_MS;
+          settleJobUse(id, authUser.id, "descriptiva", { refund: false });
           // El registro de metricas nunca debe voltear un job exitoso a
           // error (writeUsers toca disco y puede fallar).
           try {
@@ -1385,7 +1572,7 @@ const server = http.createServer(async (req, res) => {
           // El detalle tecnico queda solo en el log del servidor.
           // eslint-disable-next-line no-console
           console.error(`[descriptiva] job ${id} fallo:`, err);
-          refundUse(authUser.id, "descriptiva");
+          settleJobUse(id, authUser.id, "descriptiva", { refund: true });
           job.status = "error";
           job.error = "Hubo un problema generando tu base de datos, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + DESCRIPTIVA_DONE_TTL_MS;
@@ -1447,8 +1634,12 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(429, "El servidor esta ocupado generando otros titulos; intenta en un par de minutos.");
       }
 
-      consumeUse(authUser, "titulos");
       const id = crypto.randomUUID();
+      consumeUseForJob(authUser, "titulos", id);
+      // La anotacion del uso pendiente debe quedar en firme ANTES de
+      // lanzar el job: es lo que permite devolver el uso si el proceso
+      // muere a mitad de la generacion.
+      await writeUsers();
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -1465,6 +1656,7 @@ const server = http.createServer(async (req, res) => {
           job.result = generated;
           job.status = "done";
           job.expiresAt = Date.now() + TITULOS_DONE_TTL_MS;
+          settleJobUse(id, authUser.id, "titulos", { refund: false });
           // El registro de metricas nunca debe voltear un job exitoso a
           // error (writeUsers toca disco y puede fallar).
           try {
@@ -1478,7 +1670,7 @@ const server = http.createServer(async (req, res) => {
           // El detalle tecnico queda solo en el log del servidor.
           // eslint-disable-next-line no-console
           console.error(`[titulos] job ${id} fallo:`, err);
-          refundUse(authUser.id, "titulos");
+          settleJobUse(id, authUser.id, "titulos", { refund: true });
           job.status = "error";
           job.error = "Hubo un problema generando tus títulos, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + TITULOS_DONE_TTL_MS;
@@ -1540,9 +1732,13 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(429, "El servidor esta ocupado generando otras matrices; intenta en un par de minutos.");
       }
 
-      consumeUse(authUser, "matriz");
-
       const id = crypto.randomUUID();
+      consumeUseForJob(authUser, "matriz", id);
+      // La anotacion del uso pendiente debe quedar en firme ANTES de
+      // lanzar el job: es lo que permite devolver el uso si el proceso
+      // muere a mitad de la generacion.
+      await writeUsers();
+
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -1559,6 +1755,7 @@ const server = http.createServer(async (req, res) => {
           job.result = generated;
           job.status = "done";
           job.expiresAt = Date.now() + MATRIZ_DONE_TTL_MS;
+          settleJobUse(id, authUser.id, "matriz", { refund: false });
           // El registro de metricas nunca debe voltear un job exitoso a
           // error (writeUsers toca disco y puede fallar).
           try {
@@ -1572,7 +1769,7 @@ const server = http.createServer(async (req, res) => {
           // El detalle tecnico queda solo en el log del servidor.
           // eslint-disable-next-line no-console
           console.error(`[matriz] job ${id} fallo:`, err);
-          refundUse(authUser.id, "matriz");
+          settleJobUse(id, authUser.id, "matriz", { refund: true });
           job.status = "error";
           job.error = "Hubo un problema generando tu matriz de consistencia, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + MATRIZ_DONE_TTL_MS;
@@ -1633,9 +1830,13 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(429, "El servidor esta ocupado humanizando otros textos; intenta en un par de minutos.");
       }
 
-      consumeUse(authUser, "humanizador");
-
       const id = crypto.randomUUID();
+      consumeUseForJob(authUser, "humanizador", id);
+      // La anotacion del uso pendiente debe quedar en firme ANTES de
+      // lanzar el job: es lo que permite devolver el uso si el proceso
+      // muere a mitad de la generacion.
+      await writeUsers();
+
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -1652,6 +1853,7 @@ const server = http.createServer(async (req, res) => {
           job.result = generated;
           job.status = "done";
           job.expiresAt = Date.now() + HUMANIZADOR_DONE_TTL_MS;
+          settleJobUse(id, authUser.id, "humanizador", { refund: false });
           // El registro de metricas nunca debe voltear un job exitoso a
           // error (writeUsers toca disco y puede fallar).
           try {
@@ -1664,7 +1866,7 @@ const server = http.createServer(async (req, res) => {
         .catch((err) => {
           // eslint-disable-next-line no-console
           console.error(`[humanizador] job ${id} fallo:`, err);
-          refundUse(authUser.id, "humanizador");
+          settleJobUse(id, authUser.id, "humanizador", { refund: true });
           job.status = "error";
           // Las validaciones de entrada detectadas dentro del job (p. ej. el
           // conteo de palabras del .docx) SI se muestran al usuario; el
@@ -1758,6 +1960,11 @@ const server = http.createServer(async (req, res) => {
     throw new HttpError(404, "Ruta no encontrada.");
   } catch (err) {
     const statusCode = err instanceof HttpError ? err.statusCode : 500;
+    // Retry-After: le dice al cliente cuando reintentar en vez de dejarlo
+    // adivinar (o martillar el endpoint).
+    if (statusCode === 429 && Number.isFinite(err?.retryAfterSeconds)) {
+      res.setHeader("Retry-After", String(err.retryAfterSeconds));
+    }
     sendJson(res, statusCode, {
       ok: false,
       error: err instanceof Error ? err.message : "Error no controlado.",
@@ -1769,3 +1976,25 @@ server.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`API lista en puerto ${PORT} | generador por codigo (sin plantilla)`);
 });
+
+// Apagado ordenado: la escritura al almacen es diferida, asi que morir de
+// golpe pierde lo ultimo que se haya cambiado. Render manda SIGTERM en cada
+// deploy, que es justo cuando mas caro sale perderlo.
+let apagando = false;
+const apagar = async (senal) => {
+  if (apagando) return;
+  apagando = true;
+  // eslint-disable-next-line no-console
+  console.log(`[apagado] ${senal}: guardando lo pendiente...`);
+  server.close();
+  try {
+    await closeStore();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[apagado] no se pudo cerrar el almacen:", err.message);
+  }
+  process.exit(0);
+};
+for (const senal of ["SIGTERM", "SIGINT"]) {
+  process.on(senal, () => { apagar(senal); });
+}

@@ -1,0 +1,83 @@
+name: CI
+
+# Los 188 tests del backend no servian de mucho si nadie los ejecutaba: aqui
+# corren en cada push y en cada pull request.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Un push nuevo cancela la corrida anterior de la misma rama.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API (node_app)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # La misma version que usa Render (ver render.yaml): que CI pruebe
+          # lo que de verdad corre en produccion.
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: node_app/package-lock.json
+      - run: npm ci
+        working-directory: node_app
+      # Sin DATABASE_URL, el almacen usa el backend de archivo y las pruebas
+      # contra Postgres se saltan solas. No hace falta una base de datos.
+      - run: npm test
+        working-directory: node_app
+
+  forms:
+    name: Forms
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: forms/package-lock.json
+      - run: npm ci
+        working-directory: forms
+      - run: npm test
+        working-directory: forms
+
+  frontend:
+    name: Frontend (tipos + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      # `npm run build` ya incluye el chequeo de tipos, pero se ejecuta aparte
+      # para que un error de tipos se distinga de un fallo de empaquetado.
+      - run: npm run typecheck
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  auditoria:
+    name: Vulnerabilidades
+    runs-on: ubuntu-latest
+    # Informativo: no debe bloquear un despliegue por una vulnerabilidad
+    # aparecida en una dependencia ajena de un dia para otro.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm audit --omit=dev
+        working-directory: node_app
+      - run: npm audit --omit=dev
+        working-directory: forms

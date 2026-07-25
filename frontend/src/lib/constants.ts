@@ -14,12 +14,18 @@ export const USE_TOOLS: { id: UseTool; label: string }[] = [
 ];
 
 export const PLAN_PRESETS: Record<string, Record<UseTool, number>> = {
+  // Plan del auto-registro. Sin usos de las herramientas de IA: son las que
+  // cuestan dinero por generación (Títulos además paga búsqueda web), así que
+  // abrir el registro no expone ese gasto. Tabulación y Confiabilidad no usan
+  // IA — solo CPU — y por eso sí se regalan.
+  free: { tabulacion: 2, confiabilidad: 2, descriptiva: 0, titulos: 0, matriz: 0, humanizador: 1, forms: 0 },
   esencial: { tabulacion: 2, confiabilidad: 2, descriptiva: 3, titulos: 3, matriz: 1, humanizador: 5, forms: 2 },
   tesista: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
   institucion: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
 };
 
 export const PLAN_OPTIONS = [
+  { id: "free", label: "Gratuito" },
   { id: "esencial", label: "Esencial" },
   { id: "tesista", label: "Tesista" },
   { id: "institucion", label: "Institución" },

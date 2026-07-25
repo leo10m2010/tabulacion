@@ -19,9 +19,10 @@ services:
     plan: free
     buildCommand: npm ci --omit=dev --prefix node_app && npm ci --omit=dev --prefix forms
     startCommand: node node_app/server.js
-    # Sin healthCheckPath HTTP: la generacion del Excel bloquea el event loop
-    # (CPU 0.1 del plan free) y el healthcheck mataba el proceso a mitad de
-    # trabajo. El check TCP por defecto no tiene ese problema.
+    # La generacion del Excel corre en un worker aparte (node_app/lib/generation/),
+    # asi que ya NO bloquea el event loop: el healthcheck HTTP vuelve a ser
+    # seguro (antes mataba el proceso a mitad de una generacion).
+    healthCheckPath: /health
     autoDeploy: true
     # disk:
     #   name: tabulacion-data
@@ -31,9 +32,17 @@ services:
       - key: NODE_VERSION
         value: "20"
       # Contenedor de 512 MB: limitar el heap fuerza GC agresivo y evita
-      # que el pico de memoria de la generacion mate el proceso.
+      # que el pico de memoria de la generacion mate el proceso. El worker de
+      # generacion hereda este mismo presupuesto (a proposito: fijarle un
+      # techo propio resulto contraproducente, ver lib/generation/run.js).
       - key: NODE_OPTIONS
         value: "--max-old-space-size=400"
+      # Generaciones de Excel simultaneas. Cada una corre en su propio worker
+      # con su propio heap, asi que subirlo multiplica la memoria: con 512 MB
+      # de contenedor, dejar 1. Las peticiones extra esperan en cola (hasta
+      # GENERATION_MAX_QUEUED) en vez de bloquear el servidor.
+      - key: GENERATION_MAX_CONCURRENT
+        value: "1"
       - key: AUTH_REQUIRED
         value: "true"
       # Secretos: definirlos en el dashboard de Render (sync: false hace que
@@ -56,6 +65,12 @@ services:
       # cualquier origen (la clave es el control de acceso real).
       - key: CORS_ALLOWED_ORIGINS
         value: "*"
+      # Almacen de usuarios en Postgres (Neon). Es lo que hace que las cuentas,
+      # sus usos y sus claves ttab_ sobrevivan a los deploys: el disco del plan
+      # gratis es efimero y se borraba en cada uno. Se define en el dashboard.
+      # Sin esta variable el servidor cae al archivo JSON efimero.
+      - key: DATABASE_URL
+        sync: false
       # - key: USER_STORE_PATH
       #   value: /var/data/users.json
       - key: AUTH_TOKEN_TTL_SECONDS

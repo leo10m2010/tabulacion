@@ -50,6 +50,18 @@ after(() => {
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+// El Excel viaja como base64 y se construye en un worker aparte. Un Buffer
+// que cruza el limite del worker llega como Uint8Array, y si no se re-envuelve
+// `.toString("base64")` devuelve "80,75,3,4,..." en vez de base64: una cadena
+// MAS larga que la real, que pasaria cualquier chequeo de longitud. Por eso se
+// verifica que decodifique a un .xlsx de verdad (firma ZIP "PK").
+const assertXlsxBase64 = (base64, label) => {
+  assert.ok(base64 && base64.length > 1000, `${label}: base64 presente`);
+  assert.match(base64, /^[A-Za-z0-9+/=]+$/, `${label}: es base64 valido`);
+  const bytes = Buffer.from(base64, "base64");
+  assert.equal(bytes.subarray(0, 2).toString("latin1"), "PK", `${label}: firma de archivo xlsx`);
+};
+
 const login = async (email, password) => {
   const res = await fetch(`${BASE}/auth/login`, {
     method: "POST",
@@ -107,7 +119,7 @@ test("un usuario con rol 'user' y suscripcion vigente puede generar", async () =
   assert.equal(gen.status, 200);
   const payload = await gen.json();
   assert.equal(typeof payload.correlation, "number");
-  assert.ok(payload.excelBase64.length > 1000);
+  assertXlsxBase64(payload.excelBase64, "tabulacion correlacional");
   assert.equal(payload.tema, "clasico");
   assert.ok(Array.isArray(payload.chartsPreview) && payload.chartsPreview.length > 0);
   assert.equal(payload.correlationControl?.activo, true);
@@ -139,7 +151,7 @@ test("/generate con diseno cuasiexperimental responde analisis y Excel", async (
   assert.ok(payload.quasiExperimental, "incluye el analisis cuasiexperimental");
   assert.equal(payload.quasiExperimental.comparisons.length, 3);
   assert.ok(payload.quasiExperimental.baseline.hypotheses.nula.startsWith("H₀"));
-  assert.ok(payload.excelBase64.length > 1000);
+  assertXlsxBase64(payload.excelBase64, "tabulacion cuasiexperimental");
   assert.equal(payload.baseCsv.split("\n").length, 1 + 24);
   assert.ok(Array.isArray(payload.chartsPreview) && payload.chartsPreview.length === 1);
 });
@@ -197,7 +209,7 @@ test("prueba de confiabilidad: /cronbach genera el Excel con alfa en el nivel pe
   assert.equal(payload.encuestados, 30);
   assert.equal(payload.etiqueta, "Excelente");
   assert.ok(payload.alpha >= 0.85, `alfa alto (obtenido ${payload.alpha})`);
-  assert.ok(payload.excelBase64.length > 1000);
+  assertXlsxBase64(payload.excelBase64, "confiabilidad");
   assert.equal(payload.excelFileName, "Alfa_Cronbach.xlsx");
 
   // Config invalida: mensaje claro.
