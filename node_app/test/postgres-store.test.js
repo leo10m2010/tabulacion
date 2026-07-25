@@ -79,7 +79,7 @@ const listarUsuarios = async (token) => {
 const limpiarTablas = async () => {
   const { default: pg } = await import("pg");
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-  await pool.query(`DROP TABLE IF EXISTS ${PREFIJO}users, ${PREFIJO}pending_uses`);
+  await pool.query(`DROP TABLE IF EXISTS ${PREFIJO}users, ${PREFIJO}pending_uses, ${PREFIJO}deleted_accounts, ${PREFIJO}proyectos`);
   await pool.end();
 };
 
@@ -175,6 +175,54 @@ describe("almacen en Postgres", { skip: HAY_DB ? false : "sin DATABASE_URL" }, (
     const usuarios = await listarUsuarios(admin2.body.token);
     const tesista = usuarios.find((u) => u.email === email);
     assert.equal(tesista.lastLoginAt, marcaEsperada, "la escritura encolada llego a Postgres");
+  });
+
+  test("un proyecto sobrevive al reinicio con el disco borrado", async () => {
+    // El instrumento es lo que el usuario mas trabajo le costo escribir: es el
+    // dato que menos se puede permitir perder.
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const email = "tesista-persistente@test.local";
+    const sesion = await login(email, "ClaveTesista123!");
+
+    const creado = await fetch(`${BASE}/proyectos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${sesion.body.token}` },
+      body: JSON.stringify({
+        nombre: "Tesis persistente",
+        instrumento: {
+          escala: ["Nunca", "A veces", "Siempre"],
+          variables: [{
+            nombre: "Clima laboral",
+            dimensiones: [{
+              nombre: "Comunicación",
+              indicadores: [{ nombre: "Claridad", items: ["Ítem uno", "Ítem dos"] }],
+            }],
+            baremo: [
+              { nombre: "Bajo", desde: 2, hasta: 3, porcentaje: 60 },
+              { nombre: "Alto", desde: 4, hasta: 6, porcentaje: 40 },
+            ],
+          }],
+        },
+      }),
+    });
+    assert.equal(creado.status, 201);
+    const id = (await creado.json()).proyecto.id;
+
+    await detener();
+    borrarDisco();
+    await arrancar();
+
+    const sesion2 = await login(email, "ClaveTesista123!");
+    const leido = await fetch(`${BASE}/proyectos/${id}`, {
+      headers: { Authorization: `Bearer ${sesion2.body.token}` },
+    });
+    assert.equal(leido.status, 200, "el proyecto sigue ahí tras borrarse el disco");
+    const p = (await leido.json()).proyecto;
+    assert.equal(p.nombre, "Tesis persistente");
+    assert.equal(p.instrumento.variables[0].dimensiones[0].indicadores[0].items.length, 2,
+      "el instrumento completo sobrevive, no solo el nombre");
+    assert.equal(p.instrumento.variables[0].baremo[0].porcentaje, 60);
+    assert.ok(admin);
   });
 
   test("un uso a medias se devuelve tras un reinicio con el disco borrado", async () => {

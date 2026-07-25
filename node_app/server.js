@@ -24,6 +24,23 @@ import {
 // borraba todas las cuentas con sus usos y sus claves.
 import { closeStore, flushStore, initStore, persistUsers } from "./lib/store/index.js";
 import { googleClientId, googleEnabled, verifyGoogleIdToken } from "./lib/google-auth.js";
+// Proyecto de tesis: el instrumento se define UNA vez aqui y lo reutilizan las
+// herramientas, en vez de re-escribirlo en cada una.
+import {
+  aplicarCambios,
+  crearProyecto,
+  esErrorDeUsuario,
+  limiteDelPlan,
+} from "./lib/proyectos/index.js";
+import {
+  borrarProyecto,
+  borrarProyectosDeUsuario,
+  contarProyectos,
+  guardarProyecto,
+  initProyectos,
+  listarProyectos,
+  obtenerProyecto,
+} from "./lib/proyectos/store.js";
 import {
   COOLDOWN_DAYS,
   initDeletedAccounts,
@@ -969,6 +986,7 @@ const cargado = await initStore(USER_STORE_PATH);
 users = cargado.usuarios;
 initPendingUses(cargado.pendientes);
 initDeletedAccounts(cargado.borradas);
+await initProyectos(USER_STORE_PATH);
 ensureBootstrapAdmin();
 recoverPendingUses();
 // El admin inicial y los reembolsos deben estar en firme antes de atender.
@@ -1264,6 +1282,8 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Sus proyectos se van con la cuenta: es parte de "eliminar tus datos".
+      await borrarProyectosDeUsuario(user.id);
       users = users.filter((item) => item.id !== user.id);
       await writeUsers();
       // eslint-disable-next-line no-console
@@ -1645,6 +1665,85 @@ const server = http.createServer(async (req, res) => {
         excelFileName: "Alfa_Cronbach.xlsx",
       });
       return;
+    }
+
+
+    // ── Proyectos de tesis ──────────────────────────────────────────────────
+    // El instrumento (variables, dimensiones, indicadores, items y escala) se
+    // define una sola vez por proyecto. Hoy cada herramienta lo pide de nuevo:
+    // esto es lo que lo arregla.
+    if (pathname === "/proyectos" && (req.method === "GET" || req.method === "POST")) {
+      const user = requireAuth(req);
+
+      if (req.method === "GET") {
+        sendJson(res, 200, {
+          ok: true,
+          proyectos: await listarProyectos(user.id),
+          limite: limiteDelPlan(user.plan),
+        });
+        return;
+      }
+
+      const limite = limiteDelPlan(user.plan);
+      if (await contarProyectos(user.id) >= limite) {
+        throw new HttpError(403, `Tu plan permite ${limite} proyecto(s) a la vez. `
+          + "Elimina uno o amplía tu plan para crear otro.");
+      }
+      const payload = await parseJsonBody(req);
+      let proyecto;
+      try {
+        proyecto = crearProyecto({
+          userId: user.id,
+          nombre: payload?.nombre,
+          instrumento: payload?.instrumento,
+        });
+      } catch (err) {
+        // Los errores de validacion son del usuario (400); el resto, del
+        // servidor. Sin distinguirlos, un nombre vacio devolveria un 500.
+        throw new HttpError(esErrorDeUsuario(err) ? 400 : 500, err.message);
+      }
+      await guardarProyecto(proyecto);
+      logActivity(user, `Creó el proyecto "${proyecto.nombre}"`);
+      await writeUsers();
+      sendJson(res, 201, { ok: true, proyecto });
+      return;
+    }
+
+    const proyectoRoute = pathname.match(/^\/proyectos\/([0-9a-fA-F-]+)$/);
+    if (proyectoRoute) {
+      const user = requireAuth(req);
+      const proyecto = await obtenerProyecto(proyectoRoute[1]);
+      if (!proyecto) throw new HttpError(404, "Proyecto no encontrado.");
+      // Un proyecto es privado: ni siquiera un admin lo lee por accidente.
+      if (proyecto.userId !== user.id) {
+        throw new HttpError(404, "Proyecto no encontrado.");
+      }
+
+      if (req.method === "GET") {
+        sendJson(res, 200, { ok: true, proyecto });
+        return;
+      }
+
+      if (req.method === "PATCH") {
+        const payload = await parseJsonBody(req);
+        let actualizado;
+        try {
+          actualizado = aplicarCambios(proyecto, payload ?? {});
+        } catch (err) {
+          throw new HttpError(esErrorDeUsuario(err) ? 400 : 500, err.message);
+        }
+        await guardarProyecto(actualizado);
+        sendJson(res, 200, { ok: true, proyecto: actualizado });
+        return;
+      }
+
+      if (req.method === "DELETE") {
+        await borrarProyecto(proyecto.id);
+        logActivity(user, `Eliminó el proyecto "${proyecto.nombre}"`);
+        await writeUsers();
+        sendJson(res, 200, { ok: true });
+        return;
+      }
     }
 
     // ── Tabulacion Descriptiva (IA) ─────────────────────────────────────────

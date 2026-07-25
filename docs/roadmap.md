@@ -88,6 +88,30 @@ Todo esto espera a comprar un dominio (~$10/año). Es la dependencia más barata
 
 ## Fase 4 — Objeto "Proyecto de tesis" + historial
 
+**Estado (2026-07-25): backend hecho.** El objeto Proyecto existe, con su
+Instrumento (escala, variables, dimensiones, indicadores, ítems y baremo con
+porcentajes), persistido en Postgres y con sus endpoints (`GET/POST /proyectos`,
+`GET/PATCH/DELETE /proyectos/:id`). Un proyecto es privado: ni siquiera un
+administrador puede leerlo. Al eliminar la cuenta se borran sus proyectos.
+Límite por plan (free 1, esencial 3, tesista 10). 11 pruebas, más una que
+verifica contra Postgres real que el instrumento sobrevive a un reinicio con el
+disco borrado.
+
+A diferencia del almacén de usuarios, los proyectos se escriben **fila a fila**:
+son muchos y cada uno lleva su instrumento dentro, así que reescribir el arreglo
+completo en cada cambio mandaría megas a Neon por renombrar algo.
+
+**Falta**: la interfaz (crear/elegir proyecto) y conectar las herramientas para
+que lean el instrumento en vez de pedirlo de nuevo.
+
+**Retención de archivos (decidido)**: sin caducidad por tiempo. Los archivos
+viven mientras exista el proyecto y el usuario los borra cuando quiera; cada
+plan tendrá su cuota de espacio. Se descartó caducar a los 5 días: una tesis
+dura meses y el historial existe justamente para "regenerar tras observaciones
+del jurado". Los números lo respaldan — un proyecto completo ronda 0,4 MB y en
+los 10 GB gratis de R2 caben ~24.600, así que 200 usuarios con 3 proyectos cada
+uno ocupan el 2,5% del plan gratuito.
+
 **Objetivo**: la recomendación #1 de la auditoría UX; habilita el "Continuar proyecto" del mock.
 
 - Nuevo objeto **Proyecto** con su **Instrumento** (variables → dimensiones → indicadores → ítems + escala) definido UNA vez y reutilizado por Tabulación, Confiabilidad, Descriptiva y Matriz (hoy se re-tipea en cada herramienta).
