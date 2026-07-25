@@ -12,8 +12,10 @@ import type {
   HumanizadorJobResponse,
   HumanizadorStartResponse,
   InlineGenerateResponse,
+  Instrumento,
   MatrizJobResponse,
   MatrizStartResponse,
+  Proyecto,
   TabConfig,
   TemplateInfo,
   TitulosJobResponse,
@@ -222,6 +224,29 @@ export const startHumanizador = (apiBaseUrl: string, token: string, input: Human
 
 export const getHumanizadorJob = (apiBaseUrl: string, token: string, jobId: string) =>
   request<HumanizadorJobResponse>(apiBaseUrl, `/humanizador/jobs/${jobId}`, { token });
+
+// ── Proyectos de tesis ───────────────────────────────────────────────────────
+// El proyecto es privado: el servidor responde 404 a cualquiera que no sea su
+// dueño, así que no hace falta filtrar nada aquí.
+export const listarProyectos = (apiBaseUrl: string, token: string) =>
+  request<{ proyectos: Proyecto[]; limite: number }>(apiBaseUrl, "/proyectos", { token });
+
+export const crearProyecto = (
+  apiBaseUrl: string, token: string, datos: { nombre: string; instrumento?: Instrumento },
+) => request<{ proyecto: Proyecto }>(apiBaseUrl, "/proyectos", { method: "POST", token, body: datos });
+
+export const obtenerProyecto = (apiBaseUrl: string, token: string, id: string) =>
+  request<{ proyecto: Proyecto }>(apiBaseUrl, `/proyectos/${id}`, { token });
+
+export const actualizarProyecto = (
+  apiBaseUrl: string, token: string, id: string,
+  cambios: { nombre?: string; instrumento?: Instrumento },
+) => request<{ proyecto: Proyecto }>(apiBaseUrl, `/proyectos/${id}`, {
+  method: "PATCH", token, body: cambios,
+});
+
+export const eliminarProyecto = (apiBaseUrl: string, token: string, id: string) =>
+  request<{ ok?: boolean }>(apiBaseUrl, `/proyectos/${id}`, { method: "DELETE", token });
 
 // ── Usuarios (admin) ─────────────────────────────────────────────────────────
 export const listUsers = (apiBaseUrl: string, token: string) =>

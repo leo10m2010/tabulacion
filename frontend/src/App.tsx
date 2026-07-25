@@ -2,6 +2,7 @@
 import {
   ChevronRight,
   FileSpreadsheet,
+  FolderOpen,
   LayoutDashboard,
   Loader2,
   Lock,
@@ -19,6 +20,7 @@ import { cn } from "./lib/utils";
 import type {
   AppIntent as AuthIntent,
   AppSection,
+  Proyecto,
   AppView,
   AuthUser,
   ThemeMode,
@@ -42,6 +44,7 @@ import { UsersSection } from "./components/sections/UsersSection";
 import { HomeSection } from "./components/sections/HomeSection";
 import { TabulacionSection } from "./components/sections/TabulacionSection";
 import { PlanesSection } from "./components/sections/PlanesSection";
+import { ProyectosSection } from "./components/sections/ProyectosSection";
 
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
@@ -82,6 +85,20 @@ export default function App() {
   // Desde qué herramienta llegó a "Mejorar mi plan". Es la razón real por la
   // que escribe, así que viaja hasta el mensaje de WhatsApp.
   const [planDesde, setPlanDesde] = useState<string | null>(null);
+
+  // Proyecto activo: el que usarán las herramientas cuando lean el instrumento.
+  // Se recuerda entre visitas para no obligar a elegirlo cada vez.
+  const [proyectoActivo, setProyectoActivo] = useState<Proyecto | null>(null);
+  const [proyectoActivoId, setProyectoActivoId] = useState<string | null>(
+    () => localStorage.getItem("proyectoActivoId"),
+  );
+
+  const seleccionarProyecto = (p: Proyecto | null) => {
+    setProyectoActivo(p);
+    setProyectoActivoId(p?.id ?? null);
+    if (p) localStorage.setItem("proyectoActivoId", p.id);
+    else localStorage.removeItem("proyectoActivoId");
+  };
 
   const irAPlanes = (desdeHerramienta?: string) => {
     setPlanDesde(desdeHerramienta ?? null);
@@ -136,6 +153,22 @@ export default function App() {
       setAuthError("Tu sesión expiró. Vuelve a iniciar sesión para continuar.");
     }
   }, []);
+
+  // Recupera el proyecto activo recordado. Si ya no existe (lo borró), se
+  // olvida en silencio en vez de dejar la app apuntando a la nada.
+  useEffect(() => {
+    if (!authToken || !authUser || !proyectoActivoId) return;
+    let isMounted = true;
+    api.obtenerProyecto(apiBaseUrl, authToken, proyectoActivoId)
+      .then((r) => { if (isMounted) setProyectoActivo(r.proyecto); })
+      .catch(() => {
+        if (!isMounted) return;
+        setProyectoActivo(null);
+        setProyectoActivoId(null);
+        localStorage.removeItem("proyectoActivoId");
+      });
+    return () => { isMounted = false; };
+  }, [apiBaseUrl, authToken, authUser, proyectoActivoId]);
 
   // Despierta la API apenas se abre la app: si el hosting suspende el servidor
   // por inactividad (arranque en frío), el login y la generación lo encuentran
@@ -356,6 +389,22 @@ export default function App() {
             {activeSection === "inicio" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
           </button>
 
+          <button
+            onClick={() => setActiveSection("proyectos")}
+            className={cn(
+              "mt-1 flex w-full items-center gap-2.5 rounded-full px-3.5 py-2.5 text-sm font-medium transition-all active:scale-[0.99]",
+              activeSection === "proyectos"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
+          >
+            <FolderOpen className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-left">
+              {proyectoActivo ? proyectoActivo.nombre : "Mis proyectos"}
+            </span>
+            {activeSection === "proyectos" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
+          </button>
+
           {NAV_GROUPS.map((group) => (
             <div key={group.id}>
               <p className="mb-2 mt-5 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{group.label}</p>
@@ -518,6 +567,16 @@ export default function App() {
                 Entendido
               </button>
             </div>
+          )}
+
+          {activeSection === "proyectos" && authUser && (
+            <ProyectosSection
+              apiBaseUrl={apiBaseUrl}
+              authToken={authToken}
+              authUser={authUser}
+              proyectoActivoId={proyectoActivoId}
+              onSeleccionar={seleccionarProyecto}
+            />
           )}
 
           {activeSection === "planes" && authUser && (

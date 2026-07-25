@@ -337,10 +337,39 @@ export type UseTool = "tabulacion" | "confiabilidad" | "descriptiva" | "titulos"
 
 export type ThemeMode = "light" | "dark";
 export type AppView = "landing" | "app";
-export type AppSection = "inicio" | "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "titulos" | "matriz" | "humanizador" | "usuarios" | "cuenta" | "planes";
+export type AppSection = "inicio" | "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "titulos" | "matriz" | "humanizador" | "usuarios" | "cuenta" | "planes" | "proyectos";
 export type WizardStep = 1 | 2 | 3;
 
 // A qué vino el usuario a la pantalla de acceso. Con Google entrar y crear
 // cuenta son la MISMA acción, así que esto no cambia el flujo: solo el énfasis
 // (qué se explica primero y qué queda plegado).
 export type AppIntent = "login" | "registro";
+
+// ── Proyecto de tesis ────────────────────────────────────────────────────────
+// El instrumento se define UNA vez aquí y lo reutilizan las herramientas, en
+// vez de re-escribirlo en cada una (recomendación #1 de la auditoría UX).
+export interface InstrumentoIndicador { nombre: string; items: string[] }
+export interface InstrumentoDimension { nombre: string; indicadores: InstrumentoIndicador[] }
+export interface InstrumentoNivel { nombre: string; desde: number; hasta: number; porcentaje: number }
+
+export interface InstrumentoVariable {
+  nombre: string;
+  dimensiones: InstrumentoDimension[];
+  baremo: InstrumentoNivel[];
+  // Lo calcula el servidor al guardar; no se manda.
+  totalItems?: number;
+}
+
+export interface Instrumento {
+  escala: string[];
+  variables: InstrumentoVariable[];
+}
+
+export interface Proyecto {
+  id: string;
+  userId: string;
+  nombre: string;
+  instrumento: Instrumento;
+  createdAt: string;
+  updatedAt: string;
+}

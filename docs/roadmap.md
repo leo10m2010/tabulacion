@@ -101,8 +101,14 @@ A diferencia del almacén de usuarios, los proyectos se escriben **fila a fila**
 son muchos y cada uno lleva su instrumento dentro, así que reescribir el arreglo
 completo en cada cambio mandaría megas a Neon por renombrar algo.
 
-**Falta**: la interfaz (crear/elegir proyecto) y conectar las herramientas para
-que lean el instrumento en vez de pedirlo de nuevo.
+**Interfaz hecha (2026-07-25)**: seccion "Mis proyectos" con crear, listar,
+elegir el activo y eliminar (con confirmacion). El proyecto activo se recuerda
+entre visitas y da nombre a su entrada en la barra lateral; si se borro, se
+olvida en silencio en vez de dejar la app apuntando a la nada.
+
+**Falta**: el editor del instrumento y conectar las herramientas para que lo
+lean en vez de pedirlo de nuevo (Tabulacion, Confiabilidad, Descriptiva y
+Matriz).
 
 **Retención de archivos (decidido)**: sin caducidad por tiempo. Los archivos
 viven mientras exista el proyecto y el usuario los borra cuando quiera; cada
