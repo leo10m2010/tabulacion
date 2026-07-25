@@ -337,7 +337,7 @@ export type UseTool = "tabulacion" | "confiabilidad" | "descriptiva" | "titulos"
 
 export type ThemeMode = "light" | "dark";
 export type AppView = "landing" | "app";
-export type AppSection = "inicio" | "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "titulos" | "matriz" | "humanizador" | "usuarios" | "cuenta";
+export type AppSection = "inicio" | "tabulacion" | "descriptiva" | "confiabilidad" | "forms" | "titulos" | "matriz" | "humanizador" | "usuarios" | "cuenta" | "planes";
 export type WizardStep = 1 | 2 | 3;
 
 // A qué vino el usuario a la pantalla de acceso. Con Google entrar y crear

@@ -1,9 +1,8 @@
-﻿import React, { useMemo, useState } from "react";
+﻿import React, { useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import {
   ArrowRight,
   BarChart3,
-  Building2,
   Check,
   ChevronDown,
   Download,
@@ -18,11 +17,11 @@ import {
   SlidersHorizontal,
   Sun,
   TrendingUp,
-  UserRound,
 } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
+import { PLANS, openWhatsAppPlan } from "../lib/plans";
 import type { ThemeMode } from "../lib/types";
 import { Reveal, springSoft } from "./motion-primitives";
 import { ToolsShowcase } from "./ToolsShowcase";
@@ -41,79 +40,11 @@ export function LandingPage({
   const reduce = useReducedMotion();
 
   const CONTACT_EMAIL = "contacto@tutorica.com";
-  const CONTACT_WHATSAPP = "51975212132"; // +51 975 212 132
-  const openWhatsApp = () => {
-    const text = encodeURIComponent("Hola, me interesa el Plan Institución de TesisHub.");
-    window.open(`https://wa.me/${CONTACT_WHATSAPP}?text=${text}`, "_blank", "noopener");
-  };
+  // Planes, precios y contacto viven en lib/plans.ts: los comparte con la
+  // página "Mejorar mi plan" de dentro de la app.
+  const plans = PLANS;
+  const openWhatsApp = () => openWhatsAppPlan({ plan: "Plan Institución" });
   const goToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
-
-  // Los tres planes funcionan por usos: cada generación o corrida consume 1
-  // uso de su herramienta, y el plan carga la cuota mensual de cada una.
-  const plans = useMemo(
-    () => [
-      {
-        id: "esencial",
-        name: "Plan Esencial",
-        audience: "Para empezar",
-        icon: UserRound,
-        priceMonthlyUsd: "USD 15",
-        priceYearlyUsd: "USD 150",
-        priceMonthlyPen: "S/ 49",
-        priceYearlyPen: "S/ 490",
-        description: "Para trabajos académicos puntuales o para probar el sistema en serio.",
-        highlights: [
-          "2 tabulaciones y 2 pruebas de confiabilidad",
-          "3 bases descriptivas con IA",
-          "3 generaciones de títulos y 1 matriz",
-          "5 humanizaciones de texto",
-          "2 corridas de Forms",
-        ],
-        cta: "Avanzar mi tesis",
-        featured: false,
-      },
-      {
-        id: "tesista",
-        name: "Plan Tesista",
-        audience: "Tesistas y asesores",
-        icon: GraduationCap,
-        priceMonthlyUsd: "USD 29",
-        priceYearlyUsd: "USD 290",
-        priceMonthlyPen: "S/ 109",
-        priceYearlyPen: "S/ 1,090",
-        description: "La cuota completa para sacar adelante una tesis de principio a fin.",
-        highlights: [
-          "10 tabulaciones y 10 pruebas de confiabilidad",
-          "10 bases descriptivas y 10 generaciones de títulos",
-          "5 matrices de consistencia",
-          "30 humanizaciones de texto",
-          "10 corridas de Forms",
-        ],
-        cta: "Avanzar mi tesis",
-        featured: true,
-      },
-      {
-        id: "institucion",
-        name: "Plan Institución",
-        audience: "Universidades y consultoras",
-        icon: Building2,
-        priceMonthlyUsd: "USD 129",
-        priceYearlyUsd: "USD 1,290",
-        priceMonthlyPen: "S/ 485",
-        priceYearlyPen: "S/ 4,850",
-        description: "Para equipos que gestionan múltiples tesis con control administrativo.",
-        highlights: [
-          "Hasta 20 cuentas, cada una con cuota Tesista",
-          "Panel de administrador",
-          "Recargas por herramienta para el equipo",
-          "Soporte prioritario",
-        ],
-        cta: "Contáctanos",
-        featured: false,
-      },
-    ],
-    [],
-  );
 
   const pasos = [
     { titulo: "Configura", desc: "Variables, dimensiones, indicadores y la escala de tu instrumento, guiado paso a paso." },

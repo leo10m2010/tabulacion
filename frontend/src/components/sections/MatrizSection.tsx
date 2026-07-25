@@ -85,10 +85,11 @@ function CellList({ items }: { items: string[] }) {
 // El backend analiza el título (conector "y"/"en"/"para", tipo, enfoque,
 // nivel, diseño), busca dimensiones reales con autor citable para cada
 // variable y devuelve la matriz en JSON + Word apaisado.
-export function MatrizSection({ apiBaseUrl, authToken, authUser }: {
+export function MatrizSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  onUpgrade?: (herramienta: string) => void;
 }) {
   const reduce = useReducedMotion() ?? false;
   const [titulo, setTitulo] = useState("");
@@ -229,7 +230,7 @@ export function MatrizSection({ apiBaseUrl, authToken, authUser }: {
         "Descarga tu matriz completa en Word apaisado",
       ]} />
 
-      <SubscriptionWarning user={authUser} tool="matriz" />
+      <SubscriptionWarning user={authUser} tool="matriz" onUpgrade={onUpgrade} />
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>

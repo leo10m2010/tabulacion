@@ -14,7 +14,13 @@ import type { AuthUser, UseTool } from "../lib/types";
 //
 // Es el ÚNICO sitio donde se explica que falta cuota: la sidebar solo marca el
 // candado. Dos mensajes diciendo lo mismo en la misma pantalla sobran.
-export function SubscriptionWarning({ user, tool }: { user: AuthUser; tool: UseTool }) {
+export function SubscriptionWarning({ user, tool, onUpgrade }: {
+  user: AuthUser;
+  tool: UseTool;
+  // Lleva a "Mejorar mi plan". Sin esto el aviso decía "escríbenos" sin decir
+  // cuánto cuesta ni dónde, que es justo donde se cae la conversión.
+  onUpgrade?: (herramienta: string) => void;
+}) {
   if (user.role === "admin") return null;
   const left = user.uses?.[tool] ?? 0;
   if (left > 0) return null;
@@ -35,8 +41,16 @@ export function SubscriptionWarning({ user, tool }: { user: AuthUser; tool: UseT
           <p className="text-amber-700/90 dark:text-amber-300/90">{descripcion}</p>
         )}
         <p className="text-amber-700/90 dark:text-amber-300/90">
-          Puedes ver cómo funciona, pero para generar necesitas una recarga. Escríbenos y te ampliamos el plan.
+          Puedes ver cómo funciona, pero para generar necesitas una recarga.
         </p>
+        {onUpgrade && (
+          <button
+            onClick={() => onUpgrade(label)}
+            className="pt-1 font-medium text-amber-800 underline underline-offset-4 hover:text-amber-900 dark:text-amber-200 dark:hover:text-amber-100"
+          >
+            Ver planes y precios
+          </button>
+        )}
       </div>
     </div>
   );

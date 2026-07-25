@@ -70,10 +70,11 @@ function MarkdownLite({ text }: { text: string }) {
 // pantalla (NO chat, sin historial ni turnos). El backend hace UNA llamada a
 // GLM-5.2 con la tool openrouter:web_search y devuelve 3 propuestas de
 // título desarrolladas según la carrera, universidad y lugar indicados.
-export function TitulosSection({ apiBaseUrl, authToken, authUser }: {
+export function TitulosSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  onUpgrade?: (herramienta: string) => void;
 }) {
   const reduce = useReducedMotion() ?? false;
   const [universidad, setUniversidad] = useState("");
@@ -213,7 +214,7 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser }: {
         "Recibe 3 títulos originales listos en Word",
       ]} />
 
-      <SubscriptionWarning user={authUser} tool="titulos" />
+      <SubscriptionWarning user={authUser} tool="titulos" onUpgrade={onUpgrade} />
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>

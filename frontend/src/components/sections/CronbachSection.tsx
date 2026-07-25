@@ -56,10 +56,11 @@ const interpretacionAlfa = (alpha: number) => {
 // nombre de la variable, sus dimensiones con la cantidad de ítems y el N de
 // encuestados, y genera un Excel de una sola hoja con datos simulados de alta
 // consistencia interna y las fórmulas vivas (VARP, COUNT y el α en celda).
-export function CronbachSection({ apiBaseUrl, authToken, authUser }: {
+export function CronbachSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  onUpgrade?: (herramienta: string) => void;
 }) {
   const [variable, setVariable] = useState("");
   const [encuestados, setEncuestados] = useState("30");
@@ -146,7 +147,7 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser }: {
         "Descarga el Excel con el α calculado y su interpretación",
       ]} />
 
-      <SubscriptionWarning user={authUser} tool="confiabilidad" />
+      <SubscriptionWarning user={authUser} tool="confiabilidad" onUpgrade={onUpgrade} />
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>

@@ -119,10 +119,11 @@ function MetricasComparison({ metricas }: { metricas: HumanizadorMetricas }) {
 // ritmo (burstiness) y el léxico (perplejidad) sin tocar citas APA, cifras
 // ni significado. El backend mide el resultado y aplica una repasada
 // dirigida cuando sigue sonando a máquina.
-export function HumanizadorSection({ apiBaseUrl, authToken, authUser }: {
+export function HumanizadorSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  onUpgrade?: (herramienta: string) => void;
 }) {
   const reduce = useReducedMotion() ?? false;
   const [texto, setTexto] = useState("");
@@ -281,7 +282,7 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser }: {
         "Compara las métricas y descarga el resultado en Word",
       ]} />
 
-      <SubscriptionWarning user={authUser} tool="humanizador" />
+      <SubscriptionWarning user={authUser} tool="humanizador" onUpgrade={onUpgrade} />
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>

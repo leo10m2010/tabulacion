@@ -75,10 +75,11 @@ const EJEMPLO_CUESTIONARIO = `CUESTIONARIO SOBRE CONSUMO DE BEBIDAS AZUCARADAS
 // .docx), la IA simula la base de datos como JSON y el backend construye el
 // Excel (base + frecuencias/porcentajes por ítem + baremo si corresponde). La
 // generación corre como job en el servidor y aquí solo se hace polling.
-export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
+export function DescriptivaSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  onUpgrade?: (herramienta: string) => void;
 }) {
   const reduce = useReducedMotion() ?? false;
   const [texto, setTexto] = useState("");
@@ -254,7 +255,7 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser }: {
         "Descarga el Excel con base, resultados y baremo",
       ]} />
 
-      <SubscriptionWarning user={authUser} tool="descriptiva" />
+      <SubscriptionWarning user={authUser} tool="descriptiva" onUpgrade={onUpgrade} />
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
         <CardHeader>

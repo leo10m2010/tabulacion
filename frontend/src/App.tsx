@@ -85,6 +85,7 @@ import { MatrizSection } from "./components/sections/MatrizSection";
 import { HumanizadorSection } from "./components/sections/HumanizadorSection";
 import { UsersSection } from "./components/sections/UsersSection";
 import { HomeSection } from "./components/sections/HomeSection";
+import { PlanesSection } from "./components/sections/PlanesSection";
 
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
@@ -136,6 +137,14 @@ export default function App() {
   // Mensaje de bienvenida tras crear la cuenta con Google. Sin esto, alguien
   // que acaba de entrar ve herramientas bloqueadas y cree que está roto.
   const [welcomeMessage, setWelcomeMessage] = useState<string | null>(null);
+  // Desde qué herramienta llegó a "Mejorar mi plan". Es la razón real por la
+  // que escribe, así que viaja hasta el mensaje de WhatsApp.
+  const [planDesde, setPlanDesde] = useState<string | null>(null);
+
+  const irAPlanes = (desdeHerramienta?: string) => {
+    setPlanDesde(desdeHerramienta ?? null);
+    setActiveSection("planes");
+  };
 
   const [templateInfo, setTemplateInfo] = useState<TemplateInfo | null>(null);
   const [authToken, setAuthToken] = useState<string>(() => localStorage.getItem("authToken") ?? "");
@@ -730,6 +739,23 @@ export default function App() {
             </div>
           ))}
 
+          {/* Solo para quien tiene cuota limitada: un admin no compra planes. */}
+          {!isAdmin && (
+            <button
+              onClick={() => irAPlanes()}
+              className={cn(
+                "mt-5 flex w-full items-center gap-2.5 rounded-full px-3.5 py-2.5 text-sm font-medium transition-all",
+                activeSection === "planes"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-primary hover:bg-primary/10",
+              )}
+            >
+              <Sparkles className="h-4 w-4 shrink-0" />
+              Mejorar mi plan
+              {activeSection === "planes" && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
+            </button>
+          )}
+
           {isAdmin && (
             <>
               <p className="mb-2 mt-5 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Administración</p>
@@ -845,6 +871,10 @@ export default function App() {
             </div>
           )}
 
+          {activeSection === "planes" && authUser && (
+            <PlanesSection authUser={authUser} herramientaBloqueada={planDesde} />
+          )}
+
           {/* ── Inicio (dashboard) ── */}
           {activeSection === "inicio" && authUser && (
             <HomeSection user={authUser} onNavigate={setActiveSection} />
@@ -859,7 +889,7 @@ export default function App() {
               </div>
 
               {/* Tabulación exige suscripción vigente; Forms va por usos y sigue disponible. */}
-              <SubscriptionWarning user={authUser} tool="tabulacion" />
+              <SubscriptionWarning user={authUser} tool="tabulacion" onUpgrade={irAPlanes} />
 
               <WizardProgress currentStep={wizardStep} />
 
@@ -1920,11 +1950,11 @@ export default function App() {
 
           {/* ── Confiabilidad (Alfa de Cronbach) ── */}
           {activeSection === "descriptiva" && authUser && (
-            <DescriptivaSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+            <DescriptivaSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} onUpgrade={irAPlanes} />
           )}
 
           {activeSection === "confiabilidad" && authUser && (
-            <CronbachSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+            <CronbachSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} onUpgrade={irAPlanes} />
           )}
 
           {/* ── Integraciones (clave de API + Tutorica Forms) ── */}
@@ -1934,17 +1964,17 @@ export default function App() {
 
           {/* ── Generador de Títulos de Investigación (IA) ── */}
           {activeSection === "titulos" && authUser && (
-            <TitulosSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+            <TitulosSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} onUpgrade={irAPlanes} />
           )}
 
           {/* ── Matriz de Consistencia (IA) ── */}
           {activeSection === "matriz" && authUser && (
-            <MatrizSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+            <MatrizSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} onUpgrade={irAPlanes} />
           )}
 
           {/* ── Humanizador de texto académico (IA) ── */}
           {activeSection === "humanizador" && authUser && (
-            <HumanizadorSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+            <HumanizadorSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} onUpgrade={irAPlanes} />
           )}
 
           {/* ── Usuarios (admin) ── */}
