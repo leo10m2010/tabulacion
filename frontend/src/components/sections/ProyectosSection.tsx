@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Check, FolderOpen, Loader2, Plus, Trash2 } from "lucide-react";
+import { Check, FolderOpen, Loader2, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
+import { InstrumentoEditor } from "./InstrumentoEditor";
 import * as api from "../../lib/api";
 import { formatDateTime } from "../../lib/helpers";
 import { cn } from "../../lib/utils";
@@ -31,6 +32,8 @@ export function ProyectosSection({ apiBaseUrl, authToken, authUser, proyectoActi
   const [error, setError] = useState<string | null>(null);
   // Se confirma antes de borrar: es irreversible y se lleva el instrumento.
   const [confirmando, setConfirmando] = useState<string | null>(null);
+  // Proyecto cuyo instrumento se está editando (null = se ve la lista).
+  const [editando, setEditando] = useState<Proyecto | null>(null);
 
   // Un contador en vez de una función suelta: así las dependencias del efecto
   // quedan declaradas de verdad (sin silenciar la regla) y recargar es
@@ -85,6 +88,24 @@ export function ProyectosSection({ apiBaseUrl, authToken, authUser, proyectoActi
 
   const alLimite = proyectos !== null && limite > 0 && proyectos.length >= limite;
 
+  if (editando) {
+    return (
+      <InstrumentoEditor
+        apiBaseUrl={apiBaseUrl}
+        authToken={authToken}
+        proyecto={editando}
+        onGuardado={(actualizado) => {
+          setEditando(actualizado);
+          // Si es el proyecto activo, lo que tiene App en memoria acaba de
+          // quedar viejo: las herramientas leerían el instrumento anterior.
+          if (proyectoActivoId === actualizado.id) onSeleccionar(actualizado);
+          recargar();
+        }}
+        onVolver={() => setEditando(null)}
+      />
+    );
+  }
+
   return (
     <div className="step-enter mx-auto max-w-3xl space-y-6">
       <div>
@@ -92,6 +113,11 @@ export function ProyectosSection({ apiBaseUrl, authToken, authUser, proyectoActi
         <p className="mt-1 text-sm text-muted-foreground">
           Un proyecto guarda tu instrumento —variables, dimensiones, indicadores e ítems— para no
           volver a escribirlo en cada herramienta.
+        </p>
+        {/* El proyecto acelera, no obliga: quien solo quiere una tabulación
+            suelta entra a la herramienta y listo. */}
+        <p className="mt-1 text-sm text-muted-foreground">
+          Es opcional: todas las herramientas funcionan por su cuenta, sin crear ningún proyecto.
         </p>
       </div>
 
@@ -166,6 +192,10 @@ export function ProyectosSection({ apiBaseUrl, authToken, authUser, proyectoActi
                         Usar este
                       </Button>
                     )}
+                    <Button variant="outline" size="sm" onClick={() => setEditando(p)}>
+                      <SlidersHorizontal className="h-4 w-4" />
+                      {p.instrumento.variables.length === 0 ? "Definir instrumento" : "Instrumento"}
+                    </Button>
                     {confirmando === p.id ? (
                       <>
                         <Button
