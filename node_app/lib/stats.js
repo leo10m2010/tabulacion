@@ -279,6 +279,94 @@ const pickProfile = () => {
 // la heterogeneidad (rasgo de estilo de respuesta + grupos latentes) sin
 // forzar correlacion extra. Los items agregan su propio ruido y perfil de
 // distribucion, siempre dentro del rango exacto de la escala.
+// ── Ajuste al baremo pedido ─────────────────────────────────────────────────
+// La interfaz pregunta "que porcentaje de personas cae en cada nivel" y obliga
+// a que sume 100, pero la simulacion no lo usaba: el reparto real salia de la
+// forma de los datos y podia desviarse muchisimo (pedir 19% en "Alto" y obtener
+// 35%). Aqui se fuerza.
+//
+// Como se hace sin romper la correlacion: Spearman depende SOLO del orden de
+// los totales. Se ordenan los encuestados por su total actual y se les asigna
+// un total objetivo NO DECRECIENTE dentro de la banda que les toca. Al ser una
+// transformacion monotona, el orden —y con el la correlacion de rangos— se
+// conserva salvo por los empates que obligue una banda estrecha.
+
+// Reparte `total` unidades segun proporciones, sin perder ni inventar ninguna
+// (metodo del resto mayor).
+const repartirEnteros = (proporciones, total) => {
+  const exactos = proporciones.map((p) => p * total);
+  const base = exactos.map(Math.floor);
+  let faltan = total - base.reduce((a, b) => a + b, 0);
+  const orden = exactos
+    .map((v, i) => [v - Math.floor(v), i])
+    .sort((a, b) => b[0] - a[0]);
+  for (let k = 0; faltan > 0; k += 1, faltan -= 1) base[orden[k % orden.length][1]] += 1;
+  return base;
+};
+
+// Reparte una diferencia entre los items de una persona, respetando el minimo
+// y el maximo de la escala. Va en ronda para no deformar un solo item.
+const ajustarFila = (valores, objetivo, minResp, maxResp) => {
+  let delta = objetivo - valores.reduce((a, b) => a + b, 0);
+  let vueltas = 0;
+  while (delta !== 0 && vueltas < valores.length * (maxResp - minResp + 2)) {
+    for (let i = 0; i < valores.length && delta !== 0; i += 1) {
+      if (delta > 0 && valores[i] < maxResp) { valores[i] += 1; delta -= 1; }
+      else if (delta < 0 && valores[i] > minResp) { valores[i] -= 1; delta += 1; }
+    }
+    vueltas += 1;
+  }
+  return delta === 0;
+};
+
+// Devuelve { cumple, obtenido } y modifica `data` en el sitio.
+export const ajustarABaremo = (data, varNum, count, bandas, objetivo, rows, minResp, maxResp) => {
+  if (!bandas || !objetivo || bandas.length !== objetivo.length) return null;
+
+  const cols = [];
+  for (let c = 1; c <= count; c += 1) cols.push(data[`V${varNum}_${c}`]);
+  const totales = [];
+  for (let r = 0; r < rows; r += 1) {
+    let t = 0;
+    for (const col of cols) t += col[r];
+    totales.push(t);
+  }
+
+  const orden = totales.map((t, i) => [t, i]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cuentas = repartirEnteros(objetivo, rows);
+
+  let k = 0;
+  for (let b = 0; b < bandas.length; b += 1) {
+    const n = cuentas[b];
+    const { min, max } = bandas[b];
+    for (let p = 0; p < n; p += 1, k += 1) {
+      const fila = orden[k][1];
+      // Se reparten dentro de la banda para no amontonar a todos en el mismo
+      // total (los empates reducirian la correlacion de rangos).
+      const objetivoFila = n <= 1
+        ? min
+        : Math.min(max, Math.max(min, min + Math.round((p * (max - min)) / (n - 1))));
+      const valores = cols.map((col) => col[fila]);
+      ajustarFila(valores, objetivoFila, minResp, maxResp);
+      valores.forEach((v, ci) => { cols[ci][fila] = v; });
+    }
+  }
+
+  // Reparto realmente conseguido.
+  const obtenido = bandas.map(() => 0);
+  for (let r = 0; r < rows; r += 1) {
+    let t = 0;
+    for (const col of cols) t += col[r];
+    const idx = bandas.findIndex((bn) => t >= bn.min && t <= bn.max);
+    if (idx >= 0) obtenido[idx] += 1;
+  }
+  return {
+    cumple: obtenido.every((v, i) => v === cuentas[i]),
+    objetivo: cuentas,
+    obtenido,
+  };
+};
+
 export const generateBaseData = (cfg) => {
   const rows = cfg.encuestados;
   const v1Count = cfg.variables[0].totalItems;
@@ -325,6 +413,7 @@ export const generateBaseData = (cfg) => {
   };
 
   const ITEM_STD = 0.55; // ruido por item: la correlacion se controla con w
+  let baremoInfo = [];
   const buildOnce = (w) => {
     const a = Math.sqrt(Math.max(0, Math.min(1, w)));
     const b = Math.sqrt(1 - a * a);
@@ -350,6 +439,18 @@ export const generateBaseData = (cfg) => {
     };
     addColumns(1, v1Count, latent1);
     if (v2Count > 0) addColumns(2, v2Count, latent2);
+    // El ajuste va DENTRO de buildOnce para que el control de correlacion mida
+    // los datos definitivos, no unos que luego cambian.
+    baremoInfo = [];
+    cfg.variables.forEach((variable, vi) => {
+      const count = vi === 0 ? v1Count : v2Count;
+      if (count === 0) return;
+      const r = ajustarABaremo(
+        data, vi + 1, count, variable.baremoVariable, variable.baremoObjetivo,
+        rows, minResponse, maxResponse,
+      );
+      if (r) baremoInfo.push({ variable: variable.nombre, ...r });
+    });
     return data;
   };
 

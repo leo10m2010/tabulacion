@@ -82,6 +82,22 @@ const parseBaremoOverride = (raw, suffix, nivelNames) => {
   return nivelNames.map((nombre, i) => ({ nombre, min: desde[i], max: hasta[i] }));
 };
 
+// Distribucion pedida por el usuario: que porcentaje de encuestados debe caer
+// en cada nivel del baremo. La interfaz la pide de forma explicita ("Porcentaje
+// de personas en cada nivel") y exige que sume 100, asi que la simulacion tiene
+// que respetarla. Devuelve proporciones normalizadas, o undefined si no viene
+// completa (en ese caso la simulacion no fuerza nada).
+const parseBaremoObjetivo = (raw, suffix, nivelNames) => {
+  const pct = Array.isArray(raw[`porcentaje${suffix}`])
+    ? raw[`porcentaje${suffix}`].map((v) => Number(String(v).trim()))
+    : [];
+  if (pct.length !== nivelNames.length) return undefined;
+  if (pct.some((v) => !Number.isFinite(v) || v < 0)) return undefined;
+  const total = pct.reduce((a, b) => a + b, 0);
+  if (total <= 0) return undefined;
+  return pct.map((v) => v / total);
+};
+
 const DEFAULT_NIVEL_NAMES = {
   2: ["Bajo", "Alto"],
   3: ["Bajo", "Medio", "Alto"],
@@ -158,6 +174,7 @@ export const normalizeConfig = (raw) => {
         nombre: varNames[vi]?.trim() || `Variable ${vi + 1}`,
         niveles,
         baremoVariable: parseBaremoOverride(raw, vi === 0 ? "" : "_v2", niveles),
+        baremoObjetivo: parseBaremoObjetivo(raw, vi === 0 ? "" : "_v2", niveles),
         itemNames: Array.isArray(raw[`nombre_items_v${vi + 1}`]) ? raw[`nombre_items_v${vi + 1}`].map(String) : [],
         dimensiones: buildVariableFromFlat(raw, vi + 1, fallbackItems),
       });
