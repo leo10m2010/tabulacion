@@ -27,6 +27,13 @@ jobs:
           cache-dependency-path: node_app/package-lock.json
       - run: npm ci
         working-directory: node_app
+      # node_app/server.js monta el servicio Forms EN EL MISMO PROCESO
+      # (require("../forms/server.js")), asi que necesita sus dependencias para
+      # arrancar siquiera. Sin esto, todas las pruebas que levantan el servidor
+      # mueren con codigo 1 en CI mientras pasan en local, donde forms ya esta
+      # instalado. Es el mismo par de instalaciones que hace Render.
+      - run: npm ci --omit=dev
+        working-directory: forms
       - run: npm run lint
         working-directory: node_app
       # Sin DATABASE_URL, el almacen usa el backend de archivo y las pruebas

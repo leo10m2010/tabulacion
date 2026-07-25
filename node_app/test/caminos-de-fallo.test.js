@@ -108,7 +108,7 @@ describe("la IA falla durante una generacion", () => {
         // mas fiel de provocar el fallo sin depender de la red.
         OPENROUTER_API_KEY: "",
       },
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
     try {
