@@ -35,7 +35,7 @@ export function LandingPage({
 }: {
   themeMode: ThemeMode;
   onToggleTheme: () => void;
-  onOpenApp: () => void;
+  onOpenApp: (intent?: "login" | "registro") => void;
 }) {
   const [billingMode, setBillingMode] = useState<"monthly" | "yearly">("monthly");
   const reduce = useReducedMotion();
@@ -218,7 +218,7 @@ export function LandingPage({
             >
               {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
-            <Button size="sm" onClick={onOpenApp} className="rounded-full">
+            <Button size="sm" onClick={() => onOpenApp("login")} className="rounded-full">
               Iniciar sesión
             </Button>
           </div>
@@ -247,7 +247,7 @@ export function LandingPage({
           </motion.p>
           <motion.div variants={heroItem} className="mt-8 flex flex-wrap items-center gap-3">
             <motion.div whileHover={reduce ? undefined : { y: -2 }} whileTap={reduce ? undefined : { scale: 0.97 }}>
-              <Button size="lg" className="h-12 px-6 text-base" onClick={onOpenApp}>
+              <Button size="lg" className="h-12 px-6 text-base" onClick={() => onOpenApp("registro")}>
                 Avanzar mi tesis
                 <ArrowRight className="h-4 w-4" />
               </Button>
@@ -440,7 +440,7 @@ export function LandingPage({
                     className="mt-7 w-full"
                     size="lg"
                     variant={plan.featured ? "default" : "outline"}
-                    onClick={plan.id === "institucion" ? openWhatsApp : onOpenApp}
+                    onClick={plan.id === "institucion" ? openWhatsApp : () => onOpenApp("registro")}
                   >
                     {plan.id === "institucion" && <MessageCircle className="h-4 w-4" />}
                     {plan.cta}
@@ -515,7 +515,7 @@ export function LandingPage({
                   <Button
                     size="lg"
                     className="h-12 bg-white px-8 text-base text-primary-deep shadow-none hover:bg-white/90"
-                    onClick={onOpenApp}
+                    onClick={() => onOpenApp("registro")}
                   >
                     Avanzar mi tesis
                     <ArrowRight className="h-4 w-4" />
@@ -588,7 +588,7 @@ export function LandingPage({
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cuenta</p>
               <ul className="mt-4 space-y-3 text-sm">
                 <li>
-                  <button onClick={onOpenApp} className="text-muted-foreground hover:text-foreground">
+                  <button onClick={() => onOpenApp("login")} className="text-muted-foreground hover:text-foreground">
                     Iniciar sesión
                   </button>
                 </li>

@@ -3,14 +3,17 @@ import type { TabConfig, UseTool } from "./types";
 // ── Usos por herramienta ─────────────────────────────────────────────────────
 // Todas las herramientas funcionan por usos (1 uso = 1 generación/corrida).
 // Debe coincidir con USE_TOOLS/PLAN_PRESETS del backend (node_app/server.js).
-export const USE_TOOLS: { id: UseTool; label: string }[] = [
-  { id: "tabulacion", label: "Tabulación" },
-  { id: "confiabilidad", label: "Confiabilidad" },
-  { id: "descriptiva", label: "Descriptiva" },
-  { id: "titulos", label: "Generador de Títulos" },
-  { id: "matriz", label: "Matriz de Consistencia" },
-  { id: "humanizador", label: "Humanizador" },
-  { id: "forms", label: "Forms" },
+// `unidad` es cómo se cuenta la herramienta en una frase ("2 tabulaciones").
+// Se declara en vez de pluralizar el label por código: en español eso obliga a
+// tocar tildes ("Tabulación" → "tabulaciones") y ningún truco genérico acierta.
+export const USE_TOOLS: { id: UseTool; label: string; unidad: [string, string] }[] = [
+  { id: "tabulacion", label: "Tabulación", unidad: ["tabulación", "tabulaciones"] },
+  { id: "confiabilidad", label: "Confiabilidad", unidad: ["prueba de confiabilidad", "pruebas de confiabilidad"] },
+  { id: "descriptiva", label: "Descriptiva", unidad: ["tabulación descriptiva", "tabulaciones descriptivas"] },
+  { id: "titulos", label: "Generador de Títulos", unidad: ["generación de títulos", "generaciones de títulos"] },
+  { id: "matriz", label: "Matriz de Consistencia", unidad: ["matriz de consistencia", "matrices de consistencia"] },
+  { id: "humanizador", label: "Humanizador", unidad: ["humanización", "humanizaciones"] },
+  { id: "forms", label: "Forms", unidad: ["corrida de Forms", "corridas de Forms"] },
 ];
 
 export const PLAN_PRESETS: Record<string, Record<UseTool, number>> = {

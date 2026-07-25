@@ -35,6 +35,7 @@ import { cn } from "./lib/utils";
 
 // Modulos extraidos de este archivo (ver lib/ y components/).
 import type {
+  AppIntent as AuthIntent,
   AppSection,
   AppView,
   AuthUser,
@@ -120,6 +121,18 @@ export default function App() {
   // antes de iniciar sesión; si falla, la app sigue funcionando con el acceso
   // por correo y sin botón de Google.
   const [googleClientId, setGoogleClientId] = useState<string>("");
+  // A qué vino el usuario. La pantalla de acceso es la misma para entrar y para
+  // crear cuenta (con Google son la misma acción), pero el énfasis cambia: sin
+  // esto, quien pulsa "Avanzar mi tesis" en la landing aterriza en algo que
+  // parece solo un login y no sabe que ahí mismo se crea la cuenta.
+  const [authIntent, setAuthIntent] = useState<AuthIntent>(
+    // Si este navegador ya inició sesión alguna vez, es alguien que vuelve.
+    () => (localStorage.getItem("loginEmail") ? "login" : "registro"),
+  );
+  // Cuotas reales del plan gratuito, servidas por /config. Se muestran en la
+  // pantalla de acceso como motivo para crear la cuenta; al venir del backend
+  // no se desincronizan si cambian los presets.
+  const [freePlan, setFreePlan] = useState<Record<string, number> | null>(null);
   // Mensaje de bienvenida tras crear la cuenta con Google. Sin esto, alguien
   // que acaba de entrar ve herramientas bloqueadas y cree que está roto.
   const [welcomeMessage, setWelcomeMessage] = useState<string | null>(null);
@@ -179,6 +192,7 @@ export default function App() {
       .then((cfg) => {
         if (!isMounted) return;
         setGoogleClientId(cfg.auth?.google?.enabled ? (cfg.auth.google.clientId ?? "") : "");
+        setFreePlan(cfg.planes?.[cfg.planPredeterminado] ?? null);
       })
       .catch(() => {});
     return () => { isMounted = false; };
@@ -607,7 +621,11 @@ export default function App() {
         : `Generando tu Excel: estadísticos, baremos y gráficos (${generationElapsed}s)... ya falta poco.`;
 
   const toggleTheme = () => setThemeMode((cur) => (cur === "dark" ? "light" : "dark"));
-  const goToApp = () => { window.history.pushState({}, "", "/app"); setAppView("app"); };
+  const goToApp = (intent: AuthIntent = "registro") => {
+    setAuthIntent(localStorage.getItem("loginEmail") ? "login" : intent);
+    window.history.pushState({}, "", "/app");
+    setAppView("app");
+  };
   const goToLanding = () => { window.history.pushState({}, "", "/"); setAppView("landing"); };
 
   // ── Render: Landing ────────────────────────────────────────────────────────
@@ -634,6 +652,9 @@ export default function App() {
         googleClientId={googleClientId}
         onGoogleCredential={handleGoogleCredential}
         onAuthErrorChange={setAuthError}
+        intent={authIntent}
+        onIntentChange={setAuthIntent}
+        freePlan={freePlan}
       />
     );
   }
