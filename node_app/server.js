@@ -22,7 +22,7 @@ import {
 // Persistencia del almacen de usuarios: Postgres si hay DATABASE_URL, archivo
 // JSON si no. En el plan gratis de Render el disco es efimero y cada deploy
 // borraba todas las cuentas con sus usos y sus claves.
-import { closeStore, flushStore, initStore, persistUsers, usingPostgres } from "./lib/store/index.js";
+import { closeStore, flushStore, initStore, persistUsers } from "./lib/store/index.js";
 import { googleClientId, googleEnabled, verifyGoogleIdToken } from "./lib/google-auth.js";
 import {
   COOLDOWN_DAYS,
@@ -299,14 +299,6 @@ const toIsoOrNull = (input) => {
 const addDaysIso = (days, fromDate = new Date()) => {
   const next = new Date(fromDate.getTime() + days * 24 * 60 * 60 * 1000);
   return next.toISOString();
-};
-
-const isSubscriptionExpired = (user) => {
-  if (user.role === "admin") return false;
-  if (!user.subscriptionEndsAt) return true;
-  const ts = Date.parse(user.subscriptionEndsAt);
-  if (!Number.isFinite(ts)) return true;
-  return ts < Date.now();
 };
 
 // ── Usos por herramienta ─────────────────────────────────────────────────────

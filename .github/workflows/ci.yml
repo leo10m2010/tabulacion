@@ -27,6 +27,8 @@ jobs:
           cache-dependency-path: node_app/package-lock.json
       - run: npm ci
         working-directory: node_app
+      - run: npm run lint
+        working-directory: node_app
       # Sin DATABASE_URL, el almacen usa el backend de archivo y las pruebas
       # contra Postgres se saltan solas. No hace falta una base de datos.
       - run: npm test
@@ -61,6 +63,8 @@ jobs:
         working-directory: frontend
       # `npm run build` ya incluye el chequeo de tipos, pero se ejecuta aparte
       # para que un error de tipos se distinga de un fallo de empaquetado.
+      - run: npm run lint
+        working-directory: frontend
       - run: npm run typecheck
         working-directory: frontend
       - run: npm test

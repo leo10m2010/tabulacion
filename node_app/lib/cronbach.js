@@ -92,7 +92,6 @@ export const normalizeCronbachConfig = (raw) => {
 // Alfa de Cronbach con varianza poblacional (VARP), igual que las formulas de
 // la hoja: alfa = (K/(K-1)) * (1 - suma(Si^2)/St^2).
 export const computeCronbachAlpha = (matrix) => {
-  const n = matrix.length;
   const k = matrix[0].length;
   const varp = (values) => {
     const mean = values.reduce((a, b) => a + b, 0) / values.length;

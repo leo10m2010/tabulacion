@@ -218,6 +218,11 @@ export const generateMatriz = async (payload, options = {}) => {
       },
     });
     matriz = reintento.matriz;
+    // Hoy no se vuelve a leer (el reintento es unico, sin bucle), pero se
+    // mantiene junto a `matriz` y `webSearchRequests` para que las tres queden
+    // coherentes: si algun dia se añade una segunda ronda correctiva, olvidarlo
+    // aqui haria que se reenviara la respuesta vieja como historial.
+    // eslint-disable-next-line no-useless-assignment
     content = reintento.content;
     webSearchRequests = reintento.webSearchRequests ?? webSearchRequests;
 

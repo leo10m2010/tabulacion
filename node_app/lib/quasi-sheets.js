@@ -9,7 +9,6 @@ import {
   COLOR_HEADER,
   COLOR_SUBHEADER,
   FMT_2DEC,
-  FONT,
   ST_BLOCK,
   ST_CELL,
   ST_CELL_LEFT,

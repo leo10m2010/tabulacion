@@ -148,6 +148,9 @@ const humanizarBloque = async (bloque, indice, contextoPrevio, options) => {
   // (contra el bloque original) se descarta y se entrega la pasada 1, que ya
   // demostro ser fiel. Entre pasadas fieles gana la de menos umbrales
   // fallados; empate -> mayor CV.
+  // Inicializacion defensiva: si requestRepasada lanza, el catch devuelve la
+  // pasada 1 sin llegar a leer esta variable.
+  // eslint-disable-next-line no-useless-assignment
   let pasada2 = null;
   try {
     pasada2 = await requestRepasada({

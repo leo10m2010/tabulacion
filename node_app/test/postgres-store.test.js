@@ -162,7 +162,6 @@ describe("almacen en Postgres", { skip: HAY_DB ? false : "sin DATABASE_URL" }, (
       ? "SIGTERM no es interceptable en Windows; se verifica en Linux (CI/Render)"
       : false,
   }, async () => {
-    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
     const email = "tesista-persistente@test.local";
 
     // El login marca lastLoginAt con una escritura NO esperada: la respuesta

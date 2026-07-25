@@ -248,25 +248,6 @@ const CONTENIDO_CON_REFERENCIAS = (ref1, ref2) => `**TÍTULO 1**\n"Un título de
   + `1. Pérez, J. (2023). *Tesis uno*. ${ref1}.\n`
   + `2. Gómez, A. (2022). *Tesis dos*. ${ref2}.\n`;
 
-// Arma un mock de fetch que distingue llamadas a OpenRouter (POST a
-// openrouter.ai) de llamadas de verificacion HTTP a otras URLs.
-const buildIntegrationFetchMock = ({ openRouterResponses, urlStatuses }) => {
-  let openRouterCall = 0;
-  return async (url, opts) => {
-    if (url === "https://openrouter.ai/api/v1/chat/completions") {
-      const idx = Math.min(openRouterCall, openRouterResponses.length - 1);
-      openRouterCall += 1;
-      const body = openRouterResponses[idx];
-      return { ok: true, json: async () => body };
-    }
-    const status = urlStatuses[url];
-    if (status === undefined) throw new Error(`URL de verificacion no mockeada: ${url}`);
-    if (opts.method === "HEAD" && (status === 405)) {
-      return { status: 405 };
-    }
-    return { status };
-  };
-};
 
 const openRouterOk = (content) => ({
   choices: [{ message: { content }, finish_reason: "stop" }],

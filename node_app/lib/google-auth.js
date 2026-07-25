@@ -44,7 +44,7 @@ export const verifyGoogleIdToken = async (idToken) => {
     // El detalle tecnico queda en el log del servidor, no en la respuesta.
     // eslint-disable-next-line no-console
     console.error("[google] token rechazado:", err.message);
-    throw new Error("No se pudo validar tu cuenta de Google. Intenta de nuevo.");
+    throw new Error("No se pudo validar tu cuenta de Google. Intenta de nuevo.", { cause: err });
   }
 
   const email = String(payload?.email ?? "").trim();

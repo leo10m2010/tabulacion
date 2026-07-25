@@ -9,8 +9,8 @@ export const docxToMarkdown = async (docxBase64) => {
   let buffer;
   try {
     buffer = Buffer.from(String(docxBase64 ?? ""), "base64");
-  } catch {
-    throw new Error("El archivo .docx no se pudo decodificar.");
+  } catch (err) {
+    throw new Error("El archivo .docx no se pudo decodificar.", { cause: err });
   }
   if (buffer.length === 0) {
     throw new Error("El archivo .docx llego vacio.");
@@ -23,7 +23,7 @@ export const docxToMarkdown = async (docxBase64) => {
   try {
     result = await mammoth.convertToMarkdown({ buffer });
   } catch (err) {
-    throw new Error(`No se pudo leer el .docx (¿es un Word valido?): ${err.message}`);
+    throw new Error(`No se pudo leer el .docx (¿es un Word valido?): ${err.message}`, { cause: err });
   }
 
   const text = String(result.value ?? "").trim();

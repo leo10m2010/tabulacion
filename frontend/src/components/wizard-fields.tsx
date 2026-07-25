@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ChevronDown, HelpCircle, Trash2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { cn } from "../lib/utils";
-import type { DimensionDef, IndicadorDef, ItemDef } from "../lib/types";
+import type { DimensionDef } from "../lib/types";
 import { eid, normalizeList } from "../lib/helpers";
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
@@ -209,8 +209,12 @@ export function HierarchyEditor({
   const usedItems = estructura.flatMap((d) => d.indicadores.flatMap((i) => i.items)).length;
   const isComplete = totalItems > 0 && usedItems === totalItems;
 
-  const toggleDim = (id: string) => setCollapsedDims((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
-  const toggleInd = (id: string) => setCollapsedInds((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const toggleDim = (id: string) => setCollapsedDims((prev) => { const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next; });
+  const toggleInd = (id: string) => setCollapsedInds((prev) => { const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next; });
 
   const addDimension = () => onChange([...estructura, { id: eid(), nombre: "", indicadores: [] }]);
   const removeDimension = (id: string) => onChange(estructura.filter((d) => d.id !== id));

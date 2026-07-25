@@ -1,4 +1,3 @@
-import { cn } from "../lib/utils";
 import type { TableRows } from "../lib/types";
 
 export function PreviewTable({ rows, maxRows = 12 }: { rows: TableRows; maxRows?: number }) {
