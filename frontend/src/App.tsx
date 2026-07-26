@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+﻿import { Suspense, lazy, useEffect, useState } from "react";
 import {
   ChevronRight,
   FileSpreadsheet,
@@ -32,21 +32,63 @@ import { NAV_GROUPS, NAV_TOOLS } from "./lib/nav";
 import {
   resolveViewFromPath,
 } from "./lib/helpers";
+import { borrarTodosLosBorradores } from "./lib/wizard-draft";
+// La landing y el acceso van en el bundle inicial: son la primera pantalla y
+// cargarlas aparte añadiría un viaje de red justo en la ruta crítica.
 import { LoginScreen } from "./components/LoginScreen";
 import { LandingPage } from "./components/LandingPage";
-import { AccountSection } from "./components/sections/AccountSection";
-import { CronbachSection } from "./components/sections/CronbachSection";
-import { DescriptivaSection } from "./components/sections/DescriptivaSection";
-import { FormsSection } from "./components/sections/FormsSection";
-import { TitulosSection } from "./components/sections/TitulosSection";
-import { MatrizSection } from "./components/sections/MatrizSection";
-import { HumanizadorSection } from "./components/sections/HumanizadorSection";
-import { UsersSection } from "./components/sections/UsersSection";
-import { HomeSection } from "./components/sections/HomeSection";
-import { TabulacionSection } from "./components/sections/TabulacionSection";
-import { PlanesSection } from "./components/sections/PlanesSection";
-import { ProyectosSection } from "./components/sections/ProyectosSection";
 
+// Las secciones de la app, en cambio, se cargan bajo demanda. Antes las once
+// viajaban en el chunk inicial, así que quien solo abría la landing descargaba
+// igualmente el asistente de tabulación, el panel de administración y las
+// cuatro herramientas de IA. Cada una es su propio chunk y solo llega cuando el
+// usuario entra en ella.
+// Se escriben una a una a propósito: un helper genérico obliga a ensanchar los
+// tipos de las props y perderíamos el chequeo de cada sección.
+const AccountSection = lazy(() =>
+  import("./components/sections/AccountSection").then((m) => ({ default: m.AccountSection })));
+const CronbachSection = lazy(() =>
+  import("./components/sections/CronbachSection").then((m) => ({ default: m.CronbachSection })));
+const DescriptivaSection = lazy(() =>
+  import("./components/sections/DescriptivaSection").then((m) => ({ default: m.DescriptivaSection })));
+const FormsSection = lazy(() =>
+  import("./components/sections/FormsSection").then((m) => ({ default: m.FormsSection })));
+const TitulosSection = lazy(() =>
+  import("./components/sections/TitulosSection").then((m) => ({ default: m.TitulosSection })));
+const MatrizSection = lazy(() =>
+  import("./components/sections/MatrizSection").then((m) => ({ default: m.MatrizSection })));
+const HumanizadorSection = lazy(() =>
+  import("./components/sections/HumanizadorSection").then((m) => ({ default: m.HumanizadorSection })));
+const UsersSection = lazy(() =>
+  import("./components/sections/UsersSection").then((m) => ({ default: m.UsersSection })));
+const HomeSection = lazy(() =>
+  import("./components/sections/HomeSection").then((m) => ({ default: m.HomeSection })));
+const TabulacionSection = lazy(() =>
+  import("./components/sections/TabulacionSection").then((m) => ({ default: m.TabulacionSection })));
+const PlanesSection = lazy(() =>
+  import("./components/sections/PlanesSection").then((m) => ({ default: m.PlanesSection })));
+const ProyectosSection = lazy(() =>
+  import("./components/sections/ProyectosSection").then((m) => ({ default: m.ProyectosSection })));
+
+
+// Esqueleto que ocupa el sitio de una sección mientras llega su chunk. Imita la
+// forma real (título, subtítulo, tarjetas) en vez de centrar un spinner: así la
+// página no da un salto cuando el contenido aparece.
+function SectionSkeleton() {
+  return (
+    <div className="animate-pulse space-y-6" aria-hidden="true">
+      <div className="space-y-2">
+        <div className="h-7 w-64 max-w-full rounded-lg bg-muted" />
+        <div className="h-4 w-96 max-w-full rounded bg-muted/70" />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="h-36 rounded-2xl border border-border/60 bg-muted/50" />
+        <div className="h-36 rounded-2xl border border-border/60 bg-muted/50" />
+      </div>
+      <div className="h-56 rounded-2xl border border-border/60 bg-muted/40" />
+    </div>
+  );
+}
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
@@ -330,6 +372,9 @@ export default function App() {
 
   const olvidarSesion = () => {
     localStorage.removeItem("authExpiresAt");
+    // El borrador del asistente lleva el instrumento completo de una tesis. No
+    // debe sobrevivir al cierre de sesión en un equipo compartido.
+    borrarTodosLosBorradores();
     setAuthToken(""); setAuthUser(null);
   };
 
@@ -405,9 +450,10 @@ export default function App() {
         {/* Nav items */}
         {/* El menú no cabe entero en pantallas bajas: se desplaza, con una barra
             fina del color del tema (ver .scroll-discreto en index.css). */}
-        <nav className="scroll-discreto flex-1 space-y-1 overflow-y-auto p-3">
+        <nav aria-label="Herramientas" className="scroll-discreto flex-1 space-y-1 overflow-y-auto p-3">
           <button
             onClick={() => setActiveSection("inicio")}
+            aria-current={activeSection === "inicio" ? "page" : undefined}
             className={cn(
               "flex w-full items-center gap-2.5 rounded-full px-3.5 py-2.5 text-sm font-medium transition-all active:scale-[0.99]",
               activeSection === "inicio"
@@ -422,6 +468,7 @@ export default function App() {
 
           <button
             onClick={() => setActiveSection("proyectos")}
+            aria-current={activeSection === "proyectos" ? "page" : undefined}
             className={cn(
               "mt-1 flex w-full items-center gap-2.5 rounded-full px-3.5 py-2.5 text-sm font-medium transition-all active:scale-[0.99]",
               activeSection === "proyectos"
@@ -456,6 +503,10 @@ export default function App() {
                   <button
                     key={item.id}
                     onClick={() => setActiveSection(item.id)}
+                    // Sin aria-current, un lector de pantalla lee once botones
+                    // idénticos y no dice en cuál estás. El color solo lo
+                    // comunica a quien ve la pantalla.
+                    aria-current={activeSection === item.id ? "page" : undefined}
                     title={locked ? "Sin usos disponibles — pide una recarga" : undefined}
                     className={cn(
                       "flex w-full items-center gap-2.5 rounded-full px-3.5 py-2.5 text-left text-sm font-medium leading-tight transition-all",
@@ -501,6 +552,7 @@ export default function App() {
               <p className="mb-2 mt-5 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Administración</p>
               <button
                 onClick={() => setActiveSection("usuarios")}
+                aria-current={activeSection === "usuarios" ? "page" : undefined}
                 className={cn(
                   "flex w-full items-center gap-2.5 rounded-full px-3.5 py-2.5 text-sm font-medium transition-all active:scale-[0.99]",
                   activeSection === "usuarios"
@@ -569,7 +621,7 @@ export default function App() {
         </header>
 
         {/* Mobile nav tabs */}
-        <div className="sticky top-14 z-20 flex gap-1.5 overflow-x-auto border-b border-border/60 bg-card/80 px-3 py-2 backdrop-blur-xl md:hidden">
+        <nav aria-label="Herramientas" className="sticky top-14 z-20 flex gap-1.5 overflow-x-auto border-b border-border/60 bg-card/80 px-3 py-2 backdrop-blur-xl md:hidden">
           {[
             { id: "inicio" as AppSection, label: "Inicio", icon: LayoutDashboard },
             ...NAV_TOOLS,
@@ -579,6 +631,7 @@ export default function App() {
             <button
               key={item.id}
               onClick={() => setActiveSection(item.id)}
+              aria-current={activeSection === item.id ? "page" : undefined}
               className={cn(
                 "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all active:scale-95",
                 activeSection === item.id
@@ -590,7 +643,7 @@ export default function App() {
               {"mobileLabel" in item && item.mobileLabel ? item.mobileLabel : item.label}
             </button>
           ))}
-        </div>
+        </nav>
 
         {/* Content */}
         <main className="flex-1 overflow-auto px-4 py-6 md:px-10 md:py-9">
@@ -610,6 +663,12 @@ export default function App() {
               </button>
             </div>
           )}
+
+          {/* Cada sección es un chunk aparte: mientras llega se muestra un
+              esqueleto con la forma del contenido, no una pantalla en blanco.
+              El aviso en vivo hace que el cambio de sección también exista para
+              quien navega con lector de pantalla. */}
+          <Suspense fallback={<SectionSkeleton />}>
 
           {activeSection === "proyectos" && authUser && (
             <ProyectosSection
@@ -726,6 +785,8 @@ export default function App() {
               onAccountDeleted={handleAccountDeleted}
             />
           )}
+
+          </Suspense>
 
         </main>
       </div>

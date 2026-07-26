@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -48,6 +48,7 @@ import {
 } from "../../lib/helpers";
 import { instrumentoATabConfig } from "../../lib/instrumento";
 import { validarConfig } from "../../lib/wizard-validation";
+import { borrarBorrador, guardarBorrador, hayCambios, leerBorrador } from "../../lib/wizard-draft";
 import { TraerDelProyecto } from "../TraerDelProyecto";
 import { FieldHint, HierarchyEditor, ListEditorField, StepTip } from "../wizard-fields";
 import { PreviewTable } from "../PreviewTable";
@@ -84,14 +85,20 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
   onPasoHecho?: (paso: PasoTesis) => void;
   onUpgrade?: (herramienta: string) => void;
 }) {
-  const [wizardStep, setWizardStep] = useState<WizardStep>(1);
+  // El borrador se lee una sola vez, al montar. Es la misma lectura para el
+  // caso de cambiar de sección (React desmonta esta sección entera) y para el
+  // de recargar la página.
+  const [borradorInicial] = useState(() => leerBorrador(authUser.email));
+  const [borradorRecuperado, setBorradorRecuperado] = useState(() => Boolean(borradorInicial));
+
+  const [wizardStep, setWizardStep] = useState<WizardStep>(borradorInicial?.wizardStep ?? 1);
   const [step2Error, setStep2Error] = useState<string | null>(null);
-  const [estructuraV1, setEstructuraV1] = useState<DimensionDef[]>([]);
-  const [estructuraV2, setEstructuraV2] = useState<DimensionDef[]>([]);
+  const [estructuraV1, setEstructuraV1] = useState<DimensionDef[]>(borradorInicial?.estructuraV1 ?? []);
+  const [estructuraV2, setEstructuraV2] = useState<DimensionDef[]>(borradorInicial?.estructuraV2 ?? []);
   const [showAdvancedJson, setShowAdvancedJson] = useState(false);
   const [selectedSheet, setSelectedSheet] = useState<string>("");
-  const [config, setConfig] = useState<TabConfig>(FALLBACK_CONFIG);
-  const [jsonDraft, setJsonDraft] = useState<string>(JSON.stringify(FALLBACK_CONFIG, null, 2));
+  const [config, setConfig] = useState<TabConfig>(borradorInicial?.config ?? FALLBACK_CONFIG);
+  const [jsonDraft, setJsonDraft] = useState<string>(JSON.stringify(borradorInicial?.config ?? FALLBACK_CONFIG, null, 2));
   const [statusMessage, setStatusMessage] = useState<string>("Listo para generar.");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -100,23 +107,56 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
   const [downloadLinks, setDownloadLinks] = useState<DownloadLinks | null>(null);
   const [templateInfo, setTemplateInfo] = useState<TemplateInfo | null>(null);
 
+  // Configuración con la que arrancó esta sesión del asistente. Es la
+  // referencia contra la que se decide si hay trabajo que guardar. Si se
+  // restauró un borrador, la referencia es ese borrador: reabrir la sección y
+  // salir sin tocar nada no debe reescribirlo ni volver a anunciarlo.
+  const configInicialRef = useRef<TabConfig>(borradorInicial?.config ?? FALLBACK_CONFIG);
+
   const isQuasi = toStringValue(config.diseno) === "cuasiexperimental";
 
   // ── Effects ────────────────────────────────────────────────────────────────
-  // Configuración de ejemplo con la que arranca el asistente.
+  // Configuración de ejemplo con la que arranca el asistente. No se pide si hay
+  // un borrador: llegaría después de la restauración y pisaría lo que el
+  // usuario había escrito.
   useEffect(() => {
+    if (borradorInicial) return;
     let isMounted = true;
     fetch("/default-config.json")
       .then(async (res) => {
         if (!res.ok) throw new Error();
         const data = (await res.json()) as TabConfig;
         if (!isMounted || !data || Array.isArray(data)) return;
+        // El ejemplo pasa a ser el punto de partida: lo que el usuario NO ha
+        // tocado no cuenta como trabajo suyo.
+        configInicialRef.current = data;
         setConfig(data);
       })
       .catch(() => {});
     return () => { isMounted = false; };
-  }, []);
+  }, [borradorInicial]);
   useEffect(() => { setJsonDraft(JSON.stringify(config, null, 2)); }, [config]);
+
+  // Guarda el borrador mientras el usuario trabaja. Con retardo: escribir en
+  // localStorage serializa toda la configuración, y hacerlo en cada tecla de un
+  // instrumento de 60 ítems se nota al teclear.
+  useEffect(() => {
+    if (!hayCambios(config, estructuraV1, estructuraV2, configInicialRef.current)) return;
+    const timer = window.setTimeout(() => {
+      guardarBorrador(authUser.email, { wizardStep, config, estructuraV1, estructuraV2 });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [authUser.email, wizardStep, config, estructuraV1, estructuraV2]);
+
+  // Cerrar la pestaña con trabajo sin generar. El borrador ya lo protege, pero
+  // el aviso del navegador evita que alguien se vaya creyendo que perdió todo.
+  // Solo mientras hay algo escrito y todavía no se generó el archivo.
+  useEffect(() => {
+    if (result || !hayCambios(config, estructuraV1, estructuraV2, configInicialRef.current)) return;
+    const avisar = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", avisar);
+    return () => window.removeEventListener("beforeunload", avisar);
+  }, [result, config, estructuraV1, estructuraV2]);
   // Cronómetro de la generación para informar el progreso por etapas.
   useEffect(() => {
     if (!isGenerating) return;
@@ -204,6 +244,27 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
   );
 
   // ── Handlers ───────────────────────────────────────────────────────────────
+  // Descarta el trabajo recuperado y vuelve al ejemplo inicial. Es una acción
+  // destructiva explícita: el borrador se borra aquí, nunca de forma automática.
+  const empezarDeCero = () => {
+    borrarBorrador(authUser.email);
+    setBorradorRecuperado(false);
+    setEstructuraV1([]);
+    setEstructuraV2([]);
+    setStep2Error(null);
+    setWizardStep(1);
+    setResult(null);
+    setErrorMessage(null);
+    fetch("/default-config.json")
+      .then(async (res) => {
+        if (!res.ok) throw new Error();
+        const data = (await res.json()) as TabConfig;
+        if (!data || Array.isArray(data)) throw new Error();
+        setConfig(data);
+      })
+      .catch(() => setConfig(FALLBACK_CONFIG));
+  };
+
   // Trae el instrumento del proyecto activo al asistente. No pisa la muestra,
   // el tema ni el control de correlación: eso es de esta generación, no del
   // instrumento. Lo traído queda editable como cualquier otro campo.
@@ -384,6 +445,31 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
             <h2 className="font-display text-2xl font-bold tracking-tight">Generar tabulación</h2>
             <p className="mt-1 text-sm text-muted-foreground">Completa los 3 pasos para generar tu archivo Excel.</p>
           </div>
+
+          {/* Trabajo recuperado de una visita anterior. Se anuncia siempre: si
+              el formulario apareciera lleno sin explicación, el usuario no
+              sabría de dónde salió ni si es suyo. */}
+          {borradorRecuperado && (
+            <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 p-4">
+              <Check className="h-4 w-4 shrink-0 text-primary" />
+              <p className="min-w-0 flex-1 text-sm text-foreground">
+                Recuperamos lo que habías avanzado
+                {borradorInicial && (
+                  <span className="text-muted-foreground">
+                    {" "}(guardado el {new Date(borradorInicial.guardadoEn).toLocaleString("es", {
+                      day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
+                    })})
+                  </span>
+                )}.
+              </p>
+              <Button variant="outline" size="sm" onClick={empezarDeCero}>
+                Empezar de cero
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setBorradorRecuperado(false)}>
+                Continuar
+              </Button>
+            </div>
+          )}
 
           {/* Tabulación exige suscripción vigente; Forms va por usos y sigue disponible. */}
           <SubscriptionWarning user={authUser} tool="tabulacion" onUpgrade={onUpgrade} />
@@ -647,7 +733,16 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
 
                             <div>
                               <p className="text-sm font-medium text-foreground">¿Controlar el patrón de resultados?</p>
-                              <FieldHint text="Activado: la simulación busca el escenario más coherente (grupos equivalentes al inicio, control estable y cambio del experimental según el efecto elegido). Desactivado: los resultados salen de una sola simulación natural. Función pensada para datos simulados, pruebas y demostraciones académicas." />
+                              <FieldHint text="Activado: se simulan hasta 80 muestras y se conserva la que mejor reproduce el patrón esperado (grupos equivalentes al inicio, control estable y cambio del experimental según el efecto elegido). Como la muestra se elige por sus p-valores, esos p-valores sobrestiman la significación y no equivalen a los de una muestra única. Desactivado: una sola simulación, sin selección — es lo que debes usar si vas a reportar los p-valores. Función pensada para datos simulados, pruebas y demostraciones académicas." />
+                              {getScalar("controlarResultados") !== "0" && (
+                                <p className="mt-2 flex items-start gap-2 rounded-lg border border-ambar/40 bg-ambar/10 p-2.5 text-xs text-foreground">
+                                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ambar" />
+                                  <span>
+                                    Con el control activado los p-valores quedan condicionados por la selección de la
+                                    muestra. El Excel lo declara en la hoja "Información".
+                                  </span>
+                                </p>
+                              )}
                               <div className="mt-2 flex gap-2">
                                 <button
                                   onClick={() => setScalar("controlarResultados", "1")}
@@ -1225,8 +1320,11 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
               {/* Generate button */}
               <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
                 <CardContent className="pt-6 space-y-4">
+                  {/* role="alert" para que un lector de pantalla lo anuncie en
+                      cuanto aparece: es el resultado de una acción que el
+                      usuario acaba de pedir, y sin esto fallaba en silencio. */}
                   {errorMessage && (
-                    <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{errorMessage}</div>
+                    <div role="alert" className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{errorMessage}</div>
                   )}
                   <MagicButton
                     size="lg"
@@ -1246,7 +1344,10 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
                       </>
                     )}
                   </MagicButton>
-                  <p className="text-center text-xs text-muted-foreground">{generationProgressMessage}</p>
+                  {/* aria-live="polite": el progreso cambia solo (cronómetro)
+                      y debe anunciarse sin interrumpir. Sin esto, quien no ve
+                      la pantalla no sabe si la generación avanza o se colgó. */}
+                  <p aria-live="polite" className="text-center text-xs text-muted-foreground">{generationProgressMessage}</p>
                 </CardContent>
               </Card>
 

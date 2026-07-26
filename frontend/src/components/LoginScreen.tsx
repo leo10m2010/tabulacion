@@ -95,7 +95,10 @@ export function LoginScreen({ apiBaseUrl, onApiBaseUrlChange, themeMode, onToggl
 
           <div className="mt-7 space-y-4">
             {authError && (
-              <div className="rounded-xl border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{authError}</div>
+              // role="alert": "contraseña incorrecta" o "tu sesión expiró" son
+              // la respuesta a lo que el usuario acaba de intentar; deben
+              // anunciarse, no solo pintarse de rojo.
+              <div role="alert" className="rounded-xl border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{authError}</div>
             )}
 
             {googleClientId && (
