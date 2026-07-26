@@ -179,9 +179,30 @@ app.get('/api/tesistab/config', (req, res) => {
   });
 });
 
+// Dueno de un job. Los jobs guardan el correo de la cuenta que los creo; sin
+// esto, cualquier cliente con una clave ttab_ valida leia y cancelaba las
+// corridas de todos los demas (la URL del formulario, las etiquetas y el
+// resultado de cada uno).
+//
+// El modo legado y la llave maestra siguen viendo todo: son el operador del
+// servicio y el desarrollo local de un solo usuario, no un cliente.
+function jobOwnerEmail(req) {
+  const email = req.tesistabUser?.email;
+  return typeof email === 'string' && email ? email.trim().toLowerCase() : null;
+}
+
+function canAccessJob(req, job) {
+  if (!job) return false;
+  if (req.tesistabPrivileged) return true;
+  const owner = jobOwnerEmail(req);
+  // Un job sin dueno es de antes de este cambio: solo el operador lo ve.
+  return Boolean(owner) && job.ownerEmail === owner;
+}
+
 app.get('/api/tesistab/jobs/:id', (req, res) => {
   const job = tesistabJobStore[req.params.id];
-  if (!job) {
+  // Se responde 404 (no 403) a proposito: un 403 confirmaria que el job existe.
+  if (!canAccessJob(req, job)) {
     sendApiError(res, 404, 'job_not_found', 'Job not found', req.requestId);
     return;
   }
@@ -204,7 +225,9 @@ app.get('/api/tesistab/jobs', (req, res) => {
   const sinceTimestamp =
     typeof req.query.since === 'string' ? Date.parse(req.query.since) : Number.NaN;
 
-  const jobs = Object.values(tesistabJobStore)
+  const visibles = Object.values(tesistabJobStore).filter((job) => canAccessJob(req, job));
+
+  const jobs = visibles
     .filter((job) => {
       if (statusFilter && job.status !== statusFilter) {
         return false;
@@ -219,7 +242,7 @@ app.get('/api/tesistab/jobs', (req, res) => {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, safeLimit);
 
-  const totals = Object.values(tesistabJobStore).reduce(
+  const totals = visibles.reduce(
     (acc, job) => {
       acc[job.status] = (acc[job.status] || 0) + 1;
       return acc;
@@ -229,7 +252,9 @@ app.get('/api/tesistab/jobs', (req, res) => {
 
   res.json({
     requestId: req.requestId,
-    totalStored: Object.keys(tesistabJobStore).length,
+    // Cuenta solo lo que este cliente puede ver: el total global revelaria
+    // cuantas corridas tienen los demas usuarios.
+    totalStored: visibles.length,
     total: jobs.length,
     totals,
     appliedFilters: {
@@ -242,13 +267,18 @@ app.get('/api/tesistab/jobs', (req, res) => {
 });
 
 app.delete('/api/tesistab/jobs', (req, res) => {
-  const removed = Object.keys(tesistabJobStore).length;
+  // Borra solo el historial de quien llama. Antes vaciaba el almacen entero:
+  // un cliente cualquiera podia destruir las corridas en curso de todos los
+  // demas, con los usos ya cobrados.
+  const propios = Object.keys(tesistabJobStore).filter((id) => canAccessJob(req, tesistabJobStore[id]));
 
-  tesistabCleanupTimers.forEach((timer) => clearTimeout(timer));
-  tesistabCleanupTimers.clear();
-  tesistabSmartRuntimeStore.clear();
-
-  Object.keys(tesistabJobStore).forEach((id) => {
+  propios.forEach((id) => {
+    const timer = tesistabCleanupTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      tesistabCleanupTimers.delete(id);
+    }
+    tesistabSmartRuntimeStore.delete(id);
     delete tesistabJobStore[id];
   });
 
@@ -256,13 +286,13 @@ app.delete('/api/tesistab/jobs', (req, res) => {
   res.json({
     requestId: req.requestId,
     message: 'Cleared TESISTAB jobs history',
-    removed,
+    removed: propios.length,
   });
 });
 
 app.delete('/api/tesistab/jobs/:id', (req, res) => {
   const job = tesistabJobStore[req.params.id];
-  if (!job) {
+  if (!canAccessJob(req, job)) {
     sendApiError(res, 404, 'job_not_found', 'Job not found', req.requestId);
     return;
   }
@@ -337,6 +367,8 @@ app.post('/api/tesistab/submit', async (req, res) => {
     tesistabJobStore[jobId] = {
       id: jobId,
       requestId: req.requestId,
+      // Dueno del job: es lo que impide que otro cliente lo lea o lo cancele.
+      ownerEmail: jobOwnerEmail(req),
       label: typeof label === 'string' ? label.slice(0, 160) : 'Manual run',
       formUrl: normalizedFormUrl,
       requestedCount,
@@ -450,6 +482,7 @@ app.post('/api/forms/submit', async (req, res) => {
     tesistabJobStore[jobId] = {
       id: jobId,
       requestId: req.requestId,
+      ownerEmail: jobOwnerEmail(req),
       label: `Compat ${formId || 'manual'}`,
       formUrl: normalizedFormUrl,
       requestedCount,
@@ -1909,8 +1942,10 @@ function requireTesistabApiKey(req, res, next) {
       .replace(/^Bearer\s+/i, '')
       .trim();
 
-  // Llave maestra de desarrollo (opcional).
+  // Llave maestra de desarrollo (opcional). Ve todos los jobs: es la clave del
+  // operador del servicio, no la de un cliente.
   if (TESISTAB_API_KEY && apiKey === TESISTAB_API_KEY) {
+    req.tesistabPrivileged = true;
     next();
     return;
   }
@@ -1918,6 +1953,7 @@ function requireTesistabApiKey(req, res, next) {
   // Modo legado (desarrollo/tests): comportamiento original del proyecto.
   if (!TESISTAB_VALIDATION_ENABLED) {
     if (!TESISTAB_API_KEY) {
+      req.tesistabPrivileged = true;
       next();
       return;
     }
@@ -2146,12 +2182,30 @@ function persistTesistabJobsNow() {
   }
 }
 
+// Los ids de job son UUID (randomUUID). Validarlo antes de escribirlo en la
+// pagina cierra la inyeccion en origen: lo que no sea un UUID no llega nunca al
+// HTML. Es una ruta publica y sin autenticacion, asi que era XSS reflejado
+// directo (JSON.stringify no escapa la barra: un id con "</script>" cerraba el
+// bloque y el resto se ejecutaba como HTML).
+const JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 app.get('/_submit', (req, res) => {
   const id = req.query.id;
   if (!id) {
     res.status(400).send('Missing job id');
     return;
   }
+  if (typeof id !== 'string' || !JOB_ID_RE.test(id)) {
+    res.status(400).type('text/plain').send('Invalid job id');
+    return;
+  }
+
+  // Defensa en profundidad: nada de esta pagina debe cargar recursos externos
+  // ni permitir scripts en linea que no sean el propio.
+  res.setHeader('Content-Security-Policy', "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
 
   res.status(200).send(`
     <!doctype html>
