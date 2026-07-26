@@ -127,9 +127,22 @@ que aquí tarda 2 s puede tardar del orden de 15-20 s allí.
 
 Diferencias detectadas con `render.yaml`:
 
-- Existe un **segundo servicio** `tutorica-forms` (rootDir `forms`), hoy
-  **suspendido por el usuario**, que no está declarado en `render.yaml`. El
-  servicio activo monta Forms dentro del mismo proceso.
+- Existe un **segundo servicio** `tutorica-forms` (rootDir `forms`, creado el
+  2026-06-12), hoy **suspendido a propósito**, que `render.yaml` no declara. Es
+  la arquitectura anterior, de cuando Forms corría como servicio aparte; hoy el
+  servicio activo lo monta dentro del mismo proceso.
+
+  **Se conserva, y no hay motivo técnico para borrarlo.** Nada del código
+  apunta a `tutorica-forms.onrender.com` (la extensión usa
+  `tabulacion-api.onrender.com` por defecto, y su lista de migración de URLs
+  antiguas solo contiene variantes de `localhost:5000`), suspendido en plan
+  free no cuesta nada, mantiene reservado ese nombre en Render y deja abierta
+  la vuelta atrás. Lo único que faltaba era que estuviera escrito en algún
+  sitio: esto es ese sitio.
+
+  Sí conviene comprobar, antes de volver a sincronizar el blueprint desde
+  `render.yaml`, si esa sincronización podría eliminar servicios no declarados.
+  No se verificó.
 - El servicio corre el commit `0424037`; el repositorio local va por delante.
 
 ### El presupuesto conjunto
