@@ -8,7 +8,7 @@ import {
   detectLikertBaremo, distributionFor, organicizeRows, pairMultiColumns,
 } from "../lib/descriptiva/compute.js";
 import { stripCodeFences } from "../lib/descriptiva/openrouter.js";
-import { reconcileRowCount } from "../lib/descriptiva/index.js";
+import { MAX_CUESTIONARIO_CHARS, normalizeDescriptivaInput, reconcileRowCount } from "../lib/descriptiva/index.js";
 import { buildDescriptivaWorkbook } from "../lib/descriptiva/workbook.js";
 import { postProcessWorkbook } from "../lib/ooxml.js";
 import { CHART_THEMES } from "../lib/config.js";
@@ -486,4 +486,29 @@ test("workbook conocimiento agrega aciertos y nivel", async () => {
   const baremoSheet = wb.sheet("Baremo");
   const text = baremoSheet.usedRange().value().flat().filter(Boolean).join(" ");
   assert.ok(text.includes("Tabla 3"));
+});
+
+// Tope de longitud del cuestionario.
+//
+// Sin el, un solo uso podia empujar hasta 4 MB de texto a OpenRouter: el coste
+// real de esa peticion supera en varios ordenes de magnitud lo que cubre el
+// uso descontado. Titulos y matriz ya acotaban a 200 caracteres por campo y el
+// humanizador a 3.000 palabras; descriptiva era la unica sin limite.
+test("rechaza un cuestionario por encima del tope de caracteres", () => {
+  assert.throws(
+    () => normalizeDescriptivaInput({ texto: "P".repeat(MAX_CUESTIONARIO_CHARS + 1) }),
+    /maximo es/i,
+  );
+});
+
+test("acepta un cuestionario justo en el tope", () => {
+  const input = normalizeDescriptivaInput({ texto: "P".repeat(MAX_CUESTIONARIO_CHARS) });
+  assert.equal(input.texto.length, MAX_CUESTIONARIO_CHARS);
+});
+
+test("un cuestionario de tesis normal sigue pasando sin problema", () => {
+  // ~1.500 palabras es lo que ocupa un instrumento largo de verdad.
+  const realista = "Pregunta sobre satisfaccion laboral ".repeat(300);
+  assert.ok(realista.length < MAX_CUESTIONARIO_CHARS);
+  assert.doesNotThrow(() => normalizeDescriptivaInput({ texto: realista }));
 });

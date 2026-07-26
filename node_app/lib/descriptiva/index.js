@@ -22,6 +22,27 @@ export const MIN_N = 10;
 export const MAX_N = 400;
 export const NIVELES_PREPONDERANCIA = ["ALTO", "MODERADO", "LEVE"];
 
+// Tope de longitud del cuestionario.
+//
+// Sin el, un uso podia mandar hasta MAX_BODY_BYTES (4 MB) de texto a la IA:
+// una sola peticion valia varios ordenes de magnitud mas de lo que cubre el
+// uso descontado. 40.000 caracteres son ~6.000 palabras, muy por encima de
+// cualquier cuestionario de tesis real (los mas largos rondan las 1.500), asi
+// que el limite no estorba a nadie y cierra el agujero de coste.
+//
+// Las herramientas hermanas ya acotaban: titulos y matriz a 200 caracteres por
+// campo, humanizador a 3.000 palabras. Descriptiva era la unica sin tope.
+export const MAX_CUESTIONARIO_CHARS = 40_000;
+
+const acotarCuestionario = (texto, origen) => {
+  if (texto.length <= MAX_CUESTIONARIO_CHARS) return texto;
+  throw new Error(
+    `El cuestionario ${origen} tiene ${texto.length.toLocaleString("es")} caracteres y el maximo es `
+    + `${MAX_CUESTIONARIO_CHARS.toLocaleString("es")} (~6.000 palabras). Recorta el texto a las preguntas `
+    + "del instrumento: no hace falta enviar el marco teorico ni los anexos.",
+  );
+};
+
 export const normalizeDescriptivaInput = (payload) => {
   const texto = String(payload?.texto ?? "").trim();
   const docxBase64 = String(payload?.docxBase64 ?? "").trim();
@@ -31,6 +52,7 @@ export const normalizeDescriptivaInput = (payload) => {
   if (texto && docxBase64) {
     throw new Error("Envia solo el texto pegado o solo el archivo .docx, no ambos.");
   }
+  if (texto) acotarCuestionario(texto, "pegado");
 
   const cfg = payload?.config ?? {};
   let n = Number.parseInt(String(cfg.n ?? ""), 10);
@@ -78,6 +100,10 @@ export const generateDescriptiva = async (payload, options = {}) => {
   if (questionnaire.length < 30) {
     throw new Error("El cuestionario es demasiado corto; pega el instrumento completo.");
   }
+  // El .docx se acota aqui y no en la normalizacion: 3 MB comprimidos se
+  // expanden sin tope al convertirlos a markdown, asi que el tamano del
+  // archivo no dice nada del texto que acabara viajando a la IA.
+  if (input.docxBase64) acotarCuestionario(questionnaire, "del archivo .docx");
 
   // El backend siempre fija N (ver DEFAULT_N); el nivel solo si el usuario lo
   // eligio (si no, la IA aplica su default del Paso -1).

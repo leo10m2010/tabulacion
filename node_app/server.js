@@ -242,6 +242,20 @@ const getBaseUrl = (req) => {
   return `${proto}://${host}`;
 };
 
+// Cabeceras de seguridad de la API. No habia ninguna: nada impedia enmarcar
+// las respuestas, adivinar tipos de contenido ni filtrar la URL completa como
+// referente hacia terceros.
+const setSecurityHeaders = (res) => {
+  // Una API JSON no carga recursos de ningun tipo.
+  res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  // HSTS solo tiene sentido servido por HTTPS; en Render lo esta. En local
+  // (http) el navegador la ignora, asi que no estorba al desarrollo.
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+};
+
 const setCorsHeaders = (req, res) => {
   const origin = String(req.headers.origin ?? "").trim();
   // La extension Tutorica Forms inicia sesion desde su popup
@@ -1032,6 +1046,13 @@ formsApp.setUsageConsumer((apiKey) => {
 });
 
 const server = http.createServer(async (req, res) => {
+  // Cabeceras de seguridad para TODA la superficie HTTP, incluidas las rutas
+  // de Forms (por eso van antes del despacho). La API sirve JSON: no debe
+  // cargar nada, no debe poder enmarcarse y su tipo de contenido no debe
+  // adivinarse. Las paginas de Forms que si son HTML fijan despues su propia
+  // CSP, que sustituye a esta.
+  setSecurityHeaders(res);
+
   // Las rutas del servicio Forms las maneja la app Express montada.
   if (isFormsPath(req.url)) {
     formsApp(req, res);
@@ -1816,10 +1837,6 @@ const server = http.createServer(async (req, res) => {
 
       const id = crypto.randomUUID();
       consumeUseForJob(authUser, "descriptiva", id);
-      // La anotacion del uso pendiente debe quedar en firme ANTES de
-      // lanzar el job: es lo que permite devolver el uso si el proceso
-      // muere a mitad de la generacion.
-      await writeUsers();
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -1830,7 +1847,18 @@ const server = http.createServer(async (req, res) => {
         warnings: [],
         error: null,
       };
+      // El job se registra ANTES de ceder el event loop en el await.
+      //
+      // Estando despues, dos peticiones simultaneas del mismo usuario pasaban
+      // las dos el control de concurrencia de arriba (el mapa seguia vacio
+      // cuando la segunda lo consultaba) y arrancaban dos generaciones de IA a
+      // la vez, saltandose tanto el limite de una por usuario como el tope
+      // global. En un contenedor de 512 MB eso es memoria y dinero.
       descriptivaJobs.set(id, job);
+      // La anotacion del uso pendiente debe quedar en firme ANTES de
+      // lanzar el job: es lo que permite devolver el uso si el proceso
+      // muere a mitad de la generacion.
+      await writeUsers();
 
       generateDescriptiva({ texto: input.texto, config: { n: input.n, nivel: input.nivel } })
         .then((generated) => {
@@ -1916,10 +1944,6 @@ const server = http.createServer(async (req, res) => {
 
       const id = crypto.randomUUID();
       consumeUseForJob(authUser, "titulos", id);
-      // La anotacion del uso pendiente debe quedar en firme ANTES de
-      // lanzar el job: es lo que permite devolver el uso si el proceso
-      // muere a mitad de la generacion.
-      await writeUsers();
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -1929,7 +1953,12 @@ const server = http.createServer(async (req, res) => {
         result: null,
         error: null,
       };
+      // Registrar antes del await: ver la nota en el job de descriptiva.
       titulosJobs.set(id, job);
+      // La anotacion del uso pendiente debe quedar en firme ANTES de
+      // lanzar el job: es lo que permite devolver el uso si el proceso
+      // muere a mitad de la generacion.
+      await writeUsers();
 
       generateTitulos(input)
         .then((generated) => {
@@ -2016,11 +2045,6 @@ const server = http.createServer(async (req, res) => {
 
       const id = crypto.randomUUID();
       consumeUseForJob(authUser, "matriz", id);
-      // La anotacion del uso pendiente debe quedar en firme ANTES de
-      // lanzar el job: es lo que permite devolver el uso si el proceso
-      // muere a mitad de la generacion.
-      await writeUsers();
-
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -2030,7 +2054,12 @@ const server = http.createServer(async (req, res) => {
         result: null,
         error: null,
       };
+      // Registrar antes del await: ver la nota en el job de descriptiva.
       matrizJobs.set(id, job);
+      // La anotacion del uso pendiente debe quedar en firme ANTES de
+      // lanzar el job: es lo que permite devolver el uso si el proceso
+      // muere a mitad de la generacion.
+      await writeUsers();
 
       generateMatriz(input)
         .then((generated) => {
@@ -2114,11 +2143,6 @@ const server = http.createServer(async (req, res) => {
 
       const id = crypto.randomUUID();
       consumeUseForJob(authUser, "humanizador", id);
-      // La anotacion del uso pendiente debe quedar en firme ANTES de
-      // lanzar el job: es lo que permite devolver el uso si el proceso
-      // muere a mitad de la generacion.
-      await writeUsers();
-
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -2128,7 +2152,12 @@ const server = http.createServer(async (req, res) => {
         result: null,
         error: null,
       };
+      // Registrar antes del await: ver la nota en el job de descriptiva.
       humanizadorJobs.set(id, job);
+      // La anotacion del uso pendiente debe quedar en firme ANTES de
+      // lanzar el job: es lo que permite devolver el uso si el proceso
+      // muere a mitad de la generacion.
+      await writeUsers();
 
       generateHumanizacion(input)
         .then((generated) => {

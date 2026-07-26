@@ -9,7 +9,14 @@ import { fileURLToPath } from "url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROMPT_PATH = path.join(SCRIPT_DIR, "..", "..", "prompts", "prompt_maestro_datos.md");
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+// El endpoint es sobreescribible por entorno. Se anadio para poder probar el
+// control de concurrencia de los jobs contra un servidor lento local: sin
+// esto, en pruebas la generacion falla en microsegundos por falta de clave y
+// el job deja de estar activo antes de que llegue la segunda peticion, asi que
+// no habia forma de ejercitar la carrera. Tambien sirve para apuntar a un
+// proxy propio. En produccion no se define y vale el de siempre.
+const OPENROUTER_URL = process.env.OPENROUTER_BASE_URL
+  || "https://openrouter.ai/api/v1/chat/completions";
 export const DEFAULT_MODEL = "z-ai/glm-5.2";
 
 // El archivo del prompt trae un preambulo de arquitectura y un bloque final
