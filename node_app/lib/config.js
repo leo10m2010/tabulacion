@@ -91,29 +91,42 @@ const buildVariableFromFlat = (raw, varNum, fallbackItems) => {
 //
 // La cobertura del puntaje posible (que dependa del numero de items) se
 // comprueba mas abajo, cuando ya se conoce el total de items de la variable.
-export const validarBaremoManual = (desdeRaw, hastaRaw, nivelNames, etiquetaVariable) => {
+export const validarBaremoManual = (desdeRaw, hastaRaw, nivelNames, etiquetaVariable, avisos = []) => {
   const hayDesde = Array.isArray(desdeRaw) && desdeRaw.some((v) => String(v ?? "").trim() !== "");
   const hayHasta = Array.isArray(hastaRaw) && hastaRaw.some((v) => String(v ?? "").trim() !== "");
   if (!hayDesde && !hayHasta) return undefined;
 
   const donde = `${etiquetaVariable}, baremo manual`;
+
+  // INCOMPLETO (falta una columna, o no hay una fila por nivel): el sistema
+  // siempre cayo al baremo automatico en este caso y hay configuraciones
+  // guardadas asi que funcionan — por ejemplo, subir de 3 a 5 niveles sin
+  // rellenar los rangos nuevos. Se conserva ese comportamiento; lo que cambia
+  // es que ahora se dice, en vez de sustituirlo en silencio.
   if (!hayDesde || !hayHasta) {
-    throw new Error(
-      `${donde}: falta la columna "${hayDesde ? "Hasta" : "Desde"}". `
-      + "Completa ambas para todos los niveles o deja las dos vacias para usar el baremo automatico.",
+    avisos.push(
+      `${donde}: falta la columna "${hayDesde ? "Hasta" : "Desde"}", asi que se uso el baremo `
+      + "automatico. Completa ambas columnas si quieres tus propios rangos.",
     );
+    return undefined;
   }
 
   const desde = desdeRaw.map((v) => toInt(v, NaN));
   const hasta = hastaRaw.map((v) => toInt(v, NaN));
 
   if (desde.length !== nivelNames.length || hasta.length !== nivelNames.length) {
-    throw new Error(
+    avisos.push(
       `${donde}: hay ${nivelNames.length} nivel(es) pero ${desde.length} valor(es) en "Desde" y `
-      + `${hasta.length} en "Hasta". Cada nivel necesita su rango.`,
+      + `${hasta.length} en "Hasta", asi que se uso el baremo automatico. `
+      + "Pon un rango por nivel si quieres tus propios cortes.",
     );
+    return undefined;
   }
 
+  // A partir de aqui el baremo esta COMPLETO: hay un rango por nivel. Si aun
+  // asi esta mal formado, ya no se puede adivinar la intencion y se rechaza —
+  // antes se usaba tal cual y producia fichas con "Desde 3, Hasta 2" o
+  // encuestados clasificados en dos niveles a la vez.
   nivelNames.forEach((nombre, i) => {
     const etiqueta = String(nombre ?? "").trim();
     if (!etiqueta) {
@@ -155,11 +168,12 @@ export const validarBaremoManual = (desdeRaw, hastaRaw, nivelNames, etiquetaVari
   return nivelNames.map((nombre, i) => ({ nombre, min: desde[i], max: hasta[i] }));
 };
 
-const parseBaremoOverride = (raw, suffix, nivelNames, etiquetaVariable) => validarBaremoManual(
+const parseBaremoOverride = (raw, suffix, nivelNames, etiquetaVariable, avisos) => validarBaremoManual(
   raw[`desde${suffix}`],
   raw[`hasta${suffix}`],
   nivelNames,
   etiquetaVariable,
+  avisos,
 );
 
 // Distribucion pedida por el usuario: que porcentaje de encuestados debe caer
@@ -225,6 +239,10 @@ export const normalizeConfig = (raw) => {
   const nivelesV2 = (Array.isArray(raw.nombre_escala_v2) && raw.nombre_escala_v2.length >= 2 && raw.nombre_escala_v2.map(String))
     || nivelesV1;
 
+  // Avisos sobre el baremo manual. Se recogen aqui y se vuelcan mas abajo, con
+  // el resto de avisos que viajan en la respuesta.
+  const avisosBaremo = [];
+
   // Variables y su estructura.
   let variables;
   if (Array.isArray(raw.variables) && raw.variables.length > 0) {
@@ -253,17 +271,13 @@ export const normalizeConfig = (raw) => {
       variables.push({
         nombre: varNames[vi]?.trim() || `Variable ${vi + 1}`,
         niveles,
-        baremoVariable: parseBaremoOverride(raw, vi === 0 ? "" : "_v2", niveles, `Variable ${vi + 1}`),
+        baremoVariable: parseBaremoOverride(raw, vi === 0 ? "" : "_v2", niveles, `Variable ${vi + 1}`, avisosBaremo),
         baremoObjetivo: parseBaremoObjetivo(raw, vi === 0 ? "" : "_v2", niveles),
         itemNames: Array.isArray(raw[`nombre_items_v${vi + 1}`]) ? raw[`nombre_items_v${vi + 1}`].map(String) : [],
         dimensiones: buildVariableFromFlat(raw, vi + 1, fallbackItems),
       });
     }
   }
-
-  // Avisos sobre el baremo manual. Se recogen aqui y se vuelcan mas abajo, con
-  // el resto de avisos que viajan en la respuesta.
-  const avisosBaremo = [];
 
   variables.forEach((variable, vi) => {
     const total = variable.dimensiones.reduce(

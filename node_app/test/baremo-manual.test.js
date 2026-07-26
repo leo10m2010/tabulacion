@@ -84,22 +84,43 @@ test("valor no numerico: dice cual es", () => {
   );
 });
 
-test("faltan filas: dice cuantas hay y cuantas se esperaban", () => {
-  assert.throws(
-    () => validarBaremoManual(["18", "43"], ["42", "66"], NIVELES, "Variable 1"),
-    (e) => /3 nivel/.test(e.message) && /2 valor/.test(e.message),
-  );
+// ── Baremo INCOMPLETO: se conserva el comportamiento de siempre ──────────────
+//
+// Cuando no hay un rango por nivel, el sistema siempre cayo al baremo
+// automatico, y hay configuraciones guardadas asi que funcionan (subir de 3 a 5
+// niveles sin rellenar los rangos nuevos es lo normal). Eso NO cambia: lo unico
+// que cambia es que ahora se dice, en vez de sustituirlo en silencio.
+
+test("faltan filas: se usa el automatico y se avisa, no se rechaza", () => {
+  const avisos = [];
+  const r = validarBaremoManual(["18", "43"], ["42", "66"], NIVELES, "Variable 1", avisos);
+  assert.equal(r, undefined, "deberia caer al baremo automatico");
+  assert.equal(avisos.length, 1);
+  assert.match(avisos[0], /3 nivel/);
+  assert.match(avisos[0], /automatico/i);
 });
 
-test("solo una de las dos columnas: dice cual falta", () => {
-  assert.throws(
-    () => validarBaremoManual(["18", "43", "67"], [], NIVELES, "Variable 1"),
-    /falta la columna "Hasta"/,
-  );
-  assert.throws(
-    () => validarBaremoManual([], ["42", "66", "90"], NIVELES, "Variable 1"),
-    /falta la columna "Desde"/,
-  );
+test("solo una de las dos columnas: automatico y aviso que dice cual falta", () => {
+  const a1 = [];
+  assert.equal(validarBaremoManual(["18", "43", "67"], [], NIVELES, "Variable 1", a1), undefined);
+  assert.match(a1[0], /falta la columna "Hasta"/);
+
+  const a2 = [];
+  assert.equal(validarBaremoManual([], ["42", "66", "90"], NIVELES, "Variable 1", a2), undefined);
+  assert.match(a2[0], /falta la columna "Desde"/);
+});
+
+test("mas nombres de nivel que rangos: sigue generando (regresion)", async () => {
+  // Este caso rompio la matriz de validacion: 5 nombres de nivel con los 3
+  // rangos del ejemplo. Antes generaba con el baremo automatico y debe
+  // seguir haciendolo.
+  const r = await generateArtifacts({
+    ...base,
+    escala: "5",
+    nombre_escala: ["Muy bajo", "Bajo", "Medio", "Alto", "Muy alto"],
+  });
+  assert.ok(r.excelBuffer.length > 10000);
+  assert.ok(r.warnings.some((w) => /baremo manual/i.test(w)), `avisos: ${JSON.stringify(r.warnings)}`);
 });
 
 test("etiqueta de nivel vacia: se rechaza", () => {
