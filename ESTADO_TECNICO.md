@@ -1,6 +1,197 @@
 # Estado técnico del proyecto
 
-Actualizado: 2026-07-01.
+Actualizado: 2026-07-25.
+
+## Auditoría y endurecimiento (2026-07-25)
+
+Pasada de auditoría con verificación reproducible. Línea base antes de tocar
+nada: 247 tests de backend, 6 de Forms, 64 de frontend, build y tipos OK.
+Después: **274 / 16 / 83**, todo en verde.
+
+### Seguridad
+
+- **Aislamiento de los jobs de Forms (crítico).** `forms/server.js` guardaba
+  los jobs en un único almacén sin dueño: cualquier cuenta con clave `ttab_`
+  válida leía las corridas de todos (URL del formulario, etiqueta, resultado),
+  las cancelaba y podía vaciar el historial completo del servicio con un solo
+  `DELETE`. Ahora cada job lleva `ownerEmail` y las cuatro rutas filtran por él
+  (404, no 403, para no revelar existencia). El modo legado y la llave maestra
+  siguen viéndolo todo. Cubierto por `forms/tests/tesistab-aislamiento.test.js`
+  (5 de sus 7 pruebas fallan sin el arreglo).
+- **XSS reflejado en `/_submit`.** La página interpolaba `req.query.id` dentro
+  de un `<script>` con `JSON.stringify`, que no escapa la barra: un id con
+  `</script>` cerraba el bloque. Ruta pública, sin autenticación. Los ids son
+  UUID, así que se validan con regex y la inyección se cierra en origen; además
+  la página fija su propia CSP. Cubierto por `forms/tests/submit-xss.test.js`.
+- **Tope de entrada en Descriptiva.** No había límite de longitud: un uso podía
+  empujar ~4 MB de texto a OpenRouter. Ahora 40.000 caracteres (~6.000
+  palabras), aplicado también al `.docx` **después** de convertirlo (3 MB
+  comprimidos se expanden sin tope). Títulos y matriz ya acotaban a 200; el
+  humanizador a 3.000 palabras.
+- **Cabeceras de seguridad.** No había ninguna. Se añaden en la API
+  (`setSecurityHeaders`: CSP `default-src 'none'`, nosniff, `X-Frame-Options`,
+  `Referrer-Policy`, HSTS) y en `frontend/vercel.json` (CSP completa,
+  `frame-ancestors 'none'`, HSTS, `Permissions-Policy`).
+- **TOCTOU en los cuatro endpoints de IA.** El control de concurrencia se hacía
+  contra un mapa que solo se poblaba *después* de `await writeUsers()`. El
+  registro se movió antes del await, así que comprobar y registrar ocurren en el
+  mismo turno del event loop. *Nota honesta*: la ventana era estrecha y no se
+  consiguió dispararla desde fuera; la prueba asociada es un guardián del
+  invariante, no una demostración del fallo.
+
+### Exactitud y honestidad estadística
+
+- **El control del patrón de resultados se declara siempre.** El
+  cuasiexperimental genera hasta 80 muestras y conserva la que minimiza un
+  puntaje que premia `p < α` — es muestreo por rechazo condicionado al
+  resultado del contraste. Antes solo avisaba cuando **fallaba**: el caso que
+  hay que declarar (que lo consiguiera) salía mudo. Ahora el aviso se emite
+  siempre, con el número real de intentos, y la hoja "Información" explica qué
+  significa "Activado" en lugar de solo escribir la palabra.
+- **La nota de significación dejó de mentir.** `sheets.js` escribía "la
+  correlación es significativa en el nivel 0,01" como texto fijo bajo *todas*
+  las tablas, incluso con `Sig. = 0,96` dos filas más arriba. Ahora es una
+  fórmula que lee ese Sig. y contempla los tres desenlaces. Verificado
+  recalculando con `scripts/recalc.py`: con nivel "nula" dice "no es
+  estadísticamente significativa"; con nivel "muy alta" sigue diciendo 0,01.
+- **El aviso de datos simulados vivía dentro del bloque del control de
+  correlación**, que es `null` con una sola variable: ese archivo salía con la
+  base inventada y sin ninguna marca. Ahora depende de `conDatos`.
+
+### Generador de Excel
+
+- **Dimensión o indicador con 0 ítems producía un archivo ilegible** (crítico).
+  El rango de columnas salía invertido (`endCol = startCol - 1`) y el `.xlsx`
+  incluía `mergeCell ref="B2:A2"` y `SUM(K34:J34)`; openpyxl se niega a abrirlo.
+  Era alcanzable desde la interfaz y el usuario gastaba un uso. Se valida en
+  `config.js` (backend) y en `wizard-validation.ts` (antes de gastar el uso).
+- **Baremos imposibles.** Con más niveles que puntajes alcanzables, la ficha
+  mostraba filas "Desde 3, Hasta 2" y el IF anidado tenía umbrales muertos.
+  `computeNiveles` ya no puede devolver rangos invertidos, y `config.js` rechaza
+  la configuración explicando por qué.
+- **Nombres de hoja.** `sanitizeSheetName` hacía `trim()` **antes** del
+  `slice(0,31)`, dejando espacios finales, y no saneaba el apóstrofo — que el
+  truncado podía *crear* al final de un nombre legítimo, produciendo fórmulas
+  con triple apóstrofo y cientos de `#REF!`.
+- **N=2.** `IFERROR(...,0)` convertía el `#DIV/0!` de 0 grados de libertad en
+  `Sig. = 0.0000`, que se lee como la significación más fuerte posible justo
+  donde no hay información. Ahora queda vacío.
+
+### Frontend
+
+- **El asistente ya no pierde el trabajo.** `TabulacionSection` guardaba todo en
+  `useState` y `App.tsx` la renderiza condicionalmente: cambiar de sección la
+  desmontaba y borraba la configuración entera; recargar, también. Hay borrador
+  por cuenta en `lib/wizard-draft.ts` (guardado con retardo, aviso visible al
+  recuperar, "Empezar de cero", `beforeunload` mientras hay trabajo sin generar,
+  y limpieza de todos los borradores al cerrar sesión — el instrumento no debe
+  sobrevivir en un equipo compartido).
+- **Bundle inicial: 583 kB → 386 kB (167 → 122 KB gzip).** Las once secciones
+  viajaban en el chunk inicial; ahora cada una es su propio chunk con
+  `React.lazy` y un esqueleto de carga. La landing y el acceso siguen en el
+  bundle inicial a propósito (ruta crítica).
+- **Accesibilidad.** Todo el frontend tenía 10 atributos ARIA, cero `aria-live`
+  y cero `aria-current`: errores y progreso eran invisibles para un lector de
+  pantalla y la navegación no decía dónde estabas. Se añaden `role="alert"` a
+  los errores, `aria-live` al progreso de generación, `aria-current="page"` a
+  toda la navegación y landmarks `<nav aria-label>`.
+
+### Riesgo operativo a tener presente
+
+`frontend/vercel.json` fija el dominio de la API en `connect-src`
+(`https://tabulacion-api.onrender.com`). **Si se cambia `VITE_API_BASE_URL` a
+otro dominio hay que añadirlo ahí**, o el navegador bloqueará todas las
+peticiones de la app en producción. Verificado contra el servicio real: ese es
+el dominio que Render sirve hoy.
+
+## Presupuesto de generación y condiciones reales de producción (2026-07-25)
+
+### Lo que dice Render (consultado por su API, sin modificar nada)
+
+| | `tabulacion-api` |
+|---|---|
+| Plan / región | free / oregon, 1 instancia |
+| **Memoria** | **512 MB** (`memory_limit` = 536.870.900 bytes) |
+| **CPU** | **0,15** (`cpu_limit`) — tan restrictiva como la memoria |
+| Node | 20 (declarado en `render.yaml`) |
+| Build / start | coinciden exactamente con `render.yaml` |
+| Healthcheck | `/health` |
+| Memoria en reposo | ~48-51 MB |
+| Reinicios | cada 2-3 h, arranques limpios (spin-down del plan free) |
+| OOM en los últimos 30 días | ninguno |
+
+Dos matices importantes sobre ese "ningún OOM": en la ventana consultada **no
+hay tráfico real de generación**, así que producción no puede confirmar ni
+desmentir el riesgo de memoria; y la CPU de 0,15 significa que una generación
+que aquí tarda 2 s puede tardar del orden de 15-20 s allí.
+
+Diferencias detectadas con `render.yaml`:
+
+- Existe un **segundo servicio** `tutorica-forms` (rootDir `forms`), hoy
+  **suspendido por el usuario**, que no está declarado en `render.yaml`. El
+  servicio activo monta Forms dentro del mismo proceso.
+- El servicio corre el commit `0424037`; el repositorio local va por delante.
+
+### El presupuesto conjunto
+
+`node_app/lib/presupuesto.js` es la fuente de verdad. **No reduce ningún
+máximo**: la muestra sigue admitiendo 2.000 encuestados y cada variable 60
+ítems. Lo que se rechaza es la combinación que no cabe, y el mensaje dice qué
+reducir y hasta cuánto.
+
+Calibrado midiendo, no con una fórmula teórica
+(`scripts/benchmark-generacion.mjs`, con el heap real de producción):
+
+| N | ítems | vars | resultado | pico RSS |
+|---|---|---|---|---|
+| 300 | 60 | 2 | ok | 423 MB |
+| 1000 | 18 | 1 | ok | 444 MB |
+| 2000 | 18 | 1 | ok | 478 MB |
+| 500 | 40 | 2 | ok | **534 MB** — no cabe |
+| 1000 | 15 | 2 | ok | **572 MB** — no cabe |
+| 800 | 27 | 2 | ok | **612 MB** — no cabe |
+| 1500 | 15 | 2 | **OOM** | — |
+
+Dos conclusiones que corrigen lo que se suponía:
+
+1. **El coste no es proporcional al número de celdas.** 1000×15 son 15.000
+   celdas y gasta 572 MB; 300×60 son 18.000 y gasta 423 MB. Pesa más el número
+   de encuestados, porque cada uno añade filas de fórmulas.
+2. **"ok" en local no significa "cabe en producción".** El worker comparte los
+   512 MB con el servidor HTTP (~50 MB): un pico de 534 MB suma ~584 MB y el
+   contenedor lo mata aunque Node no se haya quedado sin heap.
+
+El backend rechaza en la normalización, **antes** de descontar el uso y de
+arrancar el worker; `/template-info` publica el presupuesto para que el
+asistente avise mientras el usuario sigue en el formulario.
+
+## Validación de Excel con LibreOffice (2026-07-25)
+
+`scripts/validar-excel-libreoffice.mjs` genera una matriz de 19 casos y, por
+cada uno: valida el OOXML sin abrirlo, deja que **LibreOffice 26.2 lo abra,
+recalcule y lo guarde**, cuenta las celdas que quedaron en error y lo convierte
+a PDF. Un caso solo es válido si supera los cinco pasos.
+
+Esto cierra un hueco real: hasta ahora los archivos se validaban parseando su
+XML, lo que prueba que la estructura es correcta pero no que una hoja de
+cálculo resuelva las fórmulas ni que el documento se vea bien impreso.
+
+Resultado sobre el código actual: **19/19 casos, cero celdas en error** tras el
+recálculo. Cubre una y dos variables, Pearson y Spearman, correlación positiva,
+negativa y nula, con y sin control de resultados, Likert de 3/5/7, escala
+personalizada, baremo automático y manual, muestra mínima y mediana, nombres
+largos, caracteres especiales y los dos flujos cuasiexperimentales.
+
+La revisión visual de los PDF encontró un defecto que ninguna validación
+automática detectaba: en las hojas de medición del cuasiexperimental los
+nombres de ítem se **cortaban a media palabra** porque el alto de fila era fijo.
+Corregido calculando el alto del texto real. Queda pendiente lo cosmético: con
+columnas de ancho 8 las palabras largas siguen partiéndose, pero ya no se
+pierde texto.
+
+---
+
+Actualizado antes: 2026-07-01.
 
 ## Resumen
 
