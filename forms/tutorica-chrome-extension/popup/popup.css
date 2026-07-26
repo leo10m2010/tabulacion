@@ -1,47 +1,84 @@
+/* Las fuentes van EMPAQUETADAS en la extension.
+ *
+ * Antes se declaraba 'Outfit' sin cargarla en ninguna parte: no habia @font-face
+ * ni link, asi que el popup se pintaba siempre con la fuente de respaldo del
+ * sistema. Ademas, una extension MV3 no puede traerse una fuente de un CDN, asi
+ * que la unica forma de que se vea la tipografia de la marca es incluir el
+ * archivo. Son los mismos ficheros que usa la web (@fontsource-variable). */
+@font-face {
+  font-family: 'Space Grotesk Variable';
+  src: url('../fonts/space-grotesk-latin-wght-normal.woff2') format('woff2-variations');
+  font-weight: 300 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter Variable';
+  src: url('../fonts/inter-latin-wght-normal.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 * {
   box-sizing: border-box;
 }
 
-/* Tokens de diseno espejo de frontend/src/index.css (TesisTab): neutros frios
-   con un solo acento azul cobalto. Mantener sincronizados con la web. */
+/* Controles nativos con el color de la marca.
+ *
+ * Sin esto, el checkbox de "Activar en Google Forms" se pintaba con el azul por
+ * defecto de Chrome: era el unico elemento azul que quedaba en un popup ya
+ * esmeralda, y se notaba. */
+input[type='checkbox'],
+input[type='radio'],
+progress {
+  accent-color: hsl(var(--primary));
+}
+
+/* Tokens de diseno espejo de frontend/src/index.css (TesisHub): hueso calido
+   con acento esmeralda. Mantener sincronizados con la web.
+ *
+ * Estaban dos identidades por detras: neutros frios con azul cobalto, de
+ * cuando el producto se llamaba TesisTab. Puesta al lado de la web actual, la
+ * extension parecia de otro producto. Los valores de abajo se copiaron uno a
+ * uno de frontend/src/index.css. */
 body {
   /* color-scheme alinea los controles nativos (dropdown del select,
      checkboxes, scroll) con el tema activo. */
   color-scheme: light;
-  --background: 220 30% 98%;
-  --foreground: 224 25% 12%;
+  --background: 60 14% 97%;
+  --foreground: 210 20% 8%;
   --card: 0 0% 100%;
-  --card-foreground: 224 25% 12%;
-  --primary: 222 65% 40%;
-  --primary-foreground: 0 0% 98%;
-  --muted: 220 18% 93%;
-  --muted-foreground: 222 12% 40%;
-  --accent: 221 55% 94%;
-  --accent-foreground: 223 50% 20%;
+  --card-foreground: 210 20% 8%;
+  --primary: 160 79% 27%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 60 8% 92%;
+  --muted-foreground: 200 8% 38%;
+  --accent: 160 30% 93%;
+  --accent-foreground: 160 60% 16%;
   --danger: 2 76% 50%;
   --danger-foreground: 0 0% 100%;
-  --border: 220 16% 85%;
-  --input: 220 16% 85%;
-  --ring: 222 65% 40%;
+  --border: 50 8% 86%;
+  --input: 50 8% 86%;
+  --ring: 160 79% 27%;
 }
 
 body[data-theme='dark'] {
   color-scheme: dark;
-  --background: 224 22% 8%;
-  --foreground: 218 15% 92%;
-  --card: 224 20% 11%;
-  --card-foreground: 218 15% 92%;
-  --primary: 218 80% 68%;
-  --primary-foreground: 224 45% 10%;
-  --muted: 223 15% 17%;
-  --muted-foreground: 218 10% 70%;
-  --accent: 223 16% 21%;
-  --accent-foreground: 218 16% 88%;
+  --background: 170 15% 6%;
+  --foreground: 150 10% 92%;
+  --card: 168 12% 9%;
+  --card-foreground: 150 10% 92%;
+  --primary: 158 55% 52%;
+  --primary-foreground: 170 30% 8%;
+  --muted: 168 10% 15%;
+  --muted-foreground: 155 8% 65%;
+  --accent: 165 12% 14%;
+  --accent-foreground: 155 15% 85%;
   --danger: 2 72% 58%;
   --danger-foreground: 0 0% 100%;
-  --border: 223 14% 23%;
-  --input: 223 14% 23%;
-  --ring: 218 80% 68%;
+  --border: 165 10% 18%;
+  --input: 165 10% 18%;
+  --ring: 158 55% 52%;
 }
 
 /* Sin barra de scroll visible; el contenido sigue desplazable con la rueda. */
@@ -59,7 +96,7 @@ body {
   width: 340px;
   background: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-family: 'Outfit', 'Outfit Variable', 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Inter Variable', 'Segoe UI', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   transition: background-color 220ms ease, color 220ms ease;
 }
@@ -388,6 +425,9 @@ button:hover {
 }
 
 .brand-name {
+  /* Space Grotesk es la tipografia de titulo de la marca, la misma que usa la
+     web para el logotipo y los encabezados. */
+  font-family: 'Space Grotesk Variable', 'Inter Variable', system-ui, sans-serif;
   font-size: 15px;
   font-weight: 700;
   letter-spacing: -0.01em;

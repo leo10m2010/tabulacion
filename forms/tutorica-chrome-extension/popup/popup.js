@@ -302,7 +302,7 @@ function normalizeLockMinutes(value) {
 function setConnectionState(state, title, sub) {
   elements.connCard.className = `conn-card is-${state}`;
   elements.connTitle.textContent = title;
-  elements.connSub.textContent = sub || 'Servicio TesisTab';
+  elements.connSub.textContent = sub || 'Servicio TesisHub';
 }
 
 async function refreshConnection(announce) {
@@ -310,7 +310,7 @@ async function refreshConnection(announce) {
   const backendBaseUrl = normalizeUrl(settings.backendBaseUrl);
   const apiKey = String(settings.apiKey || '').trim();
 
-  setConnectionState('checking', 'Verificando conexion...', 'Servicio TesisTab');
+  setConnectionState('checking', 'Verificando conexion...', 'Servicio TesisHub');
 
   try {
     const headers = apiKey ? { 'X-API-Key': apiKey } : {};
@@ -337,7 +337,7 @@ async function refreshConnection(announce) {
       ? 'Listo para enviar respuestas'
       : usesLeft > 0
         ? `Usos de Forms disponibles: ${usesLeft}`
-        : 'Sin usos disponibles: pide una recarga en TesisTab';
+        : 'Sin usos disponibles: pide una recarga en TesisHub';
     setConnectionState('online', 'Conectado', connectionSub);
     if (announce) showStatus('Conexion verificada.', false);
   } catch (error) {

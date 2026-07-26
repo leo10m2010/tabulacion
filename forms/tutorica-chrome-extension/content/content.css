@@ -1,27 +1,33 @@
-/* Tokens de diseno espejo de frontend/src/index.css (TesisTab): neutros frios
-   con un solo acento azul cobalto. Se declaran sobre cada raiz inyectada
-   porque el body pertenece a Google Forms. Mantener sincronizados con la web. */
+/* Tokens de diseno espejo de frontend/src/index.css (TesisHub): hueso calido
+   con acento esmeralda. Se declaran sobre cada raiz inyectada porque el body
+   pertenece a Google Forms. Mantener sincronizados con la web.
+ *
+ * La fuente NO se empaqueta aqui a proposito, al contrario que en el popup:
+ * este CSS se inyecta dentro de la pagina de Google Forms y cargar una fuente
+ * propia solo para un panel flotante no compensa el peso. Se usa la pila del
+ * sistema, que es lo que de hecho se veia antes ('Outfit' se declaraba pero
+ * nunca se cargaba). */
 #tesistab-qa-pill,
 #tesistab-qa-status,
 #tesistab-qa-actions,
 #tesistab-qa-confirm-overlay {
   color-scheme: light;
-  --background: 220 30% 98%;
-  --foreground: 224 25% 12%;
+  --background: 60 14% 97%;
+  --foreground: 210 20% 8%;
   --card: 0 0% 100%;
-  --card-foreground: 224 25% 12%;
-  --primary: 222 65% 40%;
-  --primary-foreground: 0 0% 98%;
-  --muted: 220 18% 93%;
-  --muted-foreground: 222 12% 40%;
-  --accent: 221 55% 94%;
-  --accent-foreground: 223 50% 20%;
+  --card-foreground: 210 20% 8%;
+  --primary: 160 79% 27%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 60 8% 92%;
+  --muted-foreground: 200 8% 38%;
+  --accent: 160 30% 93%;
+  --accent-foreground: 160 60% 16%;
   --danger: 2 76% 50%;
   --danger-foreground: 0 0% 100%;
-  --border: 220 16% 85%;
-  --input: 220 16% 85%;
-  --ring: 222 65% 40%;
-  --tt-font: 'Outfit', 'Outfit Variable', 'Segoe UI', system-ui, sans-serif;
+  --border: 50 8% 86%;
+  --input: 50 8% 86%;
+  --ring: 160 79% 27%;
+  --tt-font: 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
 #tesistab-qa-pill[data-theme='dark'],
@@ -30,21 +36,21 @@
 #tesistab-qa-confirm-overlay[data-theme='dark'] {
   /* Controles nativos (select, checkbox) oscuros aunque Google Forms este claro. */
   color-scheme: dark;
-  --background: 224 22% 8%;
-  --foreground: 218 15% 92%;
-  --card: 224 20% 11%;
-  --card-foreground: 218 15% 92%;
-  --primary: 218 80% 68%;
-  --primary-foreground: 224 45% 10%;
-  --muted: 223 15% 17%;
-  --muted-foreground: 218 10% 70%;
-  --accent: 223 16% 21%;
-  --accent-foreground: 218 16% 88%;
+  --background: 170 15% 6%;
+  --foreground: 150 10% 92%;
+  --card: 168 12% 9%;
+  --card-foreground: 150 10% 92%;
+  --primary: 158 55% 52%;
+  --primary-foreground: 170 30% 8%;
+  --muted: 168 10% 15%;
+  --muted-foreground: 155 8% 65%;
+  --accent: 165 12% 14%;
+  --accent-foreground: 155 15% 85%;
   --danger: 2 72% 58%;
   --danger-foreground: 0 0% 100%;
-  --border: 223 14% 23%;
-  --input: 223 14% 23%;
-  --ring: 218 80% 68%;
+  --border: 165 10% 18%;
+  --input: 165 10% 18%;
+  --ring: 158 55% 52%;
 }
 
 #tesistab-qa-pill {
@@ -59,7 +65,7 @@
   font-family: var(--tt-font);
   font-weight: 600;
   letter-spacing: 0.2px;
-  box-shadow: 0 8px 24px hsl(224 25% 12% / 0.14);
+  box-shadow: 0 8px 24px rgba(14, 60, 45, 0.14);
 }
 
 #tesistab-qa-pill.is-on {
@@ -84,7 +90,7 @@
   border-radius: 12px;
   font-size: 13px;
   font-family: var(--tt-font);
-  box-shadow: 0 8px 24px hsl(224 25% 12% / 0.22);
+  box-shadow: 0 8px 24px rgba(14, 60, 45, 0.22);
 }
 
 #tesistab-qa-status.is-ok {
@@ -105,7 +111,7 @@
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: hsl(224 25% 12% / 0.55);
+  background: rgba(14, 60, 45, 0.55);
   backdrop-filter: blur(4px);
 }
 
@@ -115,7 +121,7 @@
   border-radius: 16px;
   background: hsl(var(--card));
   color: hsl(var(--card-foreground));
-  box-shadow: 0 18px 48px hsl(224 25% 12% / 0.28);
+  box-shadow: 0 18px 48px rgba(14, 60, 45, 0.28);
   padding: 18px;
   font-family: var(--tt-font);
 }
@@ -211,7 +217,7 @@
   border-radius: 14px;
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
-  box-shadow: 0 12px 30px hsl(224 25% 12% / 0.14);
+  box-shadow: 0 12px 30px rgba(14, 60, 45, 0.14);
 }
 
 #tesistab-qa-actions .tesistab-qa-title {
@@ -236,7 +242,7 @@
 }
 
 /* Dentro de un boton el icono toma el color del texto del boton, no el
-   acento: evita icono cobalto sobre fondo cobalto. */
+   acento: evita icono del acento sobre fondo del acento. */
 #tesistab-qa-actions button .tesistab-qa-icon,
 #tesistab-qa-confirm-dialog button .tesistab-qa-icon {
   color: inherit;

@@ -1,4 +1,4 @@
-# Tutorica Forms
+# TesisHub Forms
 
 Servicio de llenado automático de Google Forms para los suscriptores de TesisTab:
 backend Express + extensión de Chrome. Derivado del proyecto MIT (ver `LICENSE`), recortado a su núcleo de llenado y autenticado contra

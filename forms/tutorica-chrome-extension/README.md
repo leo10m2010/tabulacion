@@ -1,7 +1,7 @@
-# Tutorica Forms (extensión de Chrome)
+# TesisHub Forms (extensión de Chrome)
 
 Extensión para completar y enviar respuestas automáticas en tus propios Google Forms.
-Funciona junto al backend de Tutorica Forms (montado en la API de TesisTab) y se
+Funciona junto al backend de Forms (montado en la API de TesisHub) y se
 autentica con la clave de API del usuario (`ttab_...`, se genera en TesisTab > Integraciones).
 
 **Instalación para usuarios (Chrome Web Store):**
@@ -40,7 +40,7 @@ autentica con la clave de API del usuario (`ttab_...`, se genera en TesisTab > I
 
 El zip se genera desde la raíz del repo e incluye solo lo necesario
 (`manifest.json`, `icons/`, `background/`, `content/`, `popup/` y `LICENSE`);
-ver `tutorica-forms-extension.zip`.
+ver `tesishub-forms-extension.zip`.
 
 ## Formato del CSV
 

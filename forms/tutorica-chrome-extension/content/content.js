@@ -200,7 +200,7 @@ async function onDocumentClick(event) {
       const now = Date.now();
       if (now - lastMultiPageHintAt > 2500) {
         lastMultiPageHintAt = now;
-        showStatus('Pagina siguiente detectada. TESISTAB se ejecuta en el ultimo paso.', false);
+        showStatus('Pagina siguiente detectada. TesisHub se ejecuta en el ultimo paso.', false);
       }
   }
 }
@@ -262,16 +262,16 @@ async function startTesistabRun(form, event) {
   lastTesistabTriggerAt = now;
 
     if (!form) {
-      showStatus('No se encontro el formulario para ejecutar TESISTAB.', true);
+      showStatus('No se encontro el formulario para ejecutar TesisHub.', true);
       recordDiagnostics({
-        lastError: 'No se encontro el formulario para ejecutar TESISTAB.',
+        lastError: 'No se encontro el formulario para ejecutar TesisHub.',
         updatedAt: new Date().toISOString(),
       });
       return;
     }
 
   if (isTesistabRunStarting) {
-    showStatus('La ejecucion TESISTAB ya se esta iniciando...', true);
+    showStatus('La ejecucion de TesisHub ya se esta iniciando...', true);
     return;
   }
 
@@ -290,12 +290,12 @@ async function startTesistabRun(form, event) {
 
     const prefill = fillUnansweredFormInputs(form);
     if (prefill.filled > 0) {
-      showStatus(`Se completaron ${prefill.filled} respuestas faltantes para TESISTAB.`);
+      showStatus(`Se completaron ${prefill.filled} respuestas faltantes para TesisHub.`);
     }
     if (prefill.missingRequired.length) {
       const firstMissing = prefill.missingRequired[0];
       const suffix = prefill.missingRequired.length > 1 ? ` (+${prefill.missingRequired.length - 1})` : '';
-      const message = `Faltan respuestas obligatorias no compatibles con TESISTAB: ${firstMissing}${suffix}`;
+      const message = `Faltan respuestas obligatorias no compatibles con TesisHub: ${firstMissing}${suffix}`;
       showStatus(message, true);
       recordDiagnostics({
         lastError: message,
@@ -320,7 +320,7 @@ async function startTesistabRun(form, event) {
     }
   }
 
-    showStatus('Envio detectado. Creando job TESISTAB...');
+    showStatus('Envio detectado. Creando job de TesisHub...');
     let payload = formDataToPayload(new FormData(form));
     payload = applyCsvRowIfAvailable(payload);
     payload = applySmartProfilePayload(payload, form, settings);
@@ -657,7 +657,7 @@ function injectStatusPill(enabled) {
   const existing = document.getElementById('tesistab-qa-pill');
   if (existing) {
     existing.className = enabled ? 'is-on' : 'is-off';
-    existing.textContent = enabled ? 'Tutorica Forms: ON' : 'Tutorica Forms: OFF';
+    existing.textContent = enabled ? 'TesisHub Forms: ON' : 'TesisHub Forms: OFF';
     existing.setAttribute('data-theme', resolveEffectiveThemeMode(settings.themeMode));
     return;
   }
@@ -665,7 +665,7 @@ function injectStatusPill(enabled) {
   const pill = document.createElement('div');
   pill.id = 'tesistab-qa-pill';
   pill.className = enabled ? 'is-on' : 'is-off';
-  pill.textContent = enabled ? 'Tutorica Forms: ON' : 'Tutorica Forms: OFF';
+  pill.textContent = enabled ? 'TesisHub Forms: ON' : 'TesisHub Forms: OFF';
   pill.setAttribute('data-theme', resolveEffectiveThemeMode(settings.themeMode));
   document.documentElement.appendChild(pill);
 }
@@ -852,7 +852,7 @@ function injectActionsPanel() {
 
     const form = currentForm || document.querySelector('form');
     if (!form) {
-      showStatus('Formulario no disponible para TESISTAB.', true);
+      showStatus('Formulario no disponible para TesisHub.', true);
       return;
     }
 
