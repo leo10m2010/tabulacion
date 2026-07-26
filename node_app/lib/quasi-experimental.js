@@ -549,8 +549,10 @@ export const generateQuasiExperimentalData = (cfg) => {
   const q = cfg.cuasiexperimental;
   const attempts = q.controlarResultados ? 80 : 1;
   let best = null;
+  let intentosUsados = 0;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    intentosUsados = attempt + 1;
     const itemParameters = buildItemParameters(itemCount);
     const experimental = generateGroup({
       n: q.nExperimental,
@@ -579,13 +581,32 @@ export const generateQuasiExperimentalData = (cfg) => {
   }
 
   const warnings = [];
+  // El aviso se emite SIEMPRE que el control esté activo, no solo cuando falla.
+  //
+  // Antes solo avisaba si `best.score > 0`, es decir, cuando la selección NO
+  // había conseguido el patrón pedido. Justo el caso que hay que declarar —que
+  // sí lo consiguiera— salía sin ninguna advertencia. Y no es un detalle
+  // menor: conservar, entre 80 muestras, la que minimiza un puntaje que premia
+  // p < α es muestreo por rechazo condicionado al resultado del contraste. Los
+  // p-valores que salen de ahí ya no se interpretan como los de una muestra
+  // única, porque la muestra fue elegida por su p-valor.
+  if (q.controlarResultados) {
+    warnings.push(
+      `Control del patrón de resultados activado: se simularon ${intentosUsados} muestras `
+      + `(de un máximo de ${attempts}) y se conservó la que mejor reproduce el patrón solicitado. `
+      + "Los p-valores resultantes están condicionados por esa selección y NO deben interpretarse "
+      + "como los de una muestra única: sobrestiman la significación y subestiman el error tipo I. "
+      + "Para una simulación sin selección, desactiva el control del patrón de resultados.",
+    );
+  }
   if (q.controlarResultados && best.score > 0) {
     warnings.push(
-      "La simulación conservó el intento estadísticamente más cercano al patrón solicitado; revisa los p-valores antes de usarlo.",
+      "Además, ninguna de las muestras reprodujo el patrón completo: se conservó la más cercana. "
+      + "Revisa los p-valores antes de usarlo.",
     );
   }
 
-  return { ...best, warnings };
+  return { ...best, warnings, intentosUsados, intentosMaximos: attempts };
 };
 
 // ── CSV ──────────────────────────────────────────────────────────────────────

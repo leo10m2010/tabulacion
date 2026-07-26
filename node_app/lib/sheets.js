@@ -703,17 +703,36 @@ const addRelacionesSheet = (sheet, cfg, refsV1, refsV2, base) => {
     sheet.range(row, A0 + 1, row, A0 + 2).merged(true).style({ ...ST_CELL, numberFormat: "0.0000" });
     sheet.cell(row, A0 + 1).formula(`IFERROR(CORREL(${corrRange(pair.a)},${corrRange(pair.b)}),"")`);
     row += 1;
+    const sigCellRef = `${colLetter(A0 + 1)}${row}`;
     sheet.cell(row, A0).value("Sig. (bilateral)").style(ST_CELL_LEFT);
     sheet.range(row, A0 + 1, row, A0 + 2).merged(true).style({ ...ST_CELL, numberFormat: "0.0000" });
+    // El respaldo del IFERROR es "" y no 0.
+    //
+    // Con N=2 los grados de libertad son 0: SQRT(0/0) da #DIV/0! y
+    // T.DIST.2T(x,0) da #NUM!. Convertirlos en 0 hacia que la hoja mostrara
+    // "Sig. = 0.0000", que se lee como la significacion mas fuerte posible
+    // justo donde no hay ninguna informacion (con N=2 la correlacion es +-1
+    // por construccion). Vacio dice la verdad: no se puede calcular.
     sheet.cell(row, A0 + 1).formula(
-      `IF(${rCellRef}="","",IFERROR(_xlfn.T.DIST.2T(ABS(${rCellRef})*SQRT((${N}-2)/(1-${rCellRef}^2)),${N}-2),0))`,
+      `IF(${rCellRef}="","",IFERROR(_xlfn.T.DIST.2T(ABS(${rCellRef})*SQRT((${N}-2)/(1-${rCellRef}^2)),${N}-2),""))`,
     );
     row += 1;
     sheet.cell(row, A0).value("N").style(ST_CELL_LEFT);
     sheet.range(row, A0 + 1, row, A0 + 2).merged(true).style(ST_CELL);
     sheet.cell(row, A0 + 1).value(N);
     row += 1;
-    sheet.cell(row, A0).value("**. La correlación es significativa en el nivel 0,01 (2 colas).").style(ST_NOTE);
+    // La nota se deduce del Sig. que esta misma tabla acaba de calcular.
+    //
+    // Antes era texto fijo: afirmaba "significativa en el nivel 0,01" bajo
+    // TODAS las tablas, incluso cuando el p de la celda de arriba valía 0,96.
+    // Como fórmula, la nota no puede contradecir a la tabla que la acompaña, y
+    // sigue viva si el usuario cambia los datos a mano.
+    sheet.cell(row, A0).formula(
+      `IF(${sigCellRef}="","",`
+      + `IF(${sigCellRef}<0.01,"**. La correlación es significativa en el nivel 0,01 (2 colas).",`
+      + `IF(${sigCellRef}<0.05,"*. La correlación es significativa en el nivel 0,05 (2 colas).",`
+      + `"La correlación no es estadísticamente significativa (p ≥ 0,05).")))`,
+    ).style(ST_NOTE);
     row += 3;
   });
 
@@ -872,10 +891,22 @@ const addInfoSheet = (sheet, cfg, baseSheetNames, correlationControl = null) => 
       sheet.cell(row, 2).value(v);
       row += 1;
     });
+  }
+
+  // Aviso de datos simulados.
+  //
+  // Vivía dentro del bloque anterior, que solo existe si hay control de
+  // correlación — y con una sola variable `correlationControl` es null. Es
+  // decir: justo el archivo de una variable salía con cientos de respuestas
+  // Likert inventadas y ninguna marca de que lo fueran. Depende de si hay
+  // datos, que es lo que de verdad lo determina.
+  if (cfg.conDatos) {
+    row += 1;
     sheet.range(row, 1, row, 4).merged(true).style({ ...FONT, fontSize: 9, italic: true, horizontalAlignment: "left" });
     sheet.cell(row, 1).value(
-      "• Los datos son simulados: esta función está pensada para pruebas del sistema, ensayos estadísticos y demostraciones académicas; no reemplaza datos reales recolectados en una investigación.",
+      "• Los datos de este archivo son SIMULADOS: esta función está pensada para pruebas del sistema, ensayos estadísticos y demostraciones académicas; no reemplaza datos reales recolectados en una investigación.",
     );
+    row += 1;
   }
 
   sheet.column("A").width(28);

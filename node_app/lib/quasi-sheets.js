@@ -18,6 +18,7 @@ import {
   colLetter,
   quoteSheet,
   valoracionFormula,
+  altoParaTextoAjustado,
 } from "./sheet-style.js";
 import { resetAxisIds } from "./ooxml.js";
 import {
@@ -224,7 +225,14 @@ const addMeasurementSheet = ({ sheet, cfg, rows, group, moment, hasData }) => {
   sheet.column(levelCol).width(14);
   sheet.column(changeCol).width(16);
   sheet.row(2).height(25);
-  sheet.row(3).height(35);
+  // La fila 3 lleva el NOMBRE COMPLETO de cada item en columnas de ancho 8. Con
+  // un alto fijo de 35 los nombres largos se cortaban a media palabra en el
+  // PDF (visto abriendo el archivo con LibreOffice); se calcula del texto real.
+  sheet.row(3).height(altoParaTextoAjustado(
+    Array.from({ length: itemCount }, (_, i) => variable.itemNames[i]?.trim() || `P${i + 1}`),
+    8,
+    { min: 35 },
+  ));
 };
 
 // Consolidado: una fila por participante con fórmulas hacia las hojas de
@@ -554,7 +562,15 @@ const addInformationSheet = (sheet, cfg, data) => {
     ["Muestra total", q.nExperimental + q.nControl],
     ["Nivel de significancia (α)", q.alpha],
     ["Efecto simulado", `${q.efectoEtiqueta} (dirección: ${q.direccionEtiqueta})`],
-    ["Control del patrón de resultados", q.controlarResultados ? "Activado" : "Desactivado"],
+    // "Activado" a secas no informaba de nada. Lo que hay detrás es una
+    // aproximación por intentos: se simulan varias muestras y se conserva la
+    // que más se acerca al patrón pedido. Quien lea el archivo tiene que poder
+    // saberlo sin leer el código.
+    ["Control del patrón de resultados", q.controlarResultados
+      ? "Activado — se simularon varias muestras y se conservó la que mejor se aproxima al patrón "
+        + "solicitado. Los p-valores están condicionados por esa selección: sobrestiman la "
+        + "significación y no equivalen a los de una muestra única."
+      : "Desactivado — los resultados son los de una única muestra simulada, sin selección."],
     ["Datos incluidos", cfg.conDatos ? "Sí, datos simulados" : "No, plantilla vacía"],
   ];
   rows.forEach(([label, value], index) => {
