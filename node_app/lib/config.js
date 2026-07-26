@@ -3,6 +3,8 @@
 // estructura_v1, nombre_dims_v1, ...) como un formato anidado directo
 // ({ encuestados, escala: [...], variables: [{ dimensiones: [...] }] }).
 
+import { evaluarPresupuesto, mensajePresupuesto } from "./presupuesto.js";
+
 export const MAX_MUESTRA = 2000;
 export const MAX_ITEMS_POR_VARIABLE = 60;
 
@@ -74,13 +76,91 @@ const buildVariableFromFlat = (raw, varNum, fallbackItems) => {
   return [];
 };
 
-const parseBaremoOverride = (raw, suffix, nivelNames) => {
-  const desde = Array.isArray(raw[`desde${suffix}`]) ? raw[`desde${suffix}`].map((v) => toInt(v, NaN)) : [];
-  const hasta = Array.isArray(raw[`hasta${suffix}`]) ? raw[`hasta${suffix}`].map((v) => toInt(v, NaN)) : [];
-  if (desde.length !== nivelNames.length || hasta.length !== nivelNames.length) return undefined;
-  if (desde.some((v) => !Number.isFinite(v)) || hasta.some((v) => !Number.isFinite(v))) return undefined;
+// Baremo manual: el usuario escribe el "desde" y el "hasta" de cada nivel.
+//
+// Antes, cualquier problema devolvia `undefined` y el sistema caia al baremo
+// automatico SIN DECIR NADA: quien se equivocaba en un numero recibia un Excel
+// con unos rangos que no habia pedido y sin forma de enterarse. Ahora se
+// distingue entre las dos situaciones:
+//
+//   - No hay baremo manual (ninguno de los dos campos, o vacios) -> undefined,
+//     que sigue significando "usa el automatico". Es el caso normal y no
+//     cambia.
+//   - Hay baremo manual pero esta mal -> error explicito que senala el nivel y
+//     el rango exacto. No se corrige por dentro ni se sustituye en silencio.
+//
+// La cobertura del puntaje posible (que dependa del numero de items) se
+// comprueba mas abajo, cuando ya se conoce el total de items de la variable.
+export const validarBaremoManual = (desdeRaw, hastaRaw, nivelNames, etiquetaVariable) => {
+  const hayDesde = Array.isArray(desdeRaw) && desdeRaw.some((v) => String(v ?? "").trim() !== "");
+  const hayHasta = Array.isArray(hastaRaw) && hastaRaw.some((v) => String(v ?? "").trim() !== "");
+  if (!hayDesde && !hayHasta) return undefined;
+
+  const donde = `${etiquetaVariable}, baremo manual`;
+  if (!hayDesde || !hayHasta) {
+    throw new Error(
+      `${donde}: falta la columna "${hayDesde ? "Hasta" : "Desde"}". `
+      + "Completa ambas para todos los niveles o deja las dos vacias para usar el baremo automatico.",
+    );
+  }
+
+  const desde = desdeRaw.map((v) => toInt(v, NaN));
+  const hasta = hastaRaw.map((v) => toInt(v, NaN));
+
+  if (desde.length !== nivelNames.length || hasta.length !== nivelNames.length) {
+    throw new Error(
+      `${donde}: hay ${nivelNames.length} nivel(es) pero ${desde.length} valor(es) en "Desde" y `
+      + `${hasta.length} en "Hasta". Cada nivel necesita su rango.`,
+    );
+  }
+
+  nivelNames.forEach((nombre, i) => {
+    const etiqueta = String(nombre ?? "").trim();
+    if (!etiqueta) {
+      throw new Error(`${donde}: el nivel ${i + 1} no tiene nombre. Ponle una etiqueta (por ejemplo "Medio").`);
+    }
+    if (!Number.isFinite(desde[i]) || !Number.isFinite(hasta[i])) {
+      throw new Error(
+        `${donde}: el nivel "${etiqueta}" tiene un rango no numerico `
+        + `(Desde "${desdeRaw[i]}", Hasta "${hastaRaw[i]}"). Usa numeros enteros.`,
+      );
+    }
+    if (desde[i] > hasta[i]) {
+      throw new Error(
+        `${donde}: el nivel "${etiqueta}" va de ${desde[i]} a ${hasta[i]}, que esta al reves. `
+        + "El valor de 'Desde' no puede ser mayor que el de 'Hasta'.",
+      );
+    }
+  });
+
+  // Los niveles deben encadenarse: sin huecos (un puntaje sin nivel) y sin
+  // solapes (un puntaje en dos niveles a la vez).
+  for (let i = 1; i < nivelNames.length; i += 1) {
+    const anterior = String(nivelNames[i - 1]).trim();
+    const actual = String(nivelNames[i]).trim();
+    if (desde[i] <= hasta[i - 1]) {
+      throw new Error(
+        `${donde}: los niveles "${anterior}" (${desde[i - 1]}-${hasta[i - 1]}) y "${actual}" `
+        + `(${desde[i]}-${hasta[i]}) se solapan. "${actual}" debe empezar en ${hasta[i - 1] + 1}.`,
+      );
+    }
+    if (desde[i] > hasta[i - 1] + 1) {
+      throw new Error(
+        `${donde}: entre "${anterior}" (termina en ${hasta[i - 1]}) y "${actual}" `
+        + `(empieza en ${desde[i]}) quedan puntajes sin nivel. "${actual}" debe empezar en ${hasta[i - 1] + 1}.`,
+      );
+    }
+  }
+
   return nivelNames.map((nombre, i) => ({ nombre, min: desde[i], max: hasta[i] }));
 };
+
+const parseBaremoOverride = (raw, suffix, nivelNames, etiquetaVariable) => validarBaremoManual(
+  raw[`desde${suffix}`],
+  raw[`hasta${suffix}`],
+  nivelNames,
+  etiquetaVariable,
+);
 
 // Distribucion pedida por el usuario: que porcentaje de encuestados debe caer
 // en cada nivel del baremo. La interfaz la pide de forma explicita ("Porcentaje
@@ -173,13 +253,17 @@ export const normalizeConfig = (raw) => {
       variables.push({
         nombre: varNames[vi]?.trim() || `Variable ${vi + 1}`,
         niveles,
-        baremoVariable: parseBaremoOverride(raw, vi === 0 ? "" : "_v2", niveles),
+        baremoVariable: parseBaremoOverride(raw, vi === 0 ? "" : "_v2", niveles, `Variable ${vi + 1}`),
         baremoObjetivo: parseBaremoObjetivo(raw, vi === 0 ? "" : "_v2", niveles),
         itemNames: Array.isArray(raw[`nombre_items_v${vi + 1}`]) ? raw[`nombre_items_v${vi + 1}`].map(String) : [],
         dimensiones: buildVariableFromFlat(raw, vi + 1, fallbackItems),
       });
     }
   }
+
+  // Avisos sobre el baremo manual. Se recogen aqui y se vuelcan mas abajo, con
+  // el resto de avisos que viajan en la respuesta.
+  const avisosBaremo = [];
 
   variables.forEach((variable, vi) => {
     const total = variable.dimensiones.reduce(
@@ -189,6 +273,78 @@ export const normalizeConfig = (raw) => {
     if (total <= 0) {
       throw new Error(`Define el numero de items de la Variable ${vi + 1} antes de generar.`);
     }
+    // Cada dimension y cada indicador necesitan al menos un item.
+    //
+    // Solo se validaba el total de la variable, asi que una dimension vacia
+    // pasaba. El generador le asignaba un rango de columnas invertido
+    // (endCol = startCol - 1) y el archivo salia con celdas combinadas al
+    // reves ("B2:A2") y sumas como SUM(K34:J34): un .xlsx que Excel marca como
+    // danado y que openpyxl directamente se niega a abrir. Peor aun, si Excel
+    // lo "reparaba", SUM(K34:J34) se normalizaba a SUM(J34:K34) y sumaba el
+    // ultimo item MAS la columna Total, inventando la suma de la dimension.
+    //
+    // Se rechaza aqui, antes de generar, para que el usuario no gaste un uso
+    // en un archivo ilegible.
+    // Cobertura del baremo manual. Solo se puede comprobar aqui: depende del
+    // total de items de la variable, que no existe hasta este punto.
+    //
+    // Es un AVISO, no un error, a proposito. Un baremo que no cubre todo el
+    // rango sigue generando un Excel correcto (los puntajes de mas caen en el
+    // ultimo nivel), y rechazarlo invalidaria configuraciones guardadas que
+    // hoy funcionan — por ejemplo, una en la que se cambio el numero de items
+    // y no se recalculo el baremo. Lo que no puede pasar es que nadie lo diga.
+    if (variable.baremoVariable) {
+      const valores = escala.map((o) => o.valor);
+      const pMin = total * Math.min(...valores);
+      const pMax = total * Math.max(...valores);
+      const primero = variable.baremoVariable[0];
+      const ultimo = variable.baremoVariable[variable.baremoVariable.length - 1];
+      if (primero.min > pMin || ultimo.max < pMax) {
+        avisosBaremo.push(
+          `Variable ${vi + 1}: con ${total} items y una escala de ${escala.length} opciones los puntajes van `
+          + `de ${pMin} a ${pMax}, pero tu baremo manual cubre de ${primero.min} a ${ultimo.max}. `
+          + `Los puntajes fuera de ese rango se clasifican en el nivel mas cercano. `
+          + `Para que coincida exactamente, ajusta el primer "Desde" a ${pMin} y el ultimo "Hasta" a ${pMax}.`,
+        );
+      }
+    }
+
+    variable.dimensiones.forEach((d, di) => {
+      const itemsDim = d.indicadores.reduce((a, ind) => a + ind.items, 0);
+      if (itemsDim <= 0) {
+        throw new Error(
+          `La dimension ${di + 1} ("${d.nombre}") de la Variable ${vi + 1} no tiene items. `
+          + "Asignale al menos uno o eliminala antes de generar.",
+        );
+      }
+      // El baremo tiene que caber en los puntajes que la dimension puede dar.
+      //
+      // Una dimension de 3 items con escala Si/No solo produce puntajes de 3 a
+      // 6: cuatro valores. Pedirle 5 niveles de baremo es imposible, y el
+      // resultado eran filas "Desde 3, Hasta 2" en la ficha que va a la tesis
+      // y niveles que ningun encuestado podia alcanzar. Mejor decirlo aqui que
+      // entregar una tabla incoherente.
+      const nNiveles = variable.niveles.length;
+      const valores = escala.map((o) => o.valor);
+      const escalaMin = Math.min(...valores);
+      const escalaMax = Math.max(...valores);
+      const puntajesPosibles = itemsDim * (escalaMax - escalaMin) + 1;
+      if (puntajesPosibles < nNiveles) {
+        throw new Error(
+          `La dimension "${d.nombre}" (Variable ${vi + 1}) tiene ${itemsDim} item(s) con una escala de `
+          + `${escala.length} opciones: solo puede dar ${puntajesPosibles} puntajes distintos, `
+          + `y el baremo pide ${nNiveles} niveles. Reduce los niveles del baremo o anade items a la dimension.`,
+        );
+      }
+      d.indicadores.forEach((ind) => {
+        if (ind.items <= 0) {
+          throw new Error(
+            `El indicador "${ind.nombre}" (dimension "${d.nombre}", Variable ${vi + 1}) no tiene items. `
+            + "Asignale al menos uno o eliminalo antes de generar.",
+          );
+        }
+      });
+    });
     if (total > MAX_ITEMS_POR_VARIABLE) {
       throw new Error(
         `El sistema soporta como maximo ${MAX_ITEMS_POR_VARIABLE} items para la Variable ${vi + 1} (configuraste ${total}).`,
@@ -200,9 +356,22 @@ export const normalizeConfig = (raw) => {
     throw new Error("Define el numero de items V1 antes de generar.");
   }
 
+  // Presupuesto conjunto. Los limites por separado (2.000 encuestados, 60 items
+  // por variable) NO cambian; lo que se rechaza es la combinacion que no cabe
+  // en la memoria del contenedor. Se comprueba aqui, en la normalizacion, para
+  // que ocurra ANTES de descontar el uso y antes de arrancar el worker.
+  const evaluacion = evaluarPresupuesto({
+    encuestados,
+    itemsTotales: variables.reduce((acc, v) => acc + v.totalItems, 0),
+    variables: variables.length,
+  });
+  if (!evaluacion.cabe) {
+    throw new Error(mensajePresupuesto(evaluacion));
+  }
+
   // Aviso si el numero de items declarado no coincide con la estructura
   // jerarquica: la estructura manda, pero el usuario debe saberlo.
-  const warnings = [];
+  const warnings = [...avisosBaremo];
   if (!Array.isArray(raw.variables)) {
     variables.forEach((variable, vi) => {
       const declared = toInt(vi === 0 ? raw.item : raw.itemv2, 0);

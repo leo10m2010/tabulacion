@@ -78,6 +78,70 @@ export function validarConfig(config: TabConfig, templateInfo: TemplateInfo | nu
     }
   }
 
+  // Presupuesto conjunto de complejidad.
+  //
+  // Los máximos por separado (arriba) no cambian: lo que puede no caber es la
+  // COMBINACIÓN de muestra e ítems. Se avisa aquí, mientras el usuario sigue
+  // en el formulario, para que no gaste un uso en una generación que el
+  // backend va a rechazar igualmente. El backend es la autoridad final; esto
+  // es solo el aviso temprano, y usa los mismos números que sirve /template-info.
+  if (templateInfo?.presupuestoMaximo && muestra !== null && muestra > 0) {
+    const extraPorVariable = templateInfo.itemsEquivalentesPorVariableExtra ?? 30;
+    const itemsTotales = (item ?? 0) + (hasV2 ? (parseIntSafe(config.itemv2) ?? 0) : 0);
+    const nVariables = hasV2 ? 2 : 1;
+    if (itemsTotales > 0) {
+      const costo = muestra * (itemsTotales + extraPorVariable * (nVariables - 1));
+      if (costo > templateInfo.presupuestoMaximo) {
+        const nMax = Math.floor(templateInfo.presupuestoMaximo / (itemsTotales + extraPorVariable * (nVariables - 1)));
+        const itemsMax = Math.floor(templateInfo.presupuestoMaximo / muestra) - extraPorVariable * (nVariables - 1);
+        const opciones: string[] = [];
+        if (nMax >= 2 && nMax < muestra) opciones.push(`baja la muestra a ${nMax} o menos`);
+        if (itemsMax >= 1 && itemsMax < itemsTotales) opciones.push(`baja el total de preguntas a ${itemsMax} o menos`);
+        if (nVariables > 1) opciones.push("o genera cada variable en un archivo aparte");
+        issues.push(
+          `Esta combinación de ${muestra} personas y ${itemsTotales} preguntas no cabe en la memoria del `
+          + `servidor. Para que quepa, ${opciones.join("; ")}. `
+          + "Los límites por separado no cambian: la muestra admite hasta 2.000 y cada variable hasta 60 preguntas.",
+        );
+      }
+    }
+  }
+
+  // Dimensiones e indicadores sin ítems.
+  //
+  // El backend los rechaza (antes producían un .xlsx que Excel marca como
+  // dañado), pero llegar hasta allí significa haber gastado un uso y esperado
+  // la generación. Aquí se avisa mientras el usuario sigue en el formulario,
+  // que es donde puede arreglarlo.
+  const revisarEstructura = (key: "estructura_v1" | "estructura_v2", etiqueta: string) => {
+    const estructura = config[key];
+    if (!Array.isArray(estructura)) return;
+    estructura.forEach((dim, i) => {
+      if (typeof dim !== "object" || dim === null) return;
+      const d = dim as { nombre?: unknown; indicadores?: unknown };
+      const nombre = typeof d.nombre === "string" && d.nombre.trim() ? d.nombre.trim() : `Dimensión ${i + 1}`;
+      const indicadores = Array.isArray(d.indicadores) ? d.indicadores : [];
+      const total = indicadores.reduce((acc: number, ind) => {
+        const items = (ind as { items?: unknown })?.items;
+        return acc + (typeof items === "number" && Number.isFinite(items) ? items : 0);
+      }, 0);
+      if (total <= 0) {
+        issues.push(`${etiqueta}: la dimensión "${nombre}" no tiene ítems. Añade al menos uno o elimínala.`);
+        return;
+      }
+      indicadores.forEach((ind, j) => {
+        const o = ind as { nombre?: unknown; items?: unknown };
+        const items = typeof o?.items === "number" ? o.items : 0;
+        if (items <= 0) {
+          const n = typeof o?.nombre === "string" && o.nombre.trim() ? o.nombre.trim() : `Indicador ${j + 1}`;
+          issues.push(`${etiqueta}: el indicador "${n}" (dimensión "${nombre}") no tiene ítems.`);
+        }
+      });
+    });
+  };
+  revisarEstructura("estructura_v1", "Variable 1");
+  if (hasV2) revisarEstructura("estructura_v2", "Variable 2");
+
   const validatePorcentaje = (key: string, label: string) => {
     const vals = toStringList(config[key]).filter((v) => v.trim() !== "");
     const sum = vals.reduce((acc, v) => {

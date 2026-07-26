@@ -278,6 +278,12 @@ export interface TemplateInfo {
   maxMuestra: number;
   maxItemsV1: number;
   maxItemsV2: number;
+  // Presupuesto conjunto de complejidad. Los máximos de arriba siguen siendo
+  // los de siempre, pero no todas sus combinaciones caben en la memoria del
+  // servidor. Los sirve /template-info para que el asistente avise ANTES de
+  // gastar un uso; la autoridad final es el backend.
+  presupuestoMaximo?: number;
+  itemsEquivalentesPorVariableExtra?: number;
 }
 
 export interface DownloadLinks {

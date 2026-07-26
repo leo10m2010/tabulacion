@@ -134,3 +134,75 @@ describe("una sola variable en diseño correlacional", () => {
     expect(issues.join(" ")).not.toMatch(/V2/);
   });
 });
+
+// Dimensiones e indicadores sin ítems.
+//
+// El generador les asignaba un rango de columnas invertido y producía un .xlsx
+// que Excel marca como dañado (openpyxl directamente se niega a abrirlo). El
+// backend ya lo rechaza; aquí se avisa antes de gastar el uso.
+describe("estructura sin ítems", () => {
+  const conEstructura = (estructura: unknown) =>
+    base({ variable: "1", estructura_v1: estructura } as Partial<TabConfig>);
+
+  it("avisa de una dimensión sin ningún ítem", () => {
+    const issues = validarConfig(conEstructura([
+      { nombre: "Liderazgo", indicadores: [{ nombre: "A", items: 3 }] },
+      { nombre: "Clima laboral", indicadores: [] },
+    ]), null);
+    expect(issues.some((m) => m.includes("Clima laboral") && m.includes("no tiene ítems"))).toBe(true);
+  });
+
+  it("avisa de un indicador sin ítems aunque la dimensión tenga otros", () => {
+    const issues = validarConfig(conEstructura([
+      { nombre: "Liderazgo", indicadores: [{ nombre: "Comunicación", items: 3 }, { nombre: "Escucha", items: 0 }] },
+    ]), null);
+    expect(issues.some((m) => m.includes("Escucha") && m.includes("no tiene ítems"))).toBe(true);
+  });
+
+  it("no se queja de una estructura completa", () => {
+    const issues = validarConfig(conEstructura([
+      { nombre: "Liderazgo", indicadores: [{ nombre: "Comunicación", items: 3 }] },
+      { nombre: "Clima", indicadores: [{ nombre: "Ambiente", items: 2 }] },
+    ]), null);
+    expect(issues.filter((m) => m.includes("no tiene ítems"))).toEqual([]);
+  });
+});
+
+// Presupuesto conjunto de complejidad.
+//
+// El aviso llega mientras el usuario sigue en el formulario, para que no gaste
+// un uso en una generación que el backend rechazará igual. Los máximos por
+// separado NO cambian: lo que puede no caber es la combinación.
+describe("presupuesto de complejidad", () => {
+  const LIM = { maxMuestra: 2000, maxItemsV1: 60, maxItemsV2: 60, presupuestoMaximo: 30000, itemsEquivalentesPorVariableExtra: 30 };
+  const conPresupuesto = (cambios: Partial<TabConfig>) => validarConfig(base(cambios), LIM);
+  const soloPresupuesto = (issues: string[]) => issues.filter((m) => m.includes("no cabe en la memoria"));
+
+  it("la configuración de ejemplo no dispara el aviso", () => {
+    expect(soloPresupuesto(validarConfig(base(), LIM))).toEqual([]);
+  });
+
+  it("avisa cuando la combinación no cabe", () => {
+    const issues = soloPresupuesto(conPresupuesto({ muestra: "1500" }));
+    expect(issues.length).toBe(1);
+    expect(issues[0]).toMatch(/baja la muestra a \d+/);
+  });
+
+  it("dice que los límites por separado no cambian", () => {
+    const issues = soloPresupuesto(conPresupuesto({ muestra: "1500" }));
+    expect(issues[0]).toMatch(/2\.000/);
+    expect(issues[0]).toMatch(/60 preguntas/);
+  });
+
+  it("una muestra alta con pocas preguntas sigue permitida", () => {
+    // 2.000 encuestados siguen siendo posibles: la clave es no pedir a la vez
+    // el máximo de preguntas.
+    expect(soloPresupuesto(conPresupuesto({ muestra: "2000", item: "10", variable: "1", itemv2: "0" }))).toEqual([]);
+  });
+
+  it("sin datos de presupuesto del servidor no se avisa de nada", () => {
+    // Compatibilidad: un backend anterior no sirve estos campos.
+    const sinPresupuesto = { maxMuestra: 2000, maxItemsV1: 60, maxItemsV2: 60 };
+    expect(soloPresupuesto(validarConfig(base({ muestra: "1500" }), sinPresupuesto))).toEqual([]);
+  });
+});

@@ -1,0 +1,134 @@
+// Presupuesto conjunto de complejidad.
+//
+// Los limites por separado (2.000 encuestados, 60 items por variable) NO
+// cambian: lo que se rechaza es la COMBINACION que no cabe en los 512 MB del
+// contenedor. Estas pruebas fijan las dos mitades del contrato:
+//
+//   a) todo lo que el benchmark midio por debajo de 480 MB se sigue aceptando;
+//   b) todo lo que midio en 534 MB o mas se rechaza, con un mensaje que dice
+//      que reducir.
+//
+// El benchmark esta en scripts/benchmark-generacion.mjs y corre con el mismo
+// techo de heap que produccion.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "fs";
+import {
+  MAX_ITEMS_POR_VARIABLE,
+  MAX_MUESTRA,
+  DEFAULT_CONFIG_PATH,
+  normalizeConfig,
+} from "../generator.js";
+import {
+  PRESUPUESTO_MAXIMO,
+  costoGeneracion,
+  evaluarPresupuesto,
+  mensajePresupuesto,
+} from "../lib/presupuesto.js";
+
+const base = JSON.parse(fs.readFileSync(DEFAULT_CONFIG_PATH, "utf-8"));
+
+// Casos medidos de verdad, con su pico de RSS. Si alguien cambia el modelo de
+// coste, esta tabla dice si el cambio sigue separando lo que cabe de lo que no.
+const MEDIDOS = [
+  { encuestados: 30, itemsTotales: 15, variables: 2, picoMb: 161, cabe: true },
+  { encuestados: 60, itemsTotales: 15, variables: 2, picoMb: 195, cabe: true },
+  { encuestados: 289, itemsTotales: 27, variables: 2, picoMb: 350, cabe: true },
+  { encuestados: 300, itemsTotales: 60, variables: 2, picoMb: 423, cabe: true },
+  { encuestados: 1000, itemsTotales: 18, variables: 1, picoMb: 444, cabe: true },
+  // A partir de aqui el worker solo ya no deja sitio al servidor HTTP dentro
+  // de los 512 MB del contenedor.
+  { encuestados: 500, itemsTotales: 40, variables: 2, picoMb: 534, cabe: false },
+  { encuestados: 1000, itemsTotales: 15, variables: 2, picoMb: 572, cabe: false },
+  { encuestados: 1200, itemsTotales: 15, variables: 2, picoMb: 574, cabe: false },
+  { encuestados: 800, itemsTotales: 27, variables: 2, picoMb: 612, cabe: false },
+  { encuestados: 1500, itemsTotales: 15, variables: 2, picoMb: null, cabe: false }, // OOM
+];
+
+test("el presupuesto separa lo medido que cabe de lo que no", () => {
+  for (const caso of MEDIDOS) {
+    const r = evaluarPresupuesto(caso);
+    assert.equal(
+      r.cabe, caso.cabe,
+      `N=${caso.encuestados} items=${caso.itemsTotales} vars=${caso.variables} `
+      + `(pico ${caso.picoMb ?? "OOM"} MB): costo ${r.costo}, esperado cabe=${caso.cabe}`,
+    );
+  }
+});
+
+test("el coste crece con la muestra y con los items", () => {
+  const c = (n, i, v = 2) => costoGeneracion({ encuestados: n, itemsTotales: i, variables: v });
+  assert.ok(c(200, 20) > c(100, 20));
+  assert.ok(c(100, 40) > c(100, 20));
+});
+
+test("dos variables cuestan mas que una con los mismos items", () => {
+  const una = costoGeneracion({ encuestados: 500, itemsTotales: 20, variables: 1 });
+  const dos = costoGeneracion({ encuestados: 500, itemsTotales: 20, variables: 2 });
+  assert.ok(dos > una, `una=${una} dos=${dos}`);
+});
+
+// ── Las funciones actuales siguen disponibles ────────────────────────────────
+
+test("la configuracion de ejemplo del producto cabe con holgura", () => {
+  const r = evaluarPresupuesto({ encuestados: 289, itemsTotales: 27, variables: 2 });
+  assert.equal(r.cabe, true);
+  assert.ok(r.costo < PRESUPUESTO_MAXIMO * 0.8, `costo ${r.costo} de ${PRESUPUESTO_MAXIMO}`);
+});
+
+test("los maximos por separado NO se han tocado", () => {
+  assert.equal(MAX_MUESTRA, 2000);
+  assert.equal(MAX_ITEMS_POR_VARIABLE, 60);
+});
+
+test("la muestra maxima sigue siendo posible con un instrumento corto", () => {
+  // 2.000 encuestados siguen cabiendo: solo hay que no pedir a la vez el
+  // maximo de items. Es lo que el mensaje explica.
+  const r = evaluarPresupuesto({ encuestados: 2000, itemsTotales: 10, variables: 1 });
+  assert.equal(r.cabe, true);
+});
+
+test("el maximo de items sigue siendo posible con una muestra normal", () => {
+  const r = evaluarPresupuesto({ encuestados: 200, itemsTotales: 120, variables: 2 });
+  assert.equal(r.cabe, true);
+});
+
+// ── El mensaje dice que reducir, no solo que no ──────────────────────────────
+
+test("al rechazar, propone bajar la muestra y los items con numeros concretos", () => {
+  const r = evaluarPresupuesto({ encuestados: 1200, itemsTotales: 15, variables: 2 });
+  assert.equal(r.cabe, false);
+  const msg = mensajePresupuesto(r);
+  assert.match(msg, /baja la muestra a \d+/);
+  assert.match(msg, /512 MB/);
+  // Y deja claro que los limites individuales no han cambiado.
+  assert.match(msg, /2\.000/);
+  assert.match(msg, /60 .tems/);
+});
+
+test("propone generar cada variable por separado cuando hay dos", () => {
+  const r = evaluarPresupuesto({ encuestados: 1000, itemsTotales: 20, variables: 2 });
+  assert.match(mensajePresupuesto(r), /por separado/);
+});
+
+// ── El backend es la autoridad, y rechaza antes de generar ───────────────────
+
+test("normalizeConfig rechaza la combinacion que no cabe", () => {
+  assert.throws(
+    () => normalizeConfig({ ...base, muestra: "1500" }),
+    /no cabe en la memoria del servidor/i,
+  );
+});
+
+test("normalizeConfig acepta la configuracion de ejemplo sin tocar", () => {
+  assert.doesNotThrow(() => normalizeConfig(base));
+});
+
+test("el rechazo ocurre en la normalizacion, antes de construir nada", () => {
+  // Importa el ORDEN: si el presupuesto se comprobara despues de generar, el
+  // usuario habria pagado el uso y esperado igualmente.
+  let error = null;
+  try { normalizeConfig({ ...base, muestra: "1800" }); } catch (e) { error = e; }
+  assert.ok(error, "deberia rechazar");
+  assert.match(error.message, /coste estimado/i);
+});

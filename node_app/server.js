@@ -4,6 +4,10 @@ import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import {
+  ITEMS_EQUIVALENTES_POR_VARIABLE_EXTRA,
+  PRESUPUESTO_MAXIMO,
+} from "./lib/presupuesto.js";
+import {
   CHART_THEMES,
   MAX_ITEMS_POR_VARIABLE,
   MAX_MUESTRA,
@@ -1575,6 +1579,12 @@ const server = http.createServer(async (req, res) => {
         maxItemsV1: MAX_ITEMS_POR_VARIABLE,
         maxItemsV2: MAX_ITEMS_POR_VARIABLE,
         baseCapacity: MAX_MUESTRA,
+        // Presupuesto conjunto: los maximos de arriba siguen siendo los de
+        // siempre, pero no todas sus combinaciones caben en la memoria del
+        // contenedor. El frontend lo usa para avisar ANTES de gastar un uso;
+        // la autoridad final sigue siendo la normalizacion del backend.
+        presupuestoMaximo: PRESUPUESTO_MAXIMO,
+        itemsEquivalentesPorVariableExtra: ITEMS_EQUIVALENTES_POR_VARIABLE_EXTRA,
         temas: Object.entries(CHART_THEMES).map(([id, t]) => ({ id, nombre: t.nombre, colores: t.colores })),
         nivelesCorrelacion: Object.entries(NIVELES_CORRELACION)
           .map(([id, n]) => ({ id, etiqueta: n.etiqueta, min: n.min, max: n.max })),
