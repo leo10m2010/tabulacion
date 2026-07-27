@@ -30,6 +30,13 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_CONFIG_PATH, generateArtifacts } from "../node_app/generator.js";
+import { generateCronbach } from "../node_app/lib/cronbach.js";
+import { postProcessWorkbook } from "../node_app/lib/ooxml.js";
+import { CHART_THEMES } from "../node_app/lib/config.js";
+import { buildDescriptivaWorkbook } from "../node_app/lib/descriptiva/workbook.js";
+import {
+  computeAciertos, computeLikertPuntajes, computePuntajes, detectLikertBaremo,
+} from "../node_app/lib/descriptiva/compute.js";
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const RAIZ = path.resolve(AQUI, "..");
@@ -185,6 +192,214 @@ export const CASOS = [
   { id: "cuasiexperimental-seguimiento", cfg: null, ejemplo: "Tabulacion_cuasiexperimental_seguimiento.json" },
 ];
 
+// ── Alfa de Cronbach (lib/cronbach.js) ──────────────────────────────────────
+// Hueco real que este script no cubria: la prueba de confiabilidad tiene su
+// propio orquestador (generateCronbach), separado por completo de
+// generateArtifacts. Antes de esto, su Excel solo se habia validado
+// parseandolo con xlsx-populate/jszip (test/server.test.js, generator.test.js)
+// pero JAMAS abierto por una hoja de calculo real que recalcule VARP/COUNT y
+// el alfa en celda. Los casos cubren 1 y varias dimensiones, la muestra minima
+// permitida (5, borde de VARP con pocos datos) y los tres niveles de alfa.
+const casoCronbach = (id, cfg) => ({
+  id,
+  build: async () => {
+    const r = await generateCronbach(cfg);
+    return { excelBuffer: r.excelBuffer, correlation: null, warnings: r.warnings };
+  },
+});
+
+const CRONBACH_CASOS = [
+  casoCronbach("cronbach-una-dimension", {
+    variable: "Satisfacción laboral", encuestados: 30,
+    dimensiones: [{ nombre: "Dimensión única", items: 10 }], nivelAlfa: "excelente",
+  }),
+  casoCronbach("cronbach-multidimensional", {
+    variable: "Clima organizacional", encuestados: 45,
+    dimensiones: [
+      { nombre: "Comunicación", items: 6 },
+      { nombre: "Liderazgo", items: 5 },
+      { nombre: "Reconocimiento", items: 4 },
+    ],
+    nivelAlfa: "bueno",
+  }),
+  casoCronbach("cronbach-nivel-aceptable", {
+    variable: "Motivación docente", encuestados: 20,
+    dimensiones: [{ nombre: "Motivación", items: 8 }], nivelAlfa: "aceptable",
+  }),
+  casoCronbach("cronbach-muestra-minima", {
+    // N=5 es el minimo que acepta normalizeCronbachConfig: borde real para
+    // VARP (varianza poblacional con muy pocos datos).
+    variable: "Prueba piloto", encuestados: 5,
+    dimensiones: [{ nombre: "Única", items: 4 }], nivelAlfa: "excelente",
+  }),
+  casoCronbach("cronbach-escala-personalizada", {
+    variable: "Calidad percibida", encuestados: 25,
+    respuesta: 4, nombre_respuesta: ["Deficiente", "Regular", "Bueno", "Excelente"],
+    dimensiones: [{ nombre: "Percepción", items: 12 }], nivelAlfa: "bueno",
+  }),
+];
+
+// ── Descriptiva (lib/descriptiva/workbook.js) ───────────────────────────────
+// Segundo hueco: descriptiva tambien construye su Excel fuera de
+// generateArtifacts (buildDescriptivaWorkbook). Se llama al constructor del
+// documento directamente con datos fijos (mismo enfoque que
+// test/descriptiva.test.js) en vez de generateDescriptiva completo, porque
+// ese orquestador llama a OpenRouter (red + API key) y lo que este script
+// valida es el documento, no la IA. Cubre los tres tipos de instrumento
+// (independiente sin baremo, puntaje sumado y conocimiento con baremo propio)
+// mas el baremo Likert Bajo/Medio/Alto que el propio sistema construye.
+const ESCALA_LIKERT_DESC = ["Nunca", "A veces", "Casi siempre", "Siempre"];
+
+const fixtureDescriptivaIndependiente = (n = 25) => ({
+  metadata: {
+    titulo_estudio: "Consumo de bebidas azucaradas, I.E. de prueba - 2026",
+    n_encuestados: n, tipo_instrumento: "independiente", nivel_preponderancia: "ALTO",
+  },
+  preguntas: [
+    { id: "p1_edad", texto: "Edad", tipo: "numerica", rango: [12, 17] },
+    {
+      id: "p2_genero", texto: "Género", tipo: "nominal_unica",
+      opciones: ["Masculino", "Femenino"], pesos: [0.5, 0.5], es_ancla: false, depende_de: null,
+    },
+    {
+      id: "p3_frecuencia", texto: "¿Con qué frecuencia consumes?", tipo: "ordinal_unica",
+      opciones: ["Siempre", "A veces", "Nunca"], pesos: [0.5, 0.3, 0.2], es_ancla: true, depende_de: null,
+    },
+    {
+      id: "p4_tipo", texto: "¿Qué tipos consumes?", tipo: "multirrespuesta",
+      opciones: ["Gaseosa", "Jugo", "Energizante"], pesos_marca_independientes: [0.6, 0.5, 0.3],
+      es_ancla: false, depende_de: "p3_frecuencia",
+    },
+  ],
+  baremo: null,
+  datos_simulados: Array.from({ length: n }, (_, i) => ({
+    p1_edad: 12 + (i % 6),
+    p2_genero: i % 2 === 0 ? "Masculino" : "Femenino",
+    p3_frecuencia: ["Siempre", "A veces", "Nunca"][i % 3],
+    p4_tipo__gaseosa: i % 2,
+    p4_tipo__jugo: (i + 1) % 2,
+    p4_tipo__energizante: i % 3 === 0 ? 1 : 0,
+  })),
+});
+
+const fixtureDescriptivaPuntaje = (n = 20) => ({
+  metadata: {
+    titulo_estudio: "Test de riesgo (FINDRISC adaptado) - 2026",
+    n_encuestados: n, tipo_instrumento: "puntaje_sumado", nivel_preponderancia: "MODERADO",
+  },
+  preguntas: [
+    {
+      id: "p1_imc", texto: "IMC", tipo: "ordinal_unica",
+      opciones: ["Menor de 25", "25 a 30", "Mayor de 30"],
+      pesos: [0.3, 0.4, 0.3], puntos_por_opcion: [0, 1, 3], es_ancla: true, depende_de: null,
+    },
+    {
+      id: "p2_actividad", texto: "¿Realiza actividad física?", tipo: "nominal_unica",
+      opciones: ["Sí", "No"], pesos: [0.4, 0.6], puntos_por_opcion: [0, 2], es_ancla: false, depende_de: "p1_imc",
+    },
+  ],
+  baremo: {
+    variable_base: "puntaje_total",
+    rangos: [
+      { min: 0, max: 1, categoria: "Riesgo bajo" },
+      { min: 2, max: 3, categoria: "Riesgo moderado" },
+      { min: 4, max: 5, categoria: "Riesgo alto" },
+    ],
+  },
+  datos_simulados: Array.from({ length: n }, (_, i) => ({
+    p1_imc: ["Menor de 25", "25 a 30", "Mayor de 30"][i % 3],
+    p2_actividad: i % 2 === 0 ? "Sí" : "No",
+  })),
+});
+
+const fixtureDescriptivaConocimiento = (n = 18) => ({
+  metadata: {
+    titulo_estudio: "Cuestionario de conocimiento en RCP - 2026",
+    n_encuestados: n, tipo_instrumento: "conocimiento", nivel_preponderancia: "MODERADO",
+  },
+  preguntas: [
+    {
+      id: "p1_rcp", texto: "¿Qué significa RCP?", tipo: "nominal_unica",
+      opciones: ["a) Reanimación cardiopulmonar", "b) Revisión clínica", "c) Rescate primario"],
+      pesos: [0.6, 0.2, 0.2], respuesta_correcta: "a) Reanimación cardiopulmonar", es_ancla: false, depende_de: null,
+    },
+    {
+      id: "p2_compresiones", texto: "¿Frecuencia de compresiones?", tipo: "nominal_unica",
+      opciones: ["a) 60/min", "b) 100-120/min", "c) 140/min"],
+      pesos: [0.2, 0.5, 0.3], respuesta_correcta: "b) 100-120/min", es_ancla: false, depende_de: null,
+    },
+  ],
+  baremo: {
+    variable_base: "porcentaje_aciertos",
+    rangos: [
+      { min: 0, max: 49, categoria: "Conocimiento bajo" },
+      { min: 50, max: 74, categoria: "Conocimiento medio" },
+      { min: 75, max: 100, categoria: "Conocimiento alto" },
+    ],
+  },
+  datos_simulados: Array.from({ length: n }, (_, i) => ({
+    p1_rcp: i % 2 === 0 ? "a) Reanimación cardiopulmonar" : "b) Revisión clínica",
+    p2_compresiones: i % 4 === 0 ? "b) 100-120/min" : "a) 60/min",
+  })),
+});
+
+const fixtureDescriptivaLikert = (n = 24) => ({
+  metadata: {
+    titulo_estudio: "Clima organizacional, empresa de prueba - 2026",
+    n_encuestados: n, tipo_instrumento: "independiente", nivel_preponderancia: "MODERADO",
+  },
+  preguntas: [
+    { id: "p1_edad", texto: "Edad", tipo: "numerica", rango: [20, 60] },
+    ...[1, 2, 3, 4].map((k) => ({
+      id: `p${k + 1}_item`, texto: `Ítem Likert ${k}`, tipo: "ordinal_unica",
+      opciones: [...ESCALA_LIKERT_DESC], pesos: [0.2, 0.3, 0.3, 0.2], es_ancla: k === 1, depende_de: null,
+    })),
+  ],
+  baremo: null,
+  datos_simulados: Array.from({ length: n }, (_, i) => ({
+    p1_edad: 20 + (i * 3) % 40,
+    p2_item: ESCALA_LIKERT_DESC[i % 4],
+    p3_item: ESCALA_LIKERT_DESC[(i + 1) % 4],
+    p4_item: ESCALA_LIKERT_DESC[(i + 2) % 4],
+    p5_item: ESCALA_LIKERT_DESC[i % 4],
+  })),
+});
+
+const casoDescriptiva = (id, { data, computed = null, baremoLikert = null }) => ({
+  id,
+  build: async () => {
+    const { workbook, sheetCharts } = await buildDescriptivaWorkbook(data, computed, baremoLikert);
+    const plainBuffer = await workbook.outputAsync({ type: "nodebuffer" });
+    const excelBuffer = await postProcessWorkbook(plainBuffer, sheetCharts, CHART_THEMES.clasico.colores);
+    return { excelBuffer, correlation: null, warnings: [] };
+  },
+});
+
+const descIndependiente = fixtureDescriptivaIndependiente();
+const descPuntaje = fixtureDescriptivaPuntaje();
+const descConocimiento = fixtureDescriptivaConocimiento();
+const descLikertData = fixtureDescriptivaLikert();
+const descLikertBaremo = detectLikertBaremo(descLikertData);
+
+const DESCRIPTIVA_CASOS = [
+  casoDescriptiva("descriptiva-independiente-sin-baremo", { data: descIndependiente }),
+  casoDescriptiva("descriptiva-puntaje-sumado", {
+    data: descPuntaje,
+    computed: computePuntajes(descPuntaje.preguntas, descPuntaje.datos_simulados, descPuntaje.baremo),
+  }),
+  casoDescriptiva("descriptiva-conocimiento", {
+    data: descConocimiento,
+    computed: computeAciertos(descConocimiento.preguntas, descConocimiento.datos_simulados, descConocimiento.baremo),
+  }),
+  casoDescriptiva("descriptiva-likert-baremo-generado", {
+    data: descLikertData,
+    computed: computeLikertPuntajes(descLikertBaremo, descLikertData.datos_simulados),
+    baremoLikert: descLikertBaremo,
+  }),
+];
+
+CASOS.push(...CRONBACH_CASOS, ...DESCRIPTIVA_CASOS);
+
 const construirConfig = (caso) => {
   if (caso.cfg) return caso.cfg;
   return JSON.parse(fs.readFileSync(path.join(RAIZ, "examples", caso.ejemplo), "utf-8"));
@@ -220,8 +435,10 @@ const main = async () => {
     const entrada = { id: caso.id };
     const t0 = Date.now();
     try {
-      const cfg = construirConfig(caso);
-      const resultado = await generateArtifacts(cfg);
+      // Casos "build" (Cronbach, Descriptiva) traen su propio constructor de
+      // Excel, separado de generateArtifacts/normalizeConfig: no tienen cfg
+      // ni ejemplo que pasarle a construirConfig.
+      const resultado = caso.build ? await caso.build() : await generateArtifacts(construirConfig(caso));
       entrada.generacion = { ok: true, ms: Date.now() - t0, bytes: resultado.excelBuffer.length };
       entrada.correlacion = typeof resultado.correlation === "number"
         ? Number(resultado.correlation.toFixed(4)) : null;
