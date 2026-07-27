@@ -196,6 +196,20 @@ describe("validación del instrumento", () => {
     assert.match(r.body.error, /100%/);
   });
 
+  test("un baremo con porcentajes fuera de 0-100 se rechaza aunque la suma de 100", async () => {
+    // -50% y 150% suman 100 exacto, pero ningun nivel puede tener un
+    // porcentaje negativo ni mayor a 100 (no existe "menos que cero personas").
+    // Antes solo se validaba la suma, asi que este caso absurdo pasaba.
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "baremoabsurdo@test.local");
+    const malo = JSON.parse(JSON.stringify(INSTRUMENTO));
+    malo.variables[0].baremo[0].porcentaje = -50;
+    malo.variables[0].baremo[1].porcentaje = 150;
+    const r = await api("POST", "/proyectos", token, { nombre: "Baremo absurdo", instrumento: malo });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /entre 0 y 100/);
+  });
+
   test("se rechaza pasarse del máximo de ítems", async () => {
     const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
     const token = await crearUsuario(admin, "muchos@test.local");

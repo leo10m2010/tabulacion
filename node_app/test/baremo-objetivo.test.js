@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateBaseData, spearmanCorrelation } from "../generator.js";
-import { normalizeConfig } from "../lib/config.js";
+import { normalizeConfig, NIVELES_CORRELACION } from "../lib/config.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RAW = JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, "..", "..", "Tabulacion.json"), "utf-8"));
@@ -104,6 +104,56 @@ describe("el ajuste del baremo NO rompe la correlacion", () => {
     // Y el reparto del baremo se respeta igual.
     assert.deepEqual(repartoReal(base, cfg, 0), [28, 21, 11]);
     assert.ok(spearmanCorrelation !== undefined);
+  });
+});
+
+describe("el nivel 'nula' no contradice la formula viva de la hoja Correlación", () => {
+  // La hoja "Correlación" (lib/sheets.js) clasifica el r obtenido con una
+  // formula IF en vivo: ABS(r) >= 0.01 -> "Correlación muy baja", si no ->
+  // "Correlación nula". Ese 0.01 es tambien, a proposito, el minimo del nivel
+  // "muy_baja" en NIVELES_CORRELACION.
+  //
+  // El nivel "nula" tenia max=0.09, que SOLAPA con el rango de busqueda de
+  // "muy_baja" (0.01-0.19). Consecuencia real: pedir nivel="nula" podia
+  // terminar (r=0.02, por ejemplo) con el panel de control diciendo "Nivel
+  // elegido: Correlación nula ... ¿Cumple el rango elegido? Sí" mientras la
+  // propia hoja "Correlación", calculada con la formula de arriba sobre esos
+  // mismos datos, mostraba "Correlación muy baja". Dos partes del mismo
+  // archivo se contradecian sobre el mismo numero.
+  test("los rangos de busqueda de NIVELES_CORRELACION no se solapan", () => {
+    assert.ok(
+      NIVELES_CORRELACION.nula.max < NIVELES_CORRELACION.muy_baja.min,
+      `nula.max (${NIVELES_CORRELACION.nula.max}) debe quedar por debajo de `
+      + `muy_baja.min (${NIVELES_CORRELACION.muy_baja.min}); si no, un mismo r `
+      + "puede 'cumplir' dos niveles a la vez.",
+    );
+  });
+
+  test("cuando 'nula' cumple, la formula viva de la hoja tambien lo llamaria nula", () => {
+    // Formula de lib/sheets.js (addCorrelacionSheet), traducida a JS: el
+    // primer umbral que se cumple manda, de mayor a menor.
+    const clasificacionViva = (r) => {
+      const a = Math.abs(r);
+      if (a >= 0.9) return "muy_alta";
+      if (a >= 0.7) return "alta";
+      if (a >= 0.4) return "moderada";
+      if (a >= 0.2) return "baja";
+      if (a >= 0.01) return "muy_baja";
+      return "nula";
+    };
+    for (let i = 0; i < 15; i += 1) {
+      const cfg = normalizeConfig({
+        ...RAW, muestra: "60", controlCorrelacion: "1", nivelCorrelacion: "nula",
+      });
+      const { control } = generateBaseData(cfg);
+      if (!control.cumple) continue; // el fallback honesto ya avisa aparte
+      assert.equal(
+        clasificacionViva(control.obtenido), "nula",
+        `control.cumple=true con obtenido=${control.obtenido}, pero la hoja `
+        + `"Correlación" clasificaria esto como "${clasificacionViva(control.obtenido)}", `
+        + "no como nula: el archivo se contradiria a si mismo.",
+      );
+    }
   });
 });
 
