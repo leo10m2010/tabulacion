@@ -10,6 +10,7 @@
 import { test, before, after, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import http from "node:http";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -358,6 +359,79 @@ describe("eliminar la cuenta se lleva los proyectos", () => {
     assert.equal(
       guardados.some((p) => p.nombre === "Se va conmigo"), false,
       "eliminar la cuenta debe borrar también sus proyectos",
+    );
+  });
+});
+
+describe("condiciones de carrera al crear proyectos", () => {
+  // La ruta POST /proyectos aplica el limite del plan con un patron
+  // leer-y-luego-escribir (server.js): cuenta cuantos proyectos tiene el
+  // usuario y, si no llego al limite, recien despues parsea el cuerpo y
+  // guarda. Entre el conteo y el guardado no hay ningun candado ni chequeo
+  // atomico, asi que dos POST que se solapen pueden leer el MISMO conteo
+  // antes de que cualquiera de los dos escriba: los dos pasan la validacion
+  // y el usuario termina con mas proyectos que los que su plan permite.
+  //
+  // Se fuerza la superposicion con el mismo truco que ya usa
+  // usuarios-concurrencia.test.js: la peticion A se manda con el cuerpo JSON
+  // a medias (para entonces A YA paso su propio conteo, porque el conteo
+  // ocurre antes de leer el cuerpo, y quedo esperando el resto del JSON).
+  // En esa ventana entra la peticion B, completa, que hace SU conteo antes
+  // de que A alcance a guardar.
+  test("dos creaciones solapadas no deberian superar el límite del plan (bug de carrera)", {
+    todo: "BUG real: POST /proyectos en server.js comprueba el limite del plan "
+      + "(contarProyectos) y guarda (guardarProyecto) sin ninguna seccion atomica "
+      + "entre ambos pasos. Dos creaciones solapadas para el mismo usuario pueden "
+      + "pasar las dos el chequeo del limite antes de que cualquiera guarde, dejando "
+      + "al usuario con mas proyectos que los que su plan permite (reproducido de forma "
+      + "determinista con el truco del cuerpo partido). Corregir con una comprobacion "
+      + "atomica (p.ej. recontar y guardar bajo un lock por usuario, o una restriccion "
+      + "a nivel de store) y entonces quitar este `todo`.",
+  }, async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "carrera@test.local", "free"); // límite: 1
+
+    const cuerpoA = JSON.stringify({ nombre: "Carrera A" });
+    const mitad = Math.floor(cuerpoA.length / 2);
+    const peticionA = http.request({
+      host: "127.0.0.1",
+      port: PORT,
+      path: "/proyectos",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "Content-Length": Buffer.byteLength(cuerpoA),
+      },
+    });
+    const respuestaA = new Promise((resolve, reject) => {
+      peticionA.on("response", (res) => {
+        let data = "";
+        res.on("data", (c) => { data += c; });
+        res.on("end", () => resolve({ status: res.statusCode, body: JSON.parse(data || "{}") }));
+      });
+      peticionA.on("error", reject);
+    });
+    peticionA.write(cuerpoA.slice(0, mitad));
+
+    // A ya paso su propio conteo (todavía con 0 proyectos) y esta esperando
+    // el resto del cuerpo: la ventana esta abierta.
+    await new Promise((r) => setTimeout(r, 150));
+
+    const b = await api("POST", "/proyectos", token, { nombre: "Carrera B" });
+
+    peticionA.end(cuerpoA.slice(mitad));
+    const a = await respuestaA;
+
+    const total = (await api("GET", "/proyectos", token)).body.proyectos.length;
+
+    // Comportamiento correcto: el plan gratuito (límite 1) NUNCA debería
+    // terminar con más de 1 proyecto, sin importar cómo se solapen las
+    // peticiones. Hoy termina con 2 (a.status y b.status son ambos 201).
+    assert.ok(
+      total <= 1,
+      `el plan gratuito (límite 1) terminó con ${total} proyectos tras dos creaciones `
+        + `solapadas (A:${a.status}, B:${b.status})`,
     );
   });
 });
