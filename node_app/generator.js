@@ -31,6 +31,7 @@ import {
   isQuasiExperimentalConfig,
   normalizeQuasiExperimentalConfig,
   prepareQuasiExperimentalRawConfig,
+  resolveMediciones,
 } from "./lib/quasi-experimental.js";
 import { buildQuasiExperimentalWorkbook } from "./lib/quasi-sheets.js";
 
@@ -52,6 +53,7 @@ export {
   normalityFor,
   normalizeQuasiExperimentalConfig,
   prepareQuasiExperimentalRawConfig,
+  resolveMediciones,
 } from "./lib/quasi-experimental.js";
 export { describe, mannWhitneyUTest, pairedTTest, welchTTest, wilcoxonSignedRankTest } from "./lib/quasi-stats.js";
 export { buildQuasiExperimentalWorkbook } from "./lib/quasi-sheets.js";
@@ -85,7 +87,16 @@ const finishWorkbook = async (built, cfg) => {
 
 const generateQuasiArtifacts = async (rawConfig) => {
   const preparedRaw = prepareQuasiExperimentalRawConfig(rawConfig);
-  const commonCfg = normalizeConfig(preparedRaw);
+  // El diseño cuasiexperimental escribe hojas GE/GC pretest/postest (y, con
+  // seguimiento, dos mas) por cada encuestado: cuesta memoria de forma
+  // distinta al flujo correlacional, y sin pasarle estas dos señas
+  // (cuasiexperimental + mediciones) el presupuesto conjunto de mas abajo lo
+  // trataba como una variable correlacional cualquiera y dejaba pasar
+  // combinaciones que agotan la memoria del contenedor (ver
+  // scripts/benchmark-generacion-cuasiexperimental.mjs).
+  const commonCfg = normalizeConfig(preparedRaw, {
+    presupuesto: { cuasiexperimental: true, mediciones: resolveMediciones(rawConfig) },
+  });
   const cfg = normalizeQuasiExperimentalConfig(rawConfig, commonCfg);
   const warnings = [...cfg.warnings];
 

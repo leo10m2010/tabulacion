@@ -41,6 +41,46 @@
 //     se haya quedado sin heap.
 //
 // El límite se fija donde la tabla separa limpiamente lo que cabe de lo que no.
+//
+// CUASIEXPERIMENTAL (2026-07-26)
+// La formula de mas abajo para `cuasiexperimental: true` existia desde antes
+// pero NUNCA se llamaba con esa señal: generator.js normalizaba el diseño
+// cuasiexperimental con la MISMA evaluarPresupuesto del flujo correlacional,
+// sin pasarle `cuasiexperimental`/`mediciones`, asi que en la practica se
+// evaluaba como si fuera una variable correlacional cualquiera (sin el peso
+// extra de escribir GE/GC Pretest, Postest, Seguimiento opcional, Consolidado
+// y Comparaciones). El resultado: combinaciones muy por debajo de los limites
+// individuales (muestra ≤ 2.000, items ≤ 60) reventaban el contenedor.
+// Medido con `scripts/benchmark-generacion-cuasiexperimental.mjs` (mismo
+// metodo: heap de 400 MB, pico de RSS real):
+//
+//   nExp+nCon  items  medic  resultado   pico RSS
+//   30         12     2      ok            120 MB
+//   100        10     2      ok            186 MB
+//   200        60     2      ok            448 MB
+//   500        20     2      ok            422 MB
+//   700        15     2      ok            485 MB   <- ya al borde
+//   600        20     2      ok            494 MB   <- ya al borde
+//   800        10     2      ok            477 MB   <- ya al borde
+//   900        10     2      ok            509 MB   <- ya no cabe
+//   1000       10     2      ok            541 MB   <- ya no cabe
+//   1200       10     2      ok            545 MB   <- ya no cabe
+//   500        60     2      OOM             —
+//   1500       15     2      OOM             —
+//   100        15     3      ok            333 MB
+//   200        15     3      ok            455 MB   <- ya al borde
+//   600        15     3      ok            583 MB   <- ya no cabe
+//   1000       15     3      OOM             —
+//
+// A igualdad de encuestados x items, el diseño cuasiexperimental pesa MAS que
+// el correlacional de 1 variable: escribe 5 hojas completas (GE/GC Pretest y
+// Postest, mas Consolidado) en vez de 1, y 7 con seguimiento (mediciones=3).
+// Por eso el "+10" original (nunca calibrado: el benchmark de arriba jamas
+// habia corrido el generador cuasiexperimental) se sube a "+40", que separa
+// limpiamente lo medido: todo lo de arriba hasta 455 MB queda aceptado y
+// todo lo de 477 MB en adelante, rechazado (el margen entre 455 y 477 es a
+// proposito: mejor rechazar un poco antes que despues, dado lo poco que tarda
+// en dispararse el RSS cerca del limite en este diseño).
 
 // Peso del salto a dos variables: aparecen las hojas de relaciones y
 // correlación, con una fila de fórmulas por encuestado en cada una. Se expresa
@@ -62,7 +102,8 @@ export const MEMORIA_CONTENEDOR_MB = 512;
  * @param {number} entrada.itemsTotales Suma de ítems de todas las variables.
  * @param {number} entrada.variables    Cuántas variables tiene el instrumento.
  * @param {boolean} [entrada.cuasiexperimental] El diseño cuasiexperimental
- *   escribe una hoja por medición (hasta 6) en vez de una por variable.
+ *   escribe 5 hojas completas de N filas (GE/GC Pretest, Postest y
+ *   Consolidado), o 7 con seguimiento, en vez de 1-2 del flujo correlacional.
  * @param {number} [entrada.mediciones] 2 (pre/post) o 3 (con seguimiento).
  */
 export const costoGeneracion = ({
@@ -78,12 +119,32 @@ export const costoGeneracion = ({
 
   if (cuasiexperimental) {
     // Cada medición es una hoja completa de N filas con sus fórmulas de
-    // puntaje y nivel; el consolidado añade otra.
+    // puntaje y nivel; el consolidado añade otra. El "+40" (en vez del "+10"
+    // original, nunca calibrado) sale de medir el generador real: ver el
+    // comentario "CUASIEXPERIMENTAL" al inicio de este archivo.
     const hojas = Math.max(2, Number(mediciones) || 2) * 2 + 1;
-    return Math.round(n * (items + 10) * (hojas / 5));
+    return Math.round(n * (items + 40) * (hojas / 5));
   }
 
   return Math.round(n * (items + ITEMS_EQUIVALENTES_POR_VARIABLE_EXTRA * (vars - 1)));
+};
+
+// Mayor entero en [0, techo] tal que, cambiando SOLO `campo` de `entrada`, el
+// costo siga cabiendo en el presupuesto. Generico a proposito: busca sobre
+// costoGeneracion en vez de despejar la formula a mano, asi que sirve igual
+// para el flujo correlacional que para el cuasiexperimental (con su propio
+// multiplicador por mediciones) sin duplicar ninguna de las dos aqui. Ambas
+// formulas son monotonas crecientes en `encuestados` e `itemsTotales`, que es
+// lo unico que necesita una busqueda binaria.
+const mayorQueCabe = (entrada, campo, techo) => {
+  if (techo < 1 || costoGeneracion({ ...entrada, [campo]: 1 }) > PRESUPUESTO_MAXIMO) return 0;
+  let lo = 1;
+  let hi = techo;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi + 1) / 2);
+    if (costoGeneracion({ ...entrada, [campo]: mid }) <= PRESUPUESTO_MAXIMO) lo = mid; else hi = mid - 1;
+  }
+  return lo;
 };
 
 /**
@@ -99,16 +160,15 @@ export const evaluarPresupuesto = (entrada) => {
   const n = Math.max(1, Number(entrada.encuestados) || 1);
   const items = Math.max(1, Number(entrada.itemsTotales) || 1);
   const vars = Math.max(1, Number(entrada.variables) || 1);
-  const extra = ITEMS_EQUIVALENTES_POR_VARIABLE_EXTRA * (vars - 1);
 
   const sugerencias = [];
   // Cuántos encuestados caben con los ítems actuales.
-  const nMax = Math.floor(PRESUPUESTO_MAXIMO / (items + extra));
+  const nMax = mayorQueCabe(entrada, "encuestados", n);
   if (nMax >= 2 && nMax < n) {
     sugerencias.push(`baja la muestra a ${nMax} encuestados o menos (ahora ${n})`);
   }
   // Cuántos ítems caben con la muestra actual.
-  const itemsMax = Math.floor(PRESUPUESTO_MAXIMO / n) - extra;
+  const itemsMax = mayorQueCabe(entrada, "itemsTotales", items);
   if (itemsMax >= 1 && itemsMax < items) {
     sugerencias.push(`baja el total de ítems a ${itemsMax} o menos (ahora ${items})`);
   }
