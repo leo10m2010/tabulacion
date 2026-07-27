@@ -1,31 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChartPreview } from "../lib/types";
-import type { ECharts } from "echarts/core";
 
-// echarts se carga bajo demanda (igual que xlsx) Y de forma modular: el
-// paquete "echarts" completo pesa ~1.1 MB minificado (382 kB gzip) porque
-// incluye TODOS los tipos de gráfico y componentes (mapas, radar, sankey,
-// dataZoom, timeline...). Esta vista previa solo dibuja barras simples con
-// título/tooltip/grid, así que se registran unicamente esas piezas via
-// echarts/core — el resto nunca se descarga (medido en ESTADO_TECNICO.md).
-let echartsPromise: Promise<typeof import("echarts/core")> | null = null;
+// echarts se carga bajo demanda (igual que xlsx): solo hace falta cuando hay
+// un resultado con gráficos y pesa demasiado para el bundle inicial. El
+// recorte a solo barras/título/tooltip/grid/canvas vive en lib/echarts-lazy.ts
+// (con imports estáticos, para que Rollup sí pueda eliminar mapas, radar,
+// sankey, dataZoom y el resto de lo que trae el paquete "echarts" completo):
+// el chunk bajo demanda bajó de 1.1 MB (382 kB gzip) a lo que BarChart usa
+// de verdad.
+type EChartsModule = typeof import("echarts/core");
+let echartsPromise: Promise<EChartsModule> | null = null;
 const loadECharts = () => {
-  echartsPromise ??= (async () => {
-    const [core, chartsMod, componentsMod, renderersMod] = await Promise.all([
-      import("echarts/core"),
-      import("echarts/charts"),
-      import("echarts/components"),
-      import("echarts/renderers"),
-    ]);
-    core.use([
-      chartsMod.BarChart,
-      componentsMod.GridComponent,
-      componentsMod.TitleComponent,
-      componentsMod.TooltipComponent,
-      renderersMod.CanvasRenderer,
-    ]);
-    return core;
-  })();
+  echartsPromise ??= import("../lib/echarts-lazy").then((m) => m.default);
   return echartsPromise;
 };
 
@@ -34,7 +20,7 @@ function BarChart({ chart, palette }: { chart: ChartPreview; palette: string[] }
 
   useEffect(() => {
     let disposed = false;
-    let instance: ECharts | null = null;
+    let instance: ReturnType<EChartsModule["init"]> | null = null;
     let observer: ResizeObserver | null = null;
 
     loadECharts().then((echarts) => {
