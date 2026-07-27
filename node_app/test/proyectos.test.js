@@ -441,4 +441,23 @@ describe("condiciones de carrera al crear proyectos", () => {
         + `solapadas (A:${a.status}, B:${b.status})`,
     );
   });
+
+  // Complementa la prueba de arriba (dos peticiones, solapamiento forzado con
+  // el truco del cuerpo partido) con una ráfaga real de peticiones
+  // concurrentes via Promise.all — el caso que de verdad ocurriría si varias
+  // pestañas o reintentos del mismo usuario coinciden.
+  test("ráfagas concurrentes no pueden sobrepasar el límite del plan", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "rafaga@test.local", "free");
+
+    const N = 8;
+    const resultados = await Promise.all(
+      Array.from({ length: N }, (_, i) => api("POST", "/proyectos", token, { nombre: `Ráfaga ${i}` })),
+    );
+    const creados = resultados.filter((r) => r.status === 201).length;
+    assert.equal(creados, 1, "el plan free (límite 1) no debe dejar crear más de uno");
+
+    const lista = await api("GET", "/proyectos", token);
+    assert.equal(lista.body.proyectos.length, 1, "lo realmente guardado tampoco debe superar el límite");
+  });
 });
