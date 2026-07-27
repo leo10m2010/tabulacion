@@ -199,7 +199,12 @@ const DEFAULT_NIVEL_NAMES = {
   5: ["Muy bajo", "Bajo", "Medio", "Alto", "Muy alto"],
 };
 
-export const normalizeConfig = (raw) => {
+// `opciones.presupuesto` deja que un caller que SI sabe que el diseño es
+// cuasiexperimental (generator.js) le pase esa info a evaluarPresupuesto sin
+// que este modulo tenga que conocer el diseño cuasiexperimental (ver el
+// comentario de prepareQuasiExperimentalRawConfig en lib/quasi-experimental.js:
+// la idea original fue mantener config.js ajeno a el, y esto lo respeta).
+export const normalizeConfig = (raw, opciones = {}) => {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("Debes enviar una configuracion valida (objeto JSON).");
   }
@@ -378,6 +383,7 @@ export const normalizeConfig = (raw) => {
     encuestados,
     itemsTotales: variables.reduce((acc, v) => acc + v.totalItems, 0),
     variables: variables.length,
+    ...opciones.presupuesto,
   });
   if (!evaluacion.cabe) {
     throw new Error(mensajePresupuesto(evaluacion));

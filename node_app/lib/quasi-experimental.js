@@ -91,6 +91,18 @@ export const prepareQuasiExperimentalRawConfig = (raw) => {
   };
 };
 
+// Numero de mediciones (2 o 3), ya recortado al valor valido mas cercano (2
+// por defecto). Se exporta por separado de normalizeQuasiExperimentalConfig
+// porque el presupuesto conjunto (lib/presupuesto.js, vía generator.js) lo
+// necesita ANTES de que corra la normalizacion completa: el costo de un
+// diseño con seguimiento (3 mediciones, una hoja mas por grupo) es distinto
+// del de solo pretest-postest.
+export const resolveMediciones = (raw) => {
+  const source = rawQuasi(raw);
+  const medicionesRaw = toInt(source.mediciones ?? source.numeroMediciones ?? 2, 2);
+  return medicionesRaw === 3 ? 3 : 2;
+};
+
 const parseBoolean = (value, fallback = true) => {
   if (value === undefined || value === null || value === "") return fallback;
   return !new Set(["0", "false", "no", "off"]).has(String(value).trim().toLowerCase());
@@ -133,10 +145,9 @@ export const normalizeQuasiExperimentalConfig = (raw, baseCfg) => {
   // Mediciones: 2 (pretest y postest) o 3 (agrega un seguimiento posterior
   // que evalúa la persistencia del efecto de la intervención).
   const medicionesRaw = toInt(source.mediciones ?? source.numeroMediciones ?? 2, 2);
-  let mediciones = medicionesRaw;
+  const mediciones = resolveMediciones(raw);
   if (medicionesRaw !== 2 && medicionesRaw !== 3) {
     baseCfg.warnings.push(`El diseño soporta 2 o 3 mediciones (configuraste ${medicionesRaw}); se usaron 2.`);
-    mediciones = 2;
   }
 
   if (baseCfg.variables.length > 1) {
