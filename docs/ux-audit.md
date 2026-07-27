@@ -1,6 +1,17 @@
 # Auditoría UX de TesisTab (Layers of Product Design)
 
-Fecha: 2026-07-18 · Método: `/layers-orient` de [layers-skills](https://github.com/jamiemill/layers-skills) · Alcance: solo diagnóstico y decisiones recomendadas; nada de esto está implementado.
+Fecha: 2026-07-18 · Método: `/layers-orient` de [layers-skills](https://github.com/jamiemill/layers-skills) · Alcance: solo diagnóstico y decisiones recomendadas; nada de esto estaba implementado a esa fecha.
+
+> **Actualización 2026-07-27**: la decisión recomendada #1 (el objeto "Proyecto
+> de tesis" con Instrumento compartido) **se implementó** el 2026-07-25
+> (`node_app/lib/proyectos/`, `frontend/src/components/sections/ProyectosSection.tsx`).
+> La integración es parcial: Tabulación y Confiabilidad leen el instrumento del
+> proyecto activo; Títulos y Matriz de Consistencia leen y escriben; Descriptiva
+> y Humanizador todavía no participan (Humanizador no usa un instrumento;
+> Descriptiva sí debería, pero su entrada es un cuestionario en texto libre, no
+> el instrumento estructurado — ver `ESTADO_TECNICO.md`, sección "Proyecto de
+> tesis y auditoría de arquitectura"). El resto de este documento (decisiones
+> 2-6) sigue sin implementar y sigue vigente como diagnóstico.
 
 **Lectura de diseño**: SaaS para tesistas cuantitativas (Perú, pregrado/posgrado) que convierte una encuesta en el capítulo de resultados. Siete herramientas conectadas por marca, pero no por datos.
 
