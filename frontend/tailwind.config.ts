@@ -47,6 +47,7 @@ export default {
           DEFAULT: "hsl(var(--danger))",
           foreground: "hsl(var(--danger-foreground))",
         },
+        "danger-deep": "hsl(var(--danger-deep))",
         ambar: "hsl(var(--amber))",
         "primary-deep": "hsl(var(--primary-deep))",
       },

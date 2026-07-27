@@ -288,7 +288,7 @@ export function LandingPage({
                   )}
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <item.icon className={cn("h-5 w-5", item.tone === "amber" ? "text-amber-600 dark:text-amber-400" : "text-primary")} />
+                    <item.icon className={cn("h-5 w-5", item.tone === "amber" ? "text-amber-700 dark:text-amber-400" : "text-primary")} />
                     {item.figure && (
                       <span className="font-mono text-2xl font-bold tracking-tight text-accent-foreground">
                         {item.figure}
