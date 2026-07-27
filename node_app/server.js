@@ -1905,7 +1905,13 @@ const server = http.createServer(async (req, res) => {
           console.error(`[descriptiva] job ${id} fallo:`, err);
           settleJobUse(id, authUser.id, "descriptiva", { refund: true });
           job.status = "error";
-          job.error = "Hubo un problema generando tu base de datos, intenta de nuevo. No se descontó tu uso.";
+          // Las validaciones detectadas dentro del job (p. ej. el presupuesto
+          // de memoria de lib/presupuesto.js, que solo se conoce tras la
+          // respuesta de la IA) SI se muestran al usuario; el detalle de
+          // errores tecnicos queda solo en el log (mismo patron que humanizador).
+          job.error = err?.isUserError
+            ? err.message
+            : "Hubo un problema generando tu base de datos, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + DESCRIPTIVA_DONE_TTL_MS;
         });
 

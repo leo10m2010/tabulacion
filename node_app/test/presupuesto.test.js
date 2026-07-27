@@ -24,6 +24,10 @@ import {
   costoGeneracion,
   evaluarPresupuesto,
   mensajePresupuesto,
+  PRESUPUESTO_MAXIMO_DESCRIPTIVA,
+  costoDescriptiva,
+  evaluarPresupuestoDescriptiva,
+  mensajePresupuestoDescriptiva,
 } from "../lib/presupuesto.js";
 
 const base = JSON.parse(fs.readFileSync(DEFAULT_CONFIG_PATH, "utf-8"));
@@ -131,4 +135,65 @@ test("el rechazo ocurre en la normalizacion, antes de construir nada", () => {
   try { normalizeConfig({ ...base, muestra: "1800" }); } catch (e) { error = e; }
   assert.ok(error, "deberia rechazar");
   assert.match(error.message, /coste estimado/i);
+});
+
+// ── Presupuesto de Descriptiva (auditoria de rendimiento, 2026-07-26) ───────
+//
+// A diferencia del generador principal, Descriptiva NO corre en el worker
+// aislado: un pico de memoria aqui comparte proceso con el servidor HTTP.
+// Estos casos vienen de scripts/benchmark-ia.mjs (mismo heap que produccion,
+// --max-old-space-size=400); ver el comentario de costoDescriptiva en
+// lib/presupuesto.js para la tabla completa.
+const MEDIDOS_DESCRIPTIVA = [
+  { encuestados: 60, itemsTotales: 20, picoMb: 146, cabe: true },
+  { encuestados: 400, itemsTotales: 20, picoMb: 262, cabe: true },
+  { encuestados: 400, itemsTotales: 40, picoMb: 377, cabe: true },
+  { encuestados: 200, itemsTotales: 60, picoMb: 345, cabe: true },
+  // N=400/items=45 (costo 18.000) midio 387 MB, tecnicamente seguro, pero el
+  // mismo costo (300x60=18.000) midio 440 MB en otra combinacion: el costo
+  // por si solo no distingue ambos casos, asi que el limite se fija por
+  // DEBAJO de 18.000 y este caso se rechaza a proposito (falso rechazo
+  // aceptado a cambio de nunca aceptar el otro).
+  { encuestados: 400, itemsTotales: 45, picoMb: 387, cabe: false },
+  // A partir de aqui, sin worker que lo aisle, ya es arriesgado compartir
+  // proceso con el servidor HTTP.
+  { encuestados: 400, itemsTotales: 50, picoMb: 430, cabe: false },
+  { encuestados: 300, itemsTotales: 60, picoMb: 440, cabe: false },
+  { encuestados: 400, itemsTotales: 60, picoMb: 455, cabe: false },
+  { encuestados: 200, itemsTotales: 120, picoMb: 473, cabe: false },
+  { encuestados: 400, itemsTotales: 80, picoMb: 529, cabe: false },
+  { encuestados: 400, itemsTotales: 120, picoMb: null, cabe: false }, // OOM
+];
+
+test("el presupuesto de descriptiva separa lo medido que cabe de lo que no", () => {
+  for (const caso of MEDIDOS_DESCRIPTIVA) {
+    const r = evaluarPresupuestoDescriptiva(caso);
+    assert.equal(
+      r.cabe, caso.cabe,
+      `N=${caso.encuestados} items=${caso.itemsTotales} (pico ${caso.picoMb ?? "OOM"} MB): `
+      + `costo ${r.costo}, esperado cabe=${caso.cabe}`,
+    );
+  }
+});
+
+test("el coste de descriptiva crece con la muestra y con los items", () => {
+  assert.ok(costoDescriptiva({ encuestados: 200, itemsTotales: 20 }) > costoDescriptiva({ encuestados: 100, itemsTotales: 20 }));
+  assert.ok(costoDescriptiva({ encuestados: 100, itemsTotales: 40 }) > costoDescriptiva({ encuestados: 100, itemsTotales: 20 }));
+});
+
+test("descriptiva: la muestra tipica (DEFAULT_N=60) cabe con cualquier instrumento realista", () => {
+  const r = evaluarPresupuestoDescriptiva({ encuestados: 60, itemsTotales: 60 });
+  assert.equal(r.cabe, true);
+});
+
+test("descriptiva: el mensaje explica que acortar y que no se descuenta el uso", () => {
+  const r = evaluarPresupuestoDescriptiva({ encuestados: 400, itemsTotales: 120 });
+  assert.equal(r.cabe, false);
+  const msg = mensajePresupuestoDescriptiva(r);
+  assert.match(msg, /acorta el cuestionario a \d+ preguntas/);
+  assert.match(msg, /No se descontó tu uso/);
+});
+
+test("descriptiva: los maximos no se han tocado", () => {
+  assert.equal(PRESUPUESTO_MAXIMO_DESCRIPTIVA, 16_000);
 });

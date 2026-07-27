@@ -1,12 +1,31 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChartPreview } from "../lib/types";
+import type { ECharts } from "echarts/core";
 
-// echarts se carga bajo demanda (igual que xlsx): solo hace falta cuando hay
-// un resultado con gráficos y pesa demasiado para el bundle inicial.
-type EChartsModule = typeof import("echarts");
-let echartsPromise: Promise<EChartsModule> | null = null;
+// echarts se carga bajo demanda (igual que xlsx) Y de forma modular: el
+// paquete "echarts" completo pesa ~1.1 MB minificado (382 kB gzip) porque
+// incluye TODOS los tipos de gráfico y componentes (mapas, radar, sankey,
+// dataZoom, timeline...). Esta vista previa solo dibuja barras simples con
+// título/tooltip/grid, así que se registran unicamente esas piezas via
+// echarts/core — el resto nunca se descarga (medido en ESTADO_TECNICO.md).
+let echartsPromise: Promise<typeof import("echarts/core")> | null = null;
 const loadECharts = () => {
-  echartsPromise ??= import("echarts");
+  echartsPromise ??= (async () => {
+    const [core, chartsMod, componentsMod, renderersMod] = await Promise.all([
+      import("echarts/core"),
+      import("echarts/charts"),
+      import("echarts/components"),
+      import("echarts/renderers"),
+    ]);
+    core.use([
+      chartsMod.BarChart,
+      componentsMod.GridComponent,
+      componentsMod.TitleComponent,
+      componentsMod.TooltipComponent,
+      renderersMod.CanvasRenderer,
+    ]);
+    return core;
+  })();
   return echartsPromise;
 };
 
@@ -15,7 +34,7 @@ function BarChart({ chart, palette }: { chart: ChartPreview; palette: string[] }
 
   useEffect(() => {
     let disposed = false;
-    let instance: ReturnType<EChartsModule["init"]> | null = null;
+    let instance: ECharts | null = null;
     let observer: ResizeObserver | null = null;
 
     loadECharts().then((echarts) => {

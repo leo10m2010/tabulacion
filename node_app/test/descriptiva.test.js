@@ -8,7 +8,9 @@ import {
   detectLikertBaremo, distributionFor, organicizeRows, pairMultiColumns,
 } from "../lib/descriptiva/compute.js";
 import { stripCodeFences } from "../lib/descriptiva/openrouter.js";
-import { MAX_CUESTIONARIO_CHARS, normalizeDescriptivaInput, reconcileRowCount } from "../lib/descriptiva/index.js";
+import {
+  MAX_CUESTIONARIO_CHARS, generateDescriptiva, normalizeDescriptivaInput, reconcileRowCount,
+} from "../lib/descriptiva/index.js";
 import { buildDescriptivaWorkbook } from "../lib/descriptiva/workbook.js";
 import { postProcessWorkbook } from "../lib/ooxml.js";
 import { CHART_THEMES } from "../lib/config.js";
@@ -511,4 +513,72 @@ test("un cuestionario de tesis normal sigue pasando sin problema", () => {
   const realista = "Pregunta sobre satisfaccion laboral ".repeat(300);
   assert.ok(realista.length < MAX_CUESTIONARIO_CHARS);
   assert.doesNotThrow(() => normalizeDescriptivaInput({ texto: realista }));
+});
+
+// ── Presupuesto de memoria (auditoria de rendimiento, 2026-07-26) ───────────
+//
+// Descriptiva construye el .xlsx en el MISMO proceso que el servidor HTTP (no
+// hay worker aislado, a diferencia de /generate): un cuestionario largo con
+// la muestra maxima puede llevar el pico de RSS por encima de lo seguro (ver
+// scripts/benchmark-ia.mjs y el comentario de costoDescriptiva en
+// lib/presupuesto.js). Se rechaza DESPUES de la respuesta de la IA (recien
+// ahi se conoce el numero real de preguntas) y ANTES de construir el .xlsx.
+const ESCALA_LIKERT_5 = ["Nunca", "Casi nunca", "A veces", "Casi siempre", "Siempre"];
+
+const fixtureInstrumentoLargo = (nPreguntas, n) => {
+  const preguntas = Array.from({ length: nPreguntas }, (_, i) => ({
+    id: `P${i + 1}`, texto: `Pregunta ${i + 1}`, tipo: "ordinal_unica", opciones: ESCALA_LIKERT_5,
+  }));
+  const filas = Math.max(2, Math.ceil(n / 2)); // el minimo que acepta validateSimulation
+  const datos_simulados = Array.from({ length: filas }, (_, i) => {
+    const row = {};
+    for (const p of preguntas) row[p.id] = ESCALA_LIKERT_5[i % ESCALA_LIKERT_5.length];
+    return row;
+  });
+  return {
+    metadata: { titulo_estudio: "Instrumento largo de prueba", tipo_instrumento: "independiente", n_encuestados: n },
+    preguntas,
+    baremo: null,
+    datos_simulados,
+  };
+};
+
+const mockFetchOpenRouter = (data) => async () => ({
+  ok: true,
+  json: async () => ({
+    choices: [{ message: { content: JSON.stringify(data) }, finish_reason: "stop" }],
+    usage: null,
+  }),
+});
+
+test("rechaza (sin construir el .xlsx) un instrumento cuya combinacion N x items no cabe", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = mockFetchOpenRouter(fixtureInstrumentoLargo(120, 400)); // 400x120: medido, OOM
+  try {
+    await assert.rejects(
+      () => generateDescriptiva({ texto: "cuestionario de prueba ".repeat(10), config: { n: 400 } }, { apiKey: "test-key" }),
+      (err) => {
+        assert.equal(err.isUserError, true, "debe marcarse como error mostrable al usuario");
+        assert.match(err.message, /acorta el cuestionario/i);
+        assert.match(err.message, /No se descontó tu uso/);
+        return true;
+      },
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("acepta un instrumento largo pero dentro del presupuesto (N=60, 60 preguntas)", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = mockFetchOpenRouter(fixtureInstrumentoLargo(60, 60));
+  try {
+    const result = await generateDescriptiva(
+      { texto: "cuestionario de prueba ".repeat(10), config: { n: 60 } },
+      { apiKey: "test-key" },
+    );
+    assert.ok(result.excelBuffer.length > 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
