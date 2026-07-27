@@ -541,7 +541,17 @@ async function monitorJob(jobId, backendBaseUrl, expectedDurationMs = 0) {
         const withErrors = job.failed > 0;
         const latestMessage = String(job.latestResult?.message || '').trim();
         const firstError = String(job.errors?.[0]?.message || '').trim();
-        const detail = latestMessage || firstError;
+        // latestMessage para un fallo HTTP es solo "HTTP 400": el servidor SI
+        // captura el cuerpo real que Google devuelve (inspectGoogleResponse ->
+        // preview, primeros 240 caracteres sin etiquetas HTML) pero antes se
+        // descartaba aqui, dejando al usuario sin forma de saber POR QUE
+        // Google rechazo la peticion (formulario cerrado, requiere inicio de
+        // sesion, un campo obligatorio que ya no coincide, etc.).
+        const preview = String(job.latestResult?.preview || '').trim();
+        const baseDetail = latestMessage || firstError;
+        const detail = preview && preview !== baseDetail
+          ? `${baseDetail}${baseDetail ? ' — ' : ''}${preview}`
+          : baseDetail;
         if (job.sent === 0 && job.failed > 0) {
           clearActiveJobState(job.id);
           showStatus(
