@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS = {
   requireConfirmation: true,
   randomizeBeforeSubmit: false,
   compatApiMode: false,
+  hasSeenPanelTutorial: false,
 };
 // LIMITE: ajusta este valor para limitar maximo desde la extension.
 const MAX_UI_SUBMISSIONS = 250;
@@ -719,7 +720,46 @@ function injectActionsPanel() {
   backendStatus.title = 'Verificando backend';
   backendStatus.setAttribute('aria-label', 'Verificando backend');
 
-  header.append(title, backendStatus);
+  const tutorialToggle = document.createElement('button');
+  tutorialToggle.type = 'button';
+  tutorialToggle.id = 'tesistab-qa-tutorial-toggle';
+  tutorialToggle.textContent = '?';
+  tutorialToggle.title = 'Como funciona';
+  tutorialToggle.setAttribute('aria-label', 'Como funciona TesisHub Forms');
+  tutorialToggle.onclick = () => {
+    const banner = document.getElementById('tesistab-qa-tutorial');
+    if (banner) {
+      banner.hidden = !banner.hidden;
+    }
+  };
+
+  header.append(title, tutorialToggle, backendStatus);
+
+  // Se muestra sola la primera vez (persistido en chrome.storage, igual que
+  // el resto de settings) y despues queda disponible con el "?" de arriba:
+  // el panel no tiene ninguna explicacion de que hace "Iniciar" ni de que
+  // pasa si no puede completar una pregunta sola, y el flujo automatico no
+  // es obvio la primera vez que se ve (reportado en vivo probando el
+  // llenado de un formulario real).
+  const tutorialBanner = document.createElement('div');
+  tutorialBanner.id = 'tesistab-qa-tutorial';
+  tutorialBanner.hidden = Boolean(settings.hasSeenPanelTutorial);
+
+  const tutorialText = document.createElement('p');
+  tutorialText.textContent = 'TesisHub completa sola las preguntas que puede y manda '
+    + '"Cantidad" respuestas con el tono de "Perfil". Si una pregunta no se puede '
+    + 'completar sola, te lo avisa para que la respondas vos antes de reintentar '
+    + 'con "Iniciar".';
+
+  const tutorialDismiss = document.createElement('button');
+  tutorialDismiss.type = 'button';
+  tutorialDismiss.textContent = 'Entendido';
+  tutorialDismiss.onclick = async () => {
+    tutorialBanner.hidden = true;
+    await markPanelTutorialSeen();
+  };
+
+  tutorialBanner.append(tutorialText, tutorialDismiss);
 
   const viewRow = document.createElement('label');
   viewRow.className = 'tesistab-qa-count-row';
@@ -946,6 +986,7 @@ function injectActionsPanel() {
 
   panel.append(
     header,
+    tutorialBanner,
     viewRow,
     countRow,
     profileRow,
@@ -1020,6 +1061,18 @@ async function saveInlineSubmissionCount(input) {
     [SETTINGS_KEY]: {
       ...saved,
       submissionCount: value,
+    },
+  });
+}
+
+async function markPanelTutorialSeen() {
+  settings = { ...settings, hasSeenPanelTutorial: true };
+  const result = await chrome.storage.local.get([SETTINGS_KEY]);
+  const saved = { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) };
+  await chrome.storage.local.set({
+    [SETTINGS_KEY]: {
+      ...saved,
+      hasSeenPanelTutorial: true,
     },
   });
 }

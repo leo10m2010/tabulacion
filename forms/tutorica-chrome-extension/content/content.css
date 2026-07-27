@@ -255,6 +255,64 @@
   gap: 10px;
 }
 
+#tesistab-qa-tutorial-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin-left: auto;
+  border: none;
+  border-radius: 999px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+#tesistab-qa-tutorial-toggle:hover {
+  background: hsl(var(--primary) / 0.18);
+  color: hsl(var(--primary));
+}
+
+#tesistab-qa-tutorial[hidden] {
+  display: none;
+}
+
+#tesistab-qa-tutorial {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: hsl(var(--primary) / 0.1);
+  border: 1px solid hsl(var(--primary) / 0.25);
+}
+
+#tesistab-qa-tutorial p {
+  margin: 0;
+  color: hsl(var(--card-foreground));
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: var(--tt-font);
+}
+
+#tesistab-qa-tutorial button {
+  align-self: flex-end;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 8px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 #tesistab-qa-backend-status {
   width: 10px;
   height: 10px;
