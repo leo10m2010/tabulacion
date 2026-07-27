@@ -27,13 +27,23 @@ export const CHART_THEMES = {
 // rangos son en valor absoluto: el signo lo define la relacion (directa /
 // inversa) elegida por el usuario. "nula" acepta la fluctuacion muestral
 // natural alrededor de 0.
+//
+// Estos rangos deben quedar SIN SOLAPAR y coincidir con la formula viva de la
+// hoja "Correlación" (lib/sheets.js, addCorrelacionSheet): esa formula
+// clasifica el r ya calculado con IF(ABS(r)>=0.01,"muy baja","nula"). Antes
+// "nula" llegaba hasta max=0.09, que invadia el rango de busqueda de
+// "muy_baja" (0.01-0.19): pedir nivel "nula" podia terminar aceptando, por
+// ejemplo, r=0.07 como "cumple" el objetivo, mientras la propia hoja
+// "Correlación" -sobre esos mismos datos- mostraba "Correlación muy baja".
+// El archivo se contradecia a si mismo. max=0.0099 deja "nula" estrictamente
+// por debajo del 0.01 que usa esa formula (ver test/baremo-objetivo.test.js).
 export const NIVELES_CORRELACION = {
   muy_alta: { etiqueta: "Correlación muy alta", min: 0.9, max: 1.0 },
   alta: { etiqueta: "Correlación alta", min: 0.7, max: 0.89 },
   moderada: { etiqueta: "Correlación moderada", min: 0.4, max: 0.69 },
   baja: { etiqueta: "Correlación baja", min: 0.2, max: 0.39 },
   muy_baja: { etiqueta: "Correlación muy baja", min: 0.01, max: 0.19 },
-  nula: { etiqueta: "Correlación nula", min: 0, max: 0.09 },
+  nula: { etiqueta: "Correlación nula", min: 0, max: 0.0099 },
 };
 
 export const toInt = (value, fallback = 0) => {
@@ -199,7 +209,12 @@ const DEFAULT_NIVEL_NAMES = {
   5: ["Muy bajo", "Bajo", "Medio", "Alto", "Muy alto"],
 };
 
-export const normalizeConfig = (raw) => {
+// `opciones.presupuesto` deja que un caller que SI sabe que el diseño es
+// cuasiexperimental (generator.js) le pase esa info a evaluarPresupuesto sin
+// que este modulo tenga que conocer el diseño cuasiexperimental (ver el
+// comentario de prepareQuasiExperimentalRawConfig en lib/quasi-experimental.js:
+// la idea original fue mantener config.js ajeno a el, y esto lo respeta).
+export const normalizeConfig = (raw, opciones = {}) => {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("Debes enviar una configuracion valida (objeto JSON).");
   }
@@ -378,6 +393,7 @@ export const normalizeConfig = (raw) => {
     encuestados,
     itemsTotales: variables.reduce((acc, v) => acc + v.totalItems, 0),
     variables: variables.length,
+    ...opciones.presupuesto,
   });
   if (!evaluacion.cabe) {
     throw new Error(mensajePresupuesto(evaluacion));

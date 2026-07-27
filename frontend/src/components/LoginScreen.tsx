@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ArrowLeft, Check, Eye, EyeOff, FileSpreadsheet, Loader2, Moon, Sun } from "lucide-react";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { springSoft } from "./motion-primitives";
@@ -43,6 +43,9 @@ export function LoginScreen({ apiBaseUrl, onApiBaseUrlChange, themeMode, onToggl
   // basta un clic, y enseñar dos caminos a la vez hace dudar. Quien lo necesita
   // (cuentas que crea el administrador) lo abre con un enlace.
   const [correoAbierto, setCorreoAbierto] = useState(!creando);
+  // Única pantalla de acceso: la entrada del panel animaba (opacity + y)
+  // sin comprobar prefers-reduced-motion, a diferencia del resto del frontend.
+  const reduce = useReducedMotion();
 
   const submit = () => onLogin(email, password);
 
@@ -60,9 +63,9 @@ export function LoginScreen({ apiBaseUrl, onApiBaseUrlChange, themeMode, onToggl
     <div className="flex min-h-[100dvh] items-center justify-center bg-[radial-gradient(ellipse_at_top,hsl(var(--accent)/0.7)_0%,hsl(var(--background))_60%)] p-4 transition-colors">
       <motion.div
         className="w-full max-w-sm"
-        initial={{ opacity: 0, y: 18 }}
+        initial={reduce ? false : { opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={springSoft}
+        transition={reduce ? { duration: 0 } : springSoft}
       >
         <div className="rounded-2xl border border-border/70 bg-card p-8 shadow-hero">
           <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-primary-foreground">

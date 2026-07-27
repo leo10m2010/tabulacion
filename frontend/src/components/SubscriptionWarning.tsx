@@ -31,7 +31,7 @@ export function SubscriptionWarning({ user, tool, onUpgrade }: {
   return (
     <div className="mb-5 flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/20">
-        <Lock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+        <Lock className="h-4 w-4 text-amber-700 dark:text-amber-400" />
       </span>
       <div className="space-y-1 text-sm">
         <p className="font-semibold text-amber-800 dark:text-amber-200">

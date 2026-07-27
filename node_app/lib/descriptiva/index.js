@@ -3,6 +3,7 @@
 // y validacion estructural) -> capa calculada por el sistema -> Excel final.
 import { CHART_THEMES } from "../config.js";
 import { postProcessWorkbook } from "../ooxml.js";
+import { evaluarPresupuestoDescriptiva, mensajePresupuestoDescriptiva } from "../presupuesto.js";
 import { docxToMarkdown } from "./docx.js";
 import { requestSimulationJson } from "./openrouter.js";
 import { validateSimulation } from "./validate.js";
@@ -33,6 +34,15 @@ export const NIVELES_PREPONDERANCIA = ["ALTO", "MODERADO", "LEVE"];
 // Las herramientas hermanas ya acotaban: titulos y matriz a 200 caracteres por
 // campo, humanizador a 3.000 palabras. Descriptiva era la unica sin tope.
 export const MAX_CUESTIONARIO_CHARS = 40_000;
+
+// Error cuyo mensaje SI puede mostrarse al usuario final (mismo patron que
+// lib/humanizador/index.js): el handler del job en server.js lo distingue
+// del error tecnico generico.
+const userError = (message) => {
+  const err = new Error(message);
+  err.isUserError = true;
+  return err;
+};
 
 const acotarCuestionario = (texto, origen) => {
   if (texto.length <= MAX_CUESTIONARIO_CHARS) return texto;
@@ -117,6 +127,21 @@ export const generateDescriptiva = async (payload, options = {}) => {
   });
   if (attempts.length > 1) {
     warnings.push("La IA necesito un reintento para entregar un JSON valido.");
+  }
+
+  // Presupuesto de memoria: recien ahora se conoce el numero real de
+  // preguntas del instrumento (lo decide el cuestionario, no un limite de
+  // configuracion). Esta ruta construye el .xlsx en el mismo proceso que el
+  // servidor HTTP (no hay worker aislado como en /generate), asi que un pico
+  // de memoria aqui puede tumbar el proceso entero. Se rechaza ANTES de
+  // reconciliar filas y construir el workbook; ver lib/presupuesto.js para
+  // las mediciones que calibran el limite.
+  const presupuesto = evaluarPresupuestoDescriptiva({
+    encuestados: input.n,
+    itemsTotales: data.preguntas.length,
+  });
+  if (!presupuesto.cabe) {
+    throw userError(mensajePresupuestoDescriptiva(presupuesto));
   }
 
   reconcileRowCount(data, input.n, warnings);

@@ -94,9 +94,9 @@ function StatusChip({ user }: { user: AuthUser }) {
     return <span className="rounded-md bg-danger/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-danger">Desactivado</span>;
   }
   if (isOutOfUses(user)) {
-    return <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">Sin usos</span>;
+    return <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Sin usos</span>;
   }
-  return <span className="rounded-md bg-green-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-600 dark:text-green-400">Activo</span>;
+  return <span className="rounded-md bg-green-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-700 dark:text-green-400">Activo</span>;
 }
 
 export function UsersSection({ apiBaseUrl, authToken, authUser }: {
@@ -131,10 +131,25 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingRestore, setPendingRestore] = useState<{ users: unknown[]; fileName: string } | null>(null);
 
+  // Panel lateral: quién lo abrió (para devolverle el foco al cerrar) y sus
+  // límites (para atrapar el foco con Tab mientras está abierto).
+  const lastTriggerRef = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
   const selectedUser = useMemo(
     () => managedUsers.find((u) => u.id === selectedId) ?? null,
     [managedUsers, selectedId],
   );
+
+  // Único punto de cierre "de escape" (Escape, backdrop, botón X): además de
+  // soltar la selección, devuelve el foco a la fila que abrió el panel. Sin
+  // esto, quien navega por teclado perdía su lugar en la tabla cada vez que
+  // cerraba el panel (el foco caía al <body>).
+  const closePanel = () => {
+    setSelectedId(null);
+    lastTriggerRef.current?.focus();
+  };
 
   const loadUsers = async () => {
     if (!authToken || authUser.role !== "admin") return;
@@ -155,13 +170,39 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
 
   useEffect(() => { void loadUsers(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // El panel lateral se cierra con Escape.
+  // El panel lateral se cierra con Escape, y mientras está abierto atrapa el
+  // foco (Tab/Shift+Tab no debe poder salir hacia la tabla de fondo, que
+  // sigue montada e interactiva detrás del backdrop). Al abrir, el foco se
+  // mueve al botón de cerrar: antes se quedaba donde estaba el clic (o, para
+  // quien abre con teclado, en la fila) y el panel recién aparecido pasaba
+  // desapercibido para un lector de pantalla.
   useEffect(() => {
     if (!selectedId) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSelectedId(null); };
+    closeButtonRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { closePanel(); return; }
+      if (e.key !== "Tab") return;
+      const container = panelRef.current;
+      if (!container) return;
+      const focusables = Array.from(
+        container.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => el.offsetParent !== null);
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedId]);
+  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Al cambiar de usuario seleccionado se limpian los campos de gestión.
   useEffect(() => {
@@ -373,7 +414,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
       {/* Confirmación de restauración (reemplaza todo el almacén) */}
       {pendingRestore && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" />
           <span className="flex-1 text-amber-700 dark:text-amber-300">
             Restaurar <strong>{pendingRestore.fileName}</strong> reemplazará los {stats.total} usuarios actuales
             por {pendingRestore.users.length} del respaldo. Esta acción no se puede deshacer.
@@ -415,7 +456,18 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
 
       {/* Crear usuario (plegable para no estorbar la gestión diaria) */}
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
-        <CardHeader className="cursor-pointer select-none py-4" onClick={() => setShowCreate((v) => !v)}>
+        <CardHeader
+          className="cursor-pointer select-none py-4"
+          role="button"
+          tabIndex={0}
+          aria-expanded={showCreate}
+          onClick={() => setShowCreate((v) => !v)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault();
+            setShowCreate((v) => !v);
+          }}
+        >
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Crear nuevo usuario</CardTitle>
             <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform duration-200", showCreate && "rotate-180")} />
@@ -491,7 +543,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
 
       {/* Mensajes */}
       {usersErrorMessage && (
-        <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{usersErrorMessage}</div>
+        <div role="alert" className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{usersErrorMessage}</div>
       )}
       {usersStatusMessage && !usersErrorMessage && (
         <p className="text-sm text-muted-foreground">{usersStatusMessage}</p>
@@ -579,9 +631,29 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
               {filteredUsers.map((user) => (
                 <tr
                   key={user.id}
-                  onClick={() => setSelectedId(user.id)}
+                  // Antes solo tenía onClick: una fila de <tr> no es
+                  // focuseable ni activable por teclado por defecto, así que
+                  // todo el panel de gestión (recargas, reset de contraseña,
+                  // eliminar) era inalcanzable sin ratón. tabIndex + onKeyDown
+                  // la vuelven un control real por teclado. Contrapartida
+                  // aceptada: role="button" reemplaza el rol implícito de
+                  // fila, así que un lector de pantalla en modo tabla ya no
+                  // la anuncia como fila con sus encabezados de columna, sino
+                  // como un botón con el aria-label de abajo — se prioriza que
+                  // sea operable sobre conservar esa semántica de tabla.
+                  tabIndex={0}
+                  role="button"
+                  aria-haspopup="dialog"
+                  aria-label={`Gestionar a ${user.email}`}
+                  onClick={(e) => { lastTriggerRef.current = e.currentTarget; setSelectedId(user.id); }}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    lastTriggerRef.current = e.currentTarget;
+                    setSelectedId(user.id);
+                  }}
                   className={cn(
-                    "cursor-pointer border-b border-border/40 transition-colors duration-150 last:border-b-0",
+                    "cursor-pointer border-b border-border/40 transition-colors duration-150 last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset",
                     selectedId === user.id ? "bg-primary/5" : "hover:bg-accent/50",
                   )}
                 >
@@ -617,9 +689,15 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
         <>
           <div
             className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px]"
-            onClick={() => setSelectedId(null)}
+            onClick={closePanel}
           />
-          <aside className="step-enter fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-border bg-card shadow-2xl">
+          <aside
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Gestionar a ${selectedUser.email}`}
+            className="step-enter fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-border bg-card shadow-2xl"
+          >
             <div className="flex items-start justify-between gap-3 border-b border-border/70 p-4">
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold">{selectedUser.email}</p>
@@ -635,7 +713,8 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                 </div>
               </div>
               <button
-                onClick={() => setSelectedId(null)}
+                ref={closeButtonRef}
+                onClick={closePanel}
                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 aria-label="Cerrar panel"
               >
@@ -677,7 +756,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                             return (
                               <tr key={tool.id} className="border-b border-border/40 last:border-b-0">
                                 <td className="px-2.5 py-1.5">{tool.label}</td>
-                                <td className={cn("px-2.5 py-1.5 text-right font-semibold tabular-nums", left === 0 && "text-amber-600 dark:text-amber-400")}>
+                                <td className={cn("px-2.5 py-1.5 text-right font-semibold tabular-nums", left === 0 && "text-amber-700 dark:text-amber-400")}>
                                   {left}
                                 </td>
                                 <td className="px-2.5 py-1.5 text-right text-muted-foreground tabular-nums">{used} usados</td>

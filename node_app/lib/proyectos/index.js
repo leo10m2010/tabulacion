@@ -109,7 +109,16 @@ export const normalizarInstrumento = (raw) => {
       if (baremo.some((n) => !Number.isFinite(n.desde) || !Number.isFinite(n.hasta))) {
         fallar(`El baremo de "${nombre}" tiene rangos incompletos.`);
       }
-      const suma = baremo.reduce((a, n) => a + (Number.isFinite(n.porcentaje) ? n.porcentaje : 0), 0);
+      // Cada nivel es un porcentaje de personas (0-100): validar solo la SUMA
+      // deja pasar niveles absurdos que se cancelan entre si (p. ej. -50% y
+      // 150%, que suman 100 pero no representan ningun reparto real). La
+      // simulacion (ver lib/stats.js, repartirEnteros) asume proporciones
+      // no negativas, asi que un valor fuera de rango rompe silenciosamente
+      // el reparto en cuanto este instrumento se conecte a esa simulacion.
+      if (baremo.some((n) => !Number.isFinite(n.porcentaje) || n.porcentaje < 0 || n.porcentaje > 100)) {
+        fallar(`Los porcentajes del baremo de "${nombre}" deben ser números entre 0 y 100.`);
+      }
+      const suma = baremo.reduce((a, n) => a + n.porcentaje, 0);
       if (Math.round(suma) !== 100) {
         fallar(`Los porcentajes del baremo de "${nombre}" deben sumar 100% (suman ${Math.round(suma)}%).`);
       }

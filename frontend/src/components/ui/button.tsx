@@ -16,8 +16,10 @@ const variantClasses: Record<ButtonVariant, string> = {
     "border border-border bg-card text-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-60",
   ghost:
     "text-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-60",
+  // bg-danger-deep (no bg-danger): con texto blanco encima, --danger en modo
+  // oscuro solo llega a 3.94:1 (bajo AA); danger-deep está calibrado para esto.
   danger:
-    "bg-danger text-danger-foreground hover:brightness-105 disabled:opacity-60",
+    "bg-danger-deep text-danger-foreground hover:brightness-105 disabled:opacity-60",
 };
 
 const sizeClasses: Record<ButtonSize, string> = {

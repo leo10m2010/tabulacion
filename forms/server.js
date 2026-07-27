@@ -1672,33 +1672,14 @@ function inspectGoogleResponse(response) {
   const body = normalizeForMatch(bodyRaw);
   const preview = summarizeHtmlBody(bodyRaw);
 
-  if (status >= 400) {
-    return {
-      ok: false,
-      uncertain: false,
-      message: `HTTP ${status}`,
-      preview,
-    };
-  }
-
-  if (
-    body.includes('your response has been recorded') ||
-    body.includes('submit another response') ||
-    body.includes('tu respuesta se ha registrado') ||
-    body.includes('se registro tu respuesta') ||
-    body.includes('se ha registrado tu respuesta') ||
-    body.includes('respuesta registrada') ||
-    body.includes('response received') ||
-    body.includes('thanks for filling out')
-  ) {
-    return {
-      ok: true,
-      uncertain: false,
-      message: `Accepted (HTTP ${status})`,
-      preview,
-    };
-  }
-
+  // Los chequeos de texto de mas abajo (restricciones conocidas, o Google
+  // devolviendo la pagina del formulario en vez de una confirmacion) son
+  // validos sin importar el status HTTP: antes se saltaban por completo
+  // cuando Google respondia >=400, dejando solo el mensaje generico
+  // "HTTP 400" — precisamente el caso real que motivo este cambio (un
+  // formulario de 2 paginas donde Google rechazaba con 400 devolviendo la
+  // pagina del formulario con el aviso "esta es una pregunta obligatoria",
+  // que inferReturnedFormMessage ya sabe reconocer pero nunca llegaba a ver).
   if (
     body.includes('not accepting responses') ||
     body.includes('requires sign in') ||
@@ -1727,7 +1708,34 @@ function inspectGoogleResponse(response) {
     return {
       ok: false,
       uncertain: false,
-      message: returnedMessage,
+      message: `${returnedMessage}${status >= 400 ? ` (HTTP ${status})` : ''}`,
+      preview,
+    };
+  }
+
+  if (status >= 400) {
+    return {
+      ok: false,
+      uncertain: false,
+      message: `HTTP ${status}`,
+      preview,
+    };
+  }
+
+  if (
+    body.includes('your response has been recorded') ||
+    body.includes('submit another response') ||
+    body.includes('tu respuesta se ha registrado') ||
+    body.includes('se registro tu respuesta') ||
+    body.includes('se ha registrado tu respuesta') ||
+    body.includes('respuesta registrada') ||
+    body.includes('response received') ||
+    body.includes('thanks for filling out')
+  ) {
+    return {
+      ok: true,
+      uncertain: false,
+      message: `Accepted (HTTP ${status})`,
       preview,
     };
   }
@@ -2076,6 +2084,12 @@ function bootstrapTesistabStore() {
 }
 
 function startTesistabWatchdog() {
+  // unref(): este intervalo es mantenimiento en segundo plano, no una razon
+  // para mantener vivo el proceso. El servidor real sigue vivo por el socket
+  // de app.listen(); sin unref(), cualquier script que solo haga
+  // require('./server.js') sin levantar el servidor (como un test unitario
+  // de una funcion pura) se queda colgado para siempre esperando que el
+  // proceso termine, aunque los tests ya hayan pasado.
   setInterval(() => {
     const now = Date.now();
 
@@ -2121,7 +2135,7 @@ function startTesistabWatchdog() {
       scheduleTesistabJobCleanup(job.id);
       persistTesistabJobsSoon();
     });
-  }, 5000);
+  }, 5000).unref();
 }
 
 function registerShutdownHooks() {
@@ -2278,5 +2292,13 @@ if (require.main === module) {
     console.log('Tutorica Forms escuchando en el puerto', PORT);
   });
 }
+
+// Se cuelgan como propiedades de `app` (en vez de cambiar la forma de
+// module.exports) porque node_app/server.js hace
+// `const formsApp = require("../forms/server.js")` y usa formsApp COMO la
+// app de Express directamente (montada en el mismo proceso) — cambiar el
+// export a un objeto rompería esa integracion en produccion. Solo para tests.
+app.inspectGoogleResponse = inspectGoogleResponse;
+app.inferReturnedFormMessage = inferReturnedFormMessage;
 
 module.exports = app;

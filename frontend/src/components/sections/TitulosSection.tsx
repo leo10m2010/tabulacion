@@ -326,14 +326,14 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser, proyecto, onPr
           </label>
 
           {issues.length > 0 && (
-            <div className="space-y-1 rounded-xl border border-danger/30 bg-danger/8 px-4 py-3 text-sm text-danger">
+            <div role="alert" className="space-y-1 rounded-xl border border-danger/30 bg-danger/8 px-4 py-3 text-sm text-danger">
               {issues.map((msg) => (
                 <p key={msg} className="flex items-start gap-2"><span className="mt-0.5 shrink-0">•</span>{msg}</p>
               ))}
             </div>
           )}
           {error && (
-            <div className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{error}</div>
+            <div role="alert" className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{error}</div>
           )}
 
           {/* Botón o panel de progreso, según el estado del job */}

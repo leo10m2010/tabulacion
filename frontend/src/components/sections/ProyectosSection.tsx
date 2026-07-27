@@ -149,7 +149,7 @@ export function ProyectosSection({ apiBaseUrl, authToken, authUser, proyectoActi
       </div>
 
       {error && (
-        <div className="rounded-xl border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</div>
+        <div role="alert" className="rounded-xl border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</div>
       )}
 
       {creandoAbierto && !alLimite && (
@@ -290,10 +290,28 @@ export function ProyectosSection({ apiBaseUrl, authToken, authUser, proyectoActi
                     {confirmando === p.id ? (
                       <>
                         <span className="text-xs text-muted-foreground">Se borra con su instrumento</span>
-                        <Button size="sm" className="bg-danger text-white hover:bg-danger/90" onClick={() => eliminar(p)}>
+                        <Button
+                          size="sm"
+                          className="bg-danger-deep text-white hover:bg-danger-deep/90"
+                          onClick={() => eliminar(p)}
+                          onKeyDown={(e) => e.key === "Escape" && setConfirmando(null)}
+                        >
                           Eliminar
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setConfirmando(null)}>Cancelar</Button>
+                        {/* autoFocus en "Cancelar", no en "Eliminar": el botón que
+                            abrió esta confirmación (el icono de papelera) se
+                            desmonta al confirmar, así que el foco se perdía
+                            (caía al body). Se enfoca la opción segura y no la
+                            destructiva, para que un Enter de más no borre nada. */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          autoFocus
+                          onClick={() => setConfirmando(null)}
+                          onKeyDown={(e) => e.key === "Escape" && setConfirmando(null)}
+                        >
+                          Cancelar
+                        </Button>
                       </>
                     ) : (
                       <Button

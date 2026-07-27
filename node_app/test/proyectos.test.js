@@ -10,6 +10,7 @@
 import { test, before, after, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import http from "node:http";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -195,6 +196,20 @@ describe("validación del instrumento", () => {
     assert.match(r.body.error, /100%/);
   });
 
+  test("un baremo con porcentajes fuera de 0-100 se rechaza aunque la suma de 100", async () => {
+    // -50% y 150% suman 100 exacto, pero ningun nivel puede tener un
+    // porcentaje negativo ni mayor a 100 (no existe "menos que cero personas").
+    // Antes solo se validaba la suma, asi que este caso absurdo pasaba.
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "baremoabsurdo@test.local");
+    const malo = JSON.parse(JSON.stringify(INSTRUMENTO));
+    malo.variables[0].baremo[0].porcentaje = -50;
+    malo.variables[0].baremo[1].porcentaje = 150;
+    const r = await api("POST", "/proyectos", token, { nombre: "Baremo absurdo", instrumento: malo });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /entre 0 y 100/);
+  });
+
   test("se rechaza pasarse del máximo de ítems", async () => {
     const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
     const token = await crearUsuario(admin, "muchos@test.local");
@@ -359,5 +374,90 @@ describe("eliminar la cuenta se lleva los proyectos", () => {
       guardados.some((p) => p.nombre === "Se va conmigo"), false,
       "eliminar la cuenta debe borrar también sus proyectos",
     );
+  });
+});
+
+describe("condiciones de carrera al crear proyectos", () => {
+  // La ruta POST /proyectos tenia un patron leer-y-luego-escribir: contaba
+  // cuantos proyectos tiene el usuario y, si no llegaba al limite, recien
+  // despues parseaba el cuerpo y guardaba, sin ningun candado ni chequeo
+  // atomico entre medias. Dos POST que se solapaban podian leer el MISMO
+  // conteo antes de que cualquiera escribiera, y el usuario terminaba con mas
+  // proyectos que los que su plan permite. Corregido con
+  // `crearProyectoSiCabe` (lib/proyectos/store.js): cuenta y guarda en el
+  // mismo tramo atomico (sin await de por medio en el backend de archivo;
+  // con `pg_advisory_xact_lock` por usuario en Postgres).
+  //
+  // Se fuerza la superposicion con el mismo truco que ya usa
+  // usuarios-concurrencia.test.js: la peticion A se manda con el cuerpo JSON
+  // a medias (para entonces A YA paso su propio conteo, porque el conteo
+  // ocurre antes de leer el cuerpo, y quedo esperando el resto del JSON).
+  // En esa ventana entra la peticion B, completa, que hace SU conteo antes
+  // de que A alcance a guardar.
+  test("dos creaciones solapadas no deberian superar el límite del plan", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "carrera@test.local", "free"); // límite: 1
+
+    const cuerpoA = JSON.stringify({ nombre: "Carrera A" });
+    const mitad = Math.floor(cuerpoA.length / 2);
+    const peticionA = http.request({
+      host: "127.0.0.1",
+      port: PORT,
+      path: "/proyectos",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "Content-Length": Buffer.byteLength(cuerpoA),
+      },
+    });
+    const respuestaA = new Promise((resolve, reject) => {
+      peticionA.on("response", (res) => {
+        let data = "";
+        res.on("data", (c) => { data += c; });
+        res.on("end", () => resolve({ status: res.statusCode, body: JSON.parse(data || "{}") }));
+      });
+      peticionA.on("error", reject);
+    });
+    peticionA.write(cuerpoA.slice(0, mitad));
+
+    // A ya paso su propio conteo (todavía con 0 proyectos) y esta esperando
+    // el resto del cuerpo: la ventana esta abierta.
+    await new Promise((r) => setTimeout(r, 150));
+
+    const b = await api("POST", "/proyectos", token, { nombre: "Carrera B" });
+
+    peticionA.end(cuerpoA.slice(mitad));
+    const a = await respuestaA;
+
+    const total = (await api("GET", "/proyectos", token)).body.proyectos.length;
+
+    // Comportamiento correcto: el plan gratuito (límite 1) NUNCA debería
+    // terminar con más de 1 proyecto, sin importar cómo se solapen las
+    // peticiones. Hoy termina con 2 (a.status y b.status son ambos 201).
+    assert.ok(
+      total <= 1,
+      `el plan gratuito (límite 1) terminó con ${total} proyectos tras dos creaciones `
+        + `solapadas (A:${a.status}, B:${b.status})`,
+    );
+  });
+
+  // Complementa la prueba de arriba (dos peticiones, solapamiento forzado con
+  // el truco del cuerpo partido) con una ráfaga real de peticiones
+  // concurrentes via Promise.all — el caso que de verdad ocurriría si varias
+  // pestañas o reintentos del mismo usuario coinciden.
+  test("ráfagas concurrentes no pueden sobrepasar el límite del plan", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "rafaga@test.local", "free");
+
+    const N = 8;
+    const resultados = await Promise.all(
+      Array.from({ length: N }, (_, i) => api("POST", "/proyectos", token, { nombre: `Ráfaga ${i}` })),
+    );
+    const creados = resultados.filter((r) => r.status === 201).length;
+    assert.equal(creados, 1, "el plan free (límite 1) no debe dejar crear más de uno");
+
+    const lista = await api("GET", "/proyectos", token);
+    assert.equal(lista.body.proyectos.length, 1, "lo realmente guardado tampoco debe superar el límite");
   });
 });

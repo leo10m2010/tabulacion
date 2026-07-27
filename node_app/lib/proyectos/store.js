@@ -68,6 +68,21 @@ const backendArchivo = (rutaBase) => {
       escribir(lista);
       return proyecto;
     },
+    // Crea SOLO si el usuario no llego al limite de su plan, contando y
+    // escribiendo en el mismo tramo sincrono (sin ningun `await` en medio):
+    // en Node eso basta para que dos peticiones concurrentes no puedan colarse
+    // las dos. Antes el conteo y el guardado eran dos llamadas separadas con
+    // un `await parseJsonBody` de por medio en server.js, y dos peticiones
+    // simultaneas del mismo usuario podian pasar las dos el conteo antes de
+    // que ninguna guardara (ver test/proyectos-store-race.test.js).
+    async crearSiCabe(proyecto, limite) {
+      const lista = leer();
+      const actuales = lista.filter((p) => p.userId === proyecto.userId).length;
+      if (actuales >= limite) return { ok: false, actuales };
+      lista.push(proyecto);
+      escribir(lista);
+      return { ok: true, actuales: actuales + 1 };
+    },
     async borrar(id) {
       const lista = leer();
       const restantes = lista.filter((p) => p.id !== id);
@@ -163,6 +178,45 @@ const backendPostgres = async () => {
       );
       return proyecto;
     },
+    // Version transaccional de "contar y guardar": sin esto, dos peticiones
+    // concurrentes del mismo usuario pueden ejecutar su SELECT count(*) antes
+    // de que ninguna haga el INSERT, y las dos lo ven por debajo del limite
+    // (ver test/proyectos-store-race.test.js para la reproduccion contra el
+    // backend de archivo, donde el mismo patron se ataca de otra forma).
+    // pg_advisory_xact_lock serializa por usuario: dos transacciones para el
+    // MISMO userId se ponen en fila; para userId distintos no se bloquean
+    // entre si (hashtext(user_id) practicamente nunca colisiona, y aunque
+    // colisionara el peor caso es esperar un poco, no perder el limite). El
+    // lock se libera solo al hacer COMMIT o ROLLBACK.
+    async crearSiCabe(proyecto, limite) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [proyecto.userId]);
+        const cnt = await client.query(
+          `SELECT count(*)::int n FROM ${TABLA} WHERE user_id = $1`, [proyecto.userId],
+        );
+        const actuales = cnt.rows[0].n;
+        if (actuales >= limite) {
+          await client.query("ROLLBACK");
+          return { ok: false, actuales };
+        }
+        await client.query(
+          `INSERT INTO ${TABLA} (id, user_id, nombre, titulo, instrumento, progreso, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
+          [proyecto.id, proyecto.userId, proyecto.nombre, proyecto.titulo ?? "",
+            JSON.stringify(proyecto.instrumento), JSON.stringify(proyecto.progreso ?? {}),
+            proyecto.createdAt, proyecto.updatedAt],
+        );
+        await client.query("COMMIT");
+        return { ok: true, actuales: actuales + 1 };
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
     async borrar(id) {
       const r = await pool.query(`DELETE FROM ${TABLA} WHERE id = $1`, [id]);
       return r.rowCount > 0;
@@ -185,6 +239,10 @@ export const listarProyectos = (userId) => backend.listarDeUsuario(userId);
 export const obtenerProyecto = (id) => backend.obtener(id);
 export const contarProyectos = (userId) => backend.contarDeUsuario(userId);
 export const guardarProyecto = (p) => backend.guardar(p);
+// Crea un proyecto solo si el usuario no llego al limite de su plan; el
+// conteo y el guardado son atomicos entre si (ver comentarios de cada
+// backend). Devuelve { ok: false } sin escribir nada si ya esta en el limite.
+export const crearProyectoSiCabe = (proyecto, limite) => backend.crearSiCabe(proyecto, limite);
 export const borrarProyecto = (id) => backend.borrar(id);
 export const borrarProyectosDeUsuario = (userId) => backend.borrarDeUsuario(userId);
 export const cerrarProyectos = () => backend?.cerrar();

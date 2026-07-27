@@ -21,7 +21,7 @@ export function StepTip({ icon, label, detail, color = "primary" }: { icon: Reac
   const styles = {
     primary: "border-primary/25 bg-primary/8 text-primary",
     green: "border-emerald-500/25 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
-    amber: "border-amber-500/25 bg-amber-500/8 text-amber-600 dark:text-amber-400",
+    amber: "border-amber-500/25 bg-amber-500/8 text-amber-700 dark:text-amber-400",
   } as const;
   return (
     <div className={cn("mt-2 flex items-start gap-2.5 rounded-xl border px-3.5 py-2.5", styles[color])}>
@@ -143,11 +143,20 @@ export function ListEditorField({
           const n = parseInt(value.trim(), 10);
           const fieldNotNumeric = isPercentage && !isAutoCalc && value.trim() !== "" && !Number.isFinite(n);
           const fieldInvalid = isPercentage && !isAutoCalc && Number.isFinite(n) && n > 100;
+          // Antes el error se pintaba en rojo debajo del input sin ningún
+          // vínculo: un lector de pantalla que entra al campo no lo escucha
+          // (solo lo anuncia si navega línea por línea después). El id +
+          // aria-describedby lo asocia al input; aria-invalid lo declara.
+          const rowKey = rowKeys[index] ?? `${label}-${index}`;
+          const errorId = fieldNotNumeric ? `${rowKey}-err-num` : fieldInvalid ? `${rowKey}-err-max` : undefined;
+          const rowAccessibleName = rowLabels[index]
+            ? `${label} — ${rowLabels[index]}`
+            : `${label}, fila ${index + 1} de ${rows.length}`;
           return (
-            <div key={rowKeys[index] ?? `${label}-${index}`}>
+            <div key={rowKey}>
               <div className="flex items-center gap-2">
                 {rowLabels[index] && (
-                  <span className="w-16 shrink-0 rounded bg-muted px-2 py-1.5 text-center text-xs font-semibold text-muted-foreground">
+                  <span aria-hidden className="w-16 shrink-0 rounded bg-muted px-2 py-1.5 text-center text-xs font-semibold text-muted-foreground">
                     {rowLabels[index]}
                   </span>
                 )}
@@ -156,19 +165,22 @@ export function ListEditorField({
                   placeholder={effectiveReadOnly ? "Auto" : placeholder}
                   readOnly={effectiveReadOnly}
                   onChange={(e) => updateAt(index, e.target.value)}
+                  aria-label={rowAccessibleName}
+                  aria-invalid={fieldInvalid || fieldNotNumeric || undefined}
+                  aria-describedby={errorId}
                   className={cn(
                     effectiveReadOnly && "cursor-not-allowed bg-muted/50 text-muted-foreground",
                     (fieldInvalid || fieldNotNumeric) && "border-danger focus-visible:ring-danger",
                   )}
                 />
                 {rowLabels.length === 0 && !readOnly && (
-                  <Button variant="outline" size="sm" onClick={() => removeAt(index)}>
+                  <Button variant="outline" size="sm" onClick={() => removeAt(index)} aria-label={`Quitar ${rowAccessibleName}`}>
                     Quitar
                   </Button>
                 )}
               </div>
-              {fieldNotNumeric && <p className="mt-1 text-xs text-danger">Debe ser un número</p>}
-              {fieldInvalid && <p className="mt-1 text-xs text-danger">Máximo 100%</p>}
+              {fieldNotNumeric && <p id={errorId} role="alert" className="mt-1 text-xs text-danger">Debe ser un número</p>}
+              {fieldInvalid && <p id={errorId} role="alert" className="mt-1 text-xs text-danger">Máximo 100%</p>}
               {isAutoCalc && <p className="mt-1 text-xs text-muted-foreground">Se calcula solo para que todo sume 100%</p>}
             </div>
           );
@@ -177,14 +189,14 @@ export function ListEditorField({
       {isPercentage && (
         <div className="mt-2 space-y-1">
           <div className="flex items-center justify-between text-xs font-medium">
-            <span className={cn(overLimit ? "text-danger" : filledSum === 100 ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400")}>
+            <span className={cn(overLimit ? "text-danger" : filledSum === 100 ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400")}>
               Total: {filledSum}%
             </span>
             {overLimit && <span className="text-danger">Los valores superan 100%</span>}
             {!overLimit && filledSum < 100 && filledSum > 0 && (
-              <span className="text-amber-600 dark:text-amber-400">Faltan {100 - filledSum}% — el último se ajusta solo</span>
+              <span className="text-amber-700 dark:text-amber-400">Faltan {100 - filledSum}% — el último se ajusta solo</span>
             )}
-            {filledSum === 100 && <span className="text-green-600 dark:text-green-400">✓ Completo</span>}
+            {filledSum === 100 && <span className="text-green-700 dark:text-green-400">✓ Completo</span>}
           </div>
         </div>
       )}
@@ -267,12 +279,30 @@ export function HierarchyEditor({
         return (
           <div key={dim.id} className="rounded-lg border border-border/80 bg-background/70">
             <div className="flex items-center gap-2 px-3 py-2">
-              <button type="button" onClick={() => toggleDim(dim.id)} className="shrink-0 text-muted-foreground hover:text-foreground">
+              <button
+                type="button"
+                onClick={() => toggleDim(dim.id)}
+                aria-expanded={!dimCollapsed}
+                aria-label={dimCollapsed ? `Expandir dimensión ${dimIdx + 1}` : `Colapsar dimensión ${dimIdx + 1}`}
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+              >
                 <ChevronDown className={cn("h-4 w-4 transition-transform", dimCollapsed && "-rotate-90")} />
               </button>
-              <span className="w-6 shrink-0 text-center text-xs font-semibold text-muted-foreground">D{dimIdx + 1}</span>
-              <Input value={dim.nombre} placeholder={`Ej: Gestión administrativa, Satisfacción del usuario…`} onChange={(e) => updateDimensionName(dim.id, e.target.value)} className="h-8 flex-1 text-sm" />
-              <Button variant="ghost" size="sm" onClick={() => removeDimension(dim.id)} className="h-8 w-8 p-0 text-muted-foreground hover:text-danger">
+              <span aria-hidden className="w-6 shrink-0 text-center text-xs font-semibold text-muted-foreground">D{dimIdx + 1}</span>
+              <Input
+                value={dim.nombre}
+                placeholder={`Ej: Gestión administrativa, Satisfacción del usuario…`}
+                onChange={(e) => updateDimensionName(dim.id, e.target.value)}
+                aria-label={`Nombre de la dimensión ${dimIdx + 1}`}
+                className="h-8 flex-1 text-sm"
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => removeDimension(dim.id)}
+                aria-label={`Eliminar dimensión ${dimIdx + 1}${dim.nombre ? `: ${dim.nombre}` : ""}`}
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-danger"
+              >
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
@@ -291,12 +321,30 @@ export function HierarchyEditor({
                   return (
                     <div key={ind.id} className="rounded-md border border-border/60 bg-muted/20">
                       <div className="flex items-center gap-2 px-3 py-2">
-                        <button type="button" onClick={() => toggleInd(ind.id)} className="shrink-0 text-muted-foreground hover:text-foreground">
+                        <button
+                          type="button"
+                          onClick={() => toggleInd(ind.id)}
+                          aria-expanded={!indCollapsed}
+                          aria-label={indCollapsed ? `Expandir indicador ${indIdx + 1}` : `Colapsar indicador ${indIdx + 1}`}
+                          className="shrink-0 text-muted-foreground hover:text-foreground"
+                        >
                           <ChevronDown className={cn("h-4 w-4 transition-transform", indCollapsed && "-rotate-90")} />
                         </button>
-                        <span className="w-6 shrink-0 text-center text-xs font-semibold text-muted-foreground">I{indIdx + 1}</span>
-                        <Input value={ind.nombre} placeholder={`Ej: Planificación, Transparencia, Cumplimiento…`} onChange={(e) => updateIndicadorName(dim.id, ind.id, e.target.value)} className="h-8 flex-1 text-sm" />
-                        <Button variant="ghost" size="sm" onClick={() => removeIndicador(dim.id, ind.id)} className="h-8 w-8 p-0 text-muted-foreground hover:text-danger">
+                        <span aria-hidden className="w-6 shrink-0 text-center text-xs font-semibold text-muted-foreground">I{indIdx + 1}</span>
+                        <Input
+                          value={ind.nombre}
+                          placeholder={`Ej: Planificación, Transparencia, Cumplimiento…`}
+                          onChange={(e) => updateIndicadorName(dim.id, ind.id, e.target.value)}
+                          aria-label={`Nombre del indicador ${indIdx + 1} de la dimensión ${dimIdx + 1}`}
+                          className="h-8 flex-1 text-sm"
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeIndicador(dim.id, ind.id)}
+                          aria-label={`Eliminar indicador ${indIdx + 1}${ind.nombre ? `: ${ind.nombre}` : ""}`}
+                          className="h-8 w-8 p-0 text-muted-foreground hover:text-danger"
+                        >
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
@@ -312,9 +360,21 @@ export function HierarchyEditor({
                             const globalNum = itemsBeforeDim + itemsBeforeInd + itemIdx + 1;
                             return (
                               <div key={item.id} className="flex items-center gap-2">
-                                <span className="w-7 shrink-0 text-center text-xs font-semibold text-muted-foreground">P{globalNum}</span>
-                                <Input value={item.nombre} placeholder={`Pregunta ${globalNum}`} onChange={(e) => updateItemName(dim.id, ind.id, item.id, e.target.value)} className="h-8 flex-1 text-sm" />
-                                <Button variant="ghost" size="sm" onClick={() => removeItem(dim.id, ind.id, item.id)} className="h-8 w-8 p-0 text-muted-foreground hover:text-danger">
+                                <span aria-hidden className="w-7 shrink-0 text-center text-xs font-semibold text-muted-foreground">P{globalNum}</span>
+                                <Input
+                                  value={item.nombre}
+                                  placeholder={`Pregunta ${globalNum}`}
+                                  onChange={(e) => updateItemName(dim.id, ind.id, item.id, e.target.value)}
+                                  aria-label={`Pregunta ${globalNum}`}
+                                  className="h-8 flex-1 text-sm"
+                                />
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => removeItem(dim.id, ind.id, item.id)}
+                                  aria-label={`Eliminar pregunta ${globalNum}${item.nombre ? `: ${item.nombre}` : ""}`}
+                                  className="h-8 w-8 p-0 text-muted-foreground hover:text-danger"
+                                >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
                               </div>

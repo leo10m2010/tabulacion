@@ -321,7 +321,7 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser, onPasoHech
 
           {/* Aviso honesto: siempre visible, no solo en el resultado */}
           <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" />
             <p className="text-xs leading-relaxed text-muted-foreground">
               <span className="font-semibold text-foreground">Sé transparente con tu asesor.</span>{" "}
               Esta herramienta mejora el ritmo y el léxico para que el texto suene más natural y ayuda
@@ -332,14 +332,14 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser, onPasoHech
           </div>
 
           {issues.length > 0 && (
-            <div className="space-y-1 rounded-xl border border-danger/30 bg-danger/8 px-4 py-3 text-sm text-danger">
+            <div role="alert" className="space-y-1 rounded-xl border border-danger/30 bg-danger/8 px-4 py-3 text-sm text-danger">
               {issues.map((msg) => (
                 <p key={msg} className="flex items-start gap-2"><span className="mt-0.5 shrink-0">•</span>{msg}</p>
               ))}
             </div>
           )}
           {error && (
-            <div className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{error}</div>
+            <div role="alert" className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{error}</div>
           )}
 
           {/* Botón o panel de progreso, según el estado del job */}

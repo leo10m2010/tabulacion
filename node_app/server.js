@@ -41,6 +41,7 @@ import {
   borrarProyecto,
   borrarProyectosDeUsuario,
   contarProyectos,
+  crearProyectoSiCabe,
   guardarProyecto,
   initProyectos,
   listarProyectos,
@@ -1717,9 +1718,14 @@ const server = http.createServer(async (req, res) => {
       }
 
       const limite = limiteDelPlan(user.plan);
+      const limiteMsg = `Tu plan permite ${limite} proyecto(s) a la vez. `
+        + "Elimina uno o amplía tu plan para crear otro.";
+      // Comprobacion rapida: evita construir y validar el instrumento cuando
+      // ya es obvio que no cabe. NO es la que garantiza el limite (ver abajo):
+      // entre este await y el de mas adelante el event loop puede atender otra
+      // peticion del mismo usuario, y las dos la pasarian igual.
       if (await contarProyectos(user.id) >= limite) {
-        throw new HttpError(403, `Tu plan permite ${limite} proyecto(s) a la vez. `
-          + "Elimina uno o amplía tu plan para crear otro.");
+        throw new HttpError(403, limiteMsg);
       }
       const payload = await parseJsonBody(req);
       let proyecto;
@@ -1734,7 +1740,14 @@ const server = http.createServer(async (req, res) => {
         // servidor. Sin distinguirlos, un nombre vacio devolveria un 500.
         throw new HttpError(esErrorDeUsuario(err) ? 400 : 500, err.message);
       }
-      await guardarProyecto(proyecto);
+      // Esta es la comprobacion que de verdad cuenta: contar y guardar pasan
+      // en el mismo tramo atomico (ver lib/proyectos/store.js), asi que dos
+      // peticiones concurrentes del mismo usuario no pueden colarse las dos
+      // aunque ambas hayan pasado la comprobacion rapida de arriba.
+      const creado = await crearProyectoSiCabe(proyecto, limite);
+      if (!creado.ok) {
+        throw new HttpError(403, limiteMsg);
+      }
       logActivity(user, `Creó el proyecto "${proyecto.nombre}"`);
       await writeUsers();
       sendJson(res, 201, { ok: true, proyecto });
@@ -1892,7 +1905,13 @@ const server = http.createServer(async (req, res) => {
           console.error(`[descriptiva] job ${id} fallo:`, err);
           settleJobUse(id, authUser.id, "descriptiva", { refund: true });
           job.status = "error";
-          job.error = "Hubo un problema generando tu base de datos, intenta de nuevo. No se descontó tu uso.";
+          // Las validaciones detectadas dentro del job (p. ej. el presupuesto
+          // de memoria de lib/presupuesto.js, que solo se conoce tras la
+          // respuesta de la IA) SI se muestran al usuario; el detalle de
+          // errores tecnicos queda solo en el log (mismo patron que humanizador).
+          job.error = err?.isUserError
+            ? err.message
+            : "Hubo un problema generando tu base de datos, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + DESCRIPTIVA_DONE_TTL_MS;
         });
 

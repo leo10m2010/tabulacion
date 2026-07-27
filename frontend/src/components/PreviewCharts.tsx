@@ -2,11 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import type { ChartPreview } from "../lib/types";
 
 // echarts se carga bajo demanda (igual que xlsx): solo hace falta cuando hay
-// un resultado con gráficos y pesa demasiado para el bundle inicial.
-type EChartsModule = typeof import("echarts");
+// un resultado con gráficos y pesa demasiado para el bundle inicial. El
+// recorte a solo barras/título/tooltip/grid/canvas vive en lib/echarts-lazy.ts
+// (con imports estáticos, para que Rollup sí pueda eliminar mapas, radar,
+// sankey, dataZoom y el resto de lo que trae el paquete "echarts" completo):
+// el chunk bajo demanda bajó de 1.1 MB (382 kB gzip) a lo que BarChart usa
+// de verdad.
+type EChartsModule = typeof import("echarts/core");
 let echartsPromise: Promise<EChartsModule> | null = null;
 const loadECharts = () => {
-  echartsPromise ??= import("echarts");
+  echartsPromise ??= import("../lib/echarts-lazy").then((m) => m.default);
   return echartsPromise;
 };
 

@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS = {
   requireConfirmation: true,
   randomizeBeforeSubmit: false,
   compatApiMode: false,
+  hasSeenPanelTutorial: false,
 };
 // LIMITE: ajusta este valor para limitar maximo desde la extension.
 const MAX_UI_SUBMISSIONS = 250;
@@ -295,7 +296,12 @@ async function startTesistabRun(form, event) {
     if (prefill.missingRequired.length) {
       const firstMissing = prefill.missingRequired[0];
       const suffix = prefill.missingRequired.length > 1 ? ` (+${prefill.missingRequired.length - 1})` : '';
-      const message = `Faltan respuestas obligatorias no compatibles con TesisHub: ${firstMissing}${suffix}`;
+      // No siempre podemos confirmar que la pregunta es obligatoria (ver
+      // fillUnansweredFormInputs), asi que el mensaje no lo afirma: solo dice
+      // que no se pudo rellenar sola y que hay que completarla a mano antes
+      // de reintentar, en vez de mandarla vacia y descubrir el rechazo de
+      // Google recien despues de gastar los intentos.
+      const message = `TesisHub no pudo completar sola esta pregunta, respondela y reintenta: ${firstMissing}${suffix}`;
       showStatus(message, true);
       recordDiagnostics({
         lastError: message,
@@ -541,7 +547,17 @@ async function monitorJob(jobId, backendBaseUrl, expectedDurationMs = 0) {
         const withErrors = job.failed > 0;
         const latestMessage = String(job.latestResult?.message || '').trim();
         const firstError = String(job.errors?.[0]?.message || '').trim();
-        const detail = latestMessage || firstError;
+        // latestMessage para un fallo HTTP es solo "HTTP 400": el servidor SI
+        // captura el cuerpo real que Google devuelve (inspectGoogleResponse ->
+        // preview, primeros 240 caracteres sin etiquetas HTML) pero antes se
+        // descartaba aqui, dejando al usuario sin forma de saber POR QUE
+        // Google rechazo la peticion (formulario cerrado, requiere inicio de
+        // sesion, un campo obligatorio que ya no coincide, etc.).
+        const preview = String(job.latestResult?.preview || '').trim();
+        const baseDetail = latestMessage || firstError;
+        const detail = preview && preview !== baseDetail
+          ? `${baseDetail}${baseDetail ? ' — ' : ''}${preview}`
+          : baseDetail;
         if (job.sent === 0 && job.failed > 0) {
           clearActiveJobState(job.id);
           showStatus(
@@ -704,7 +720,46 @@ function injectActionsPanel() {
   backendStatus.title = 'Verificando backend';
   backendStatus.setAttribute('aria-label', 'Verificando backend');
 
-  header.append(title, backendStatus);
+  const tutorialToggle = document.createElement('button');
+  tutorialToggle.type = 'button';
+  tutorialToggle.id = 'tesistab-qa-tutorial-toggle';
+  tutorialToggle.textContent = '?';
+  tutorialToggle.title = 'Como funciona';
+  tutorialToggle.setAttribute('aria-label', 'Como funciona TesisHub Forms');
+  tutorialToggle.onclick = () => {
+    const banner = document.getElementById('tesistab-qa-tutorial');
+    if (banner) {
+      banner.hidden = !banner.hidden;
+    }
+  };
+
+  header.append(title, tutorialToggle, backendStatus);
+
+  // Se muestra sola la primera vez (persistido en chrome.storage, igual que
+  // el resto de settings) y despues queda disponible con el "?" de arriba:
+  // el panel no tiene ninguna explicacion de que hace "Iniciar" ni de que
+  // pasa si no puede completar una pregunta sola, y el flujo automatico no
+  // es obvio la primera vez que se ve (reportado en vivo probando el
+  // llenado de un formulario real).
+  const tutorialBanner = document.createElement('div');
+  tutorialBanner.id = 'tesistab-qa-tutorial';
+  tutorialBanner.hidden = Boolean(settings.hasSeenPanelTutorial);
+
+  const tutorialText = document.createElement('p');
+  tutorialText.textContent = 'TesisHub completa sola las preguntas que puede y manda '
+    + '"Cantidad" respuestas con el tono de "Perfil". Si una pregunta no se puede '
+    + 'completar sola, te lo avisa para que la respondas vos antes de reintentar '
+    + 'con "Iniciar".';
+
+  const tutorialDismiss = document.createElement('button');
+  tutorialDismiss.type = 'button';
+  tutorialDismiss.textContent = 'Entendido';
+  tutorialDismiss.onclick = async () => {
+    tutorialBanner.hidden = true;
+    await markPanelTutorialSeen();
+  };
+
+  tutorialBanner.append(tutorialText, tutorialDismiss);
 
   const viewRow = document.createElement('label');
   viewRow.className = 'tesistab-qa-count-row';
@@ -931,6 +986,7 @@ function injectActionsPanel() {
 
   panel.append(
     header,
+    tutorialBanner,
     viewRow,
     countRow,
     profileRow,
@@ -1005,6 +1061,18 @@ async function saveInlineSubmissionCount(input) {
     [SETTINGS_KEY]: {
       ...saved,
       submissionCount: value,
+    },
+  });
+}
+
+async function markPanelTutorialSeen() {
+  settings = { ...settings, hasSeenPanelTutorial: true };
+  const result = await chrome.storage.local.get([SETTINGS_KEY]);
+  const saved = { ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) };
+  await chrome.storage.local.set({
+    [SETTINGS_KEY]: {
+      ...saved,
+      hasSeenPanelTutorial: true,
     },
   });
 }
@@ -2177,9 +2245,11 @@ function randomizeFormInputs(form) {
   });
 
   radioGroups.forEach((group) => {
-    const pick = group[Math.floor(Math.random() * group.length)];
-    pick.checked = true;
-    pick.dispatchEvent(new Event('change', { bubbles: true }));
+    // shuffled().some(tryCheckOption): igual que en fillEntryGroup, prueba
+    // opciones hasta que una se CONFIRME marcada (via .click() real primero,
+    // checked+eventos sinteticos como respaldo) en vez de asumir que la
+    // primera elegida funciono sin verificarlo.
+    shuffled(group).some((candidate) => tryCheckOption(candidate));
   });
 
   form.querySelectorAll('select').forEach((select) => {
@@ -2207,16 +2277,32 @@ function fillUnansweredFormInputs(form) {
       continue;
     }
 
-    const required = isQuestionRequired(group.container);
     const completed = fillEntryGroup(group);
     if (completed) {
       filled += 1;
       continue;
     }
 
-    if (required) {
-      missingRequired.push(extractQuestionText(group.container) || group.name || 'Pregunta sin titulo');
-    }
+    // Antes esto solo se reportaba si isQuestionRequired(group.container)
+    // confirmaba que la pregunta era obligatoria (por texto "obligatoria" o
+    // un atributo aria-required). Esa deteccion depende de como Google Forms
+    // marque el requisito en el DOM en cada momento, y si el marcador no
+    // coincide (o el contenedor no se encuentra, p.ej. Google cambio sus
+    // clases CSS internas), el resultado era asumir "no es obligatoria" y
+    // dejar pasar la pregunta vacia hasta que Google la rechazaba en el envio
+    // real — gastando los intentos sin ningun aviso util (asi se reprodujo el
+    // caso real: una escala lineal de 1 a 5 que nunca se pudo rellenar sola,
+    // enviada igual, con 5 fallos HTTP 400 sin explicacion).
+    //
+    // Ahora cualquier pregunta que NO pudimos rellenar solos se reporta,
+    // independientemente de si logramos confirmar que es obligatoria: el
+    // costo de avisar de mas sobre una pregunta opcional (el usuario la
+    // completa manualmente, o ignora el aviso y esta ya tenia otra respuesta)
+    // es minimo comparado con enviar una base incompleta y quemar intentos
+    // reales contra Google sin poder explicar por que fallaron.
+    const label = extractQuestionText(group.container) || group.name || 'Pregunta sin titulo';
+    const confirmedRequired = isQuestionRequired(group.container);
+    missingRequired.push(confirmedRequired ? label : `${label} (no se pudo confirmar si es obligatoria)`);
   }
 
   return {
@@ -2281,6 +2367,42 @@ function elementHasAnswer(element) {
   return false;
 }
 
+// Intenta CONFIRMAR una opcion de radio/checkbox, no solo "intentarlo una
+// vez y asumir que funciono" (asi estaba antes: devolvia true sin verificar,
+// asi que una pregunta que en realidad seguia sin responder se contaba como
+// "rellenada" y se enviaba vacia igual). Primero .click() real — dispara
+// mousedown/mouseup/click/change tal como un click humano, lo que Google
+// Forms necesita cuando el control visible es un decorativo por encima del
+// input nativo — y si eso no lo marca, cae al metodo anterior
+// (checked + eventos sinteticos) como respaldo. Si ninguno de los dos
+// confirma la respuesta, se prueba con OTRA opcion del grupo en vez de
+// rendirse con la primera que fallo (reproducido con una escala lineal 1-5
+// real: la primera opcion no siempre "prendia", la segunda si).
+function tryCheckOption(candidate) {
+  if (!(candidate instanceof HTMLInputElement)) {
+    return false;
+  }
+
+  candidate.click();
+  if (elementHasAnswer(candidate)) {
+    return true;
+  }
+
+  candidate.checked = true;
+  candidate.dispatchEvent(new Event('input', { bubbles: true }));
+  candidate.dispatchEvent(new Event('change', { bubbles: true }));
+  return elementHasAnswer(candidate);
+}
+
+function shuffled(list) {
+  const copy = list.slice();
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
 function fillEntryGroup(group) {
   const visibleElements = group.elements.filter((element) => isElementInteractable(element));
   if (!visibleElements.length) {
@@ -2290,15 +2412,7 @@ function fillEntryGroup(group) {
   const first = visibleElements[0];
   if (first instanceof HTMLInputElement) {
     if (first.type === 'radio' || first.type === 'checkbox') {
-      const pick = visibleElements[Math.floor(Math.random() * visibleElements.length)];
-      if (!(pick instanceof HTMLInputElement)) {
-        return false;
-      }
-
-      pick.checked = true;
-      pick.dispatchEvent(new Event('input', { bubbles: true }));
-      pick.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
+      return shuffled(visibleElements).some((candidate) => tryCheckOption(candidate));
     }
 
     return fillTextLikeInput(first);
@@ -2362,7 +2476,16 @@ function isElementInteractable(element) {
     return false;
   }
 
-  return element.getClientRects().length > 0;
+  // Ya NO se exige getClientRects().length > 0: Google Forms suele dejar el
+  // <input type="radio"/checkbox> nativo con tamaño 0 o superpuesto por un
+  // decorativo estilizado encima (patron comun de accesibilidad: el control
+  // real sigue siendo el input nativo, clickeable via JS, aunque no ocupe
+  // espacio visual propio). Ese input pasaba display/visibility pero fallaba
+  // este chequeo de tamaño, así que se descartaba como "no interactuable" y
+  // fillEntryGroup nunca llegaba a intentar rellenarlo (reproducido con una
+  // pregunta de escala lineal 1-5 real). display/visibility ya cubren el caso
+  // que de verdad importa (elemento oculto de proposito, no solo sin tamaño).
+  return true;
 }
 
 function isQuestionRequired(container) {

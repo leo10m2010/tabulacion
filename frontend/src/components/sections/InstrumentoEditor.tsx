@@ -108,7 +108,7 @@ export function InstrumentoEditor({ apiBaseUrl, authToken, proyecto, onGuardado,
       </div>
 
       {error && (
-        <div className="rounded-xl border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</div>
+        <div role="alert" className="rounded-xl border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</div>
       )}
       {guardado && !error && (
         <div className="flex items-center gap-2 rounded-xl border border-green-500/40 bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-300">
@@ -156,6 +156,7 @@ export function InstrumentoEditor({ apiBaseUrl, authToken, proyecto, onGuardado,
                 value={nombre}
                 onChange={(e) => setNombres((n) => n.map((v, k) => (k === i ? e.target.value : v)))}
                 placeholder="Ej: Gestión de abastecimiento"
+                aria-label={`Nombre de la variable ${i + 1}`}
                 className="mt-2"
               />
             </CardHeader>
@@ -184,16 +185,16 @@ export function InstrumentoEditor({ apiBaseUrl, authToken, proyecto, onGuardado,
                     <div className="space-y-2">
                       {(baremos[i] ?? []).map((n, ni) => (
                         <div key={ni} className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                          <Input value={n.nombre} onChange={(e) => editarNivel(i, ni, "nombre", e.target.value)} placeholder="Nivel" />
-                          <Input value={String(n.desde)} onChange={(e) => editarNivel(i, ni, "desde", e.target.value)} placeholder="Desde" />
-                          <Input value={String(n.hasta)} onChange={(e) => editarNivel(i, ni, "hasta", e.target.value)} placeholder="Hasta" />
-                          <Input value={String(n.porcentaje)} onChange={(e) => editarNivel(i, ni, "porcentaje", e.target.value)} placeholder="%" />
+                          <Input value={n.nombre} onChange={(e) => editarNivel(i, ni, "nombre", e.target.value)} placeholder="Nivel" aria-label={`Nombre del nivel ${ni + 1} de la variable ${i + 1}`} />
+                          <Input value={String(n.desde)} onChange={(e) => editarNivel(i, ni, "desde", e.target.value)} placeholder="Desde" aria-label={`Desde, nivel ${ni + 1} de la variable ${i + 1}`} />
+                          <Input value={String(n.hasta)} onChange={(e) => editarNivel(i, ni, "hasta", e.target.value)} placeholder="Hasta" aria-label={`Hasta, nivel ${ni + 1} de la variable ${i + 1}`} />
+                          <Input value={String(n.porcentaje)} onChange={(e) => editarNivel(i, ni, "porcentaje", e.target.value)} placeholder="%" aria-label={`Porcentaje, nivel ${ni + 1} de la variable ${i + 1}`} />
                         </div>
                       ))}
                     </div>
                     {/* El porcentaje NO es decorativo: la simulación lo respeta,
                         así que se avisa antes de intentar guardar. */}
-                    <p className={suma === 100 ? "text-xs text-muted-foreground" : "text-xs font-medium text-amber-600 dark:text-amber-400"}>
+                    <p className={suma === 100 ? "text-xs text-muted-foreground" : "text-xs font-medium text-amber-700 dark:text-amber-400"}>
                       Los porcentajes suman {suma}%{suma === 100 ? " ✓" : " — deben sumar exactamente 100%"}
                     </p>
                   </>
