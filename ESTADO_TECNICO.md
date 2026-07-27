@@ -1,6 +1,6 @@
 # Estado técnico del proyecto
 
-Actualizado: 2026-07-25.
+Actualizado: 2026-07-27.
 
 ## Auditoría y endurecimiento (2026-07-25)
 
@@ -370,3 +370,63 @@ proyectos/matriz/cronbach/humanizador y la propia modularización de echarts —
 que nunca se fusionaron a esta rama. Vale la pena que quien coordine la
 auditoría verifique qué rama debía integrar cada worktree antes de dar por
 sentado que todas partieron del mismo estado.
+
+## Crítico independiente, pruebas de accesibilidad y vulnerabilidad de Vite (2026-07-27)
+
+Revisión final tras integrar las 9 áreas: un agente crítico independiente corrió
+las tres suites él mismo (no confió en los commits) y revisó a fondo los dos
+puntos de mayor riesgo de la integración — la condición de carrera de
+`crearProyectoSiCabe` y el chunk de echarts —, concluyendo que el resultado neto
+es claramente mejor que `main` y sin nada bloqueante. Encontró 3 hallazgos
+menores, ya corregidos:
+
+1. La recalibración cuasiexperimental (+10→+40, ver sección de presupuesto
+   arriba) no tenía ningún test de regresión, a diferencia del presupuesto
+   correlacional y el de Descriptiva. Se agregó `MEDIDOS_CUASIEXPERIMENTAL` en
+   `test/presupuesto.test.js` (mismos benchmarks documentados en
+   `lib/presupuesto.js`) más dos pruebas end-to-end en `test/quasi-generator.test.js`
+   que ejercitan el cableado real (`generateArtifacts` → `resolveMediciones` →
+   `normalizeConfig` con `opciones.presupuesto`).
+2. Un comentario en `UsersSection.tsx` afirmaba que `role="button"` en la fila
+   de la tabla no le quitaba su semántica de fila a un lector de pantalla —
+   probablemente falso (el rol implícito de fila se sobrescribe). Corregido el
+   comentario para admitir la contrapartida real, sin cambiar el comportamiento.
+3. Un contraste documentado en `index.css` (`--danger-deep` oscuro) decía
+   5.92:1; el cálculo real es 6.36:1. Corregido.
+
+### Pruebas de accesibilidad reales
+
+El crítico también señaló que cero tests automatizados protegen la lógica de
+teclado/foco que esta auditoría agregó. Se instalaron `@testing-library/react`
++ `jest-axe` (no `vitest-axe`: arrastra su propia cadena de vite/vitest interna)
+y se agregaron dos archivos de test: `UsersSection.test.tsx` (la fila abre el
+panel con Enter igual que con clic; Escape lo cierra y devuelve el foco a la
+fila) y `WizardProgress.test.tsx` (axe sin violaciones; `prefers-reduced-motion`
+mockeado vía `matchMedia`, que jsdom no implementa, para el fix que esta misma
+auditoría le agregó a este componente). De paso se corrigió
+`vitest.config.ts`: el `include` solo tomaba `*.test.ts`, así que ningún test de
+componente (`*.test.tsx`) corría con `npm test`.
+
+### Vulnerabilidad preexistente en el frontend: esbuild ≤0.24.2 (corregida)
+
+Instalar las herramientas de arriba reveló 5 vulnerabilidades (3 moderadas, 1
+alta, 1 crítica) en la cadena `vite`/`vitest`/`esbuild`, ya fijadas en
+`package-lock.json` **antes** de tocar nada — confirmado revirtiendo el cambio y
+volviendo a auditar. Nadie las había visto porque el job "Vulnerabilidades" de
+CI solo corre `npm audit` en `node_app` y `forms`, nunca en `frontend`. Es el
+aviso GHSA-67mh-4wv8-2f99: el servidor de desarrollo de Vite acepta peticiones
+de cualquier origen y devuelve la respuesta — no afecta al build de producción
+ni a lo que se sirve en Vercel, pero sí a cualquiera corriendo `npm run dev`.
+
+El único arreglo era un salto de 3 versiones mayores (Vite 5→8, que trae consigo
+Rolldown en vez de Rollup como bundler por defecto). `npm audit fix --force`
+quedó bloqueado por el clasificador de seguridad del harness (una acción
+`--force` con cambio disruptivo requiere autorización explícita); se hizo a
+mano en su lugar, subiendo `vite`, `vitest`, `@vitejs/plugin-react` y `jsdom` en
+conjunto (son interdependientes) y verificando cada paso: typecheck limpio,
+92/92 tests, build igual de exitoso (chunks del mismo orden de magnitud:
+echarts 505,49→504,52 kB, xlsx 499,55→493,22 kB), y revisión en el navegador
+real (dev server, login, cambio de tema) sin errores de consola. **0
+vulnerabilidades tras el upgrade.** Pendiente sugerido: agregar `frontend` al
+job "Vulnerabilidades" de `.github/workflows/ci.yml` para que esto no vuelva a
+pasar desapercibido.

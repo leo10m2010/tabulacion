@@ -94,3 +94,10 @@ jobs:
         working-directory: node_app
       - run: npm audit --omit=dev
         working-directory: forms
+      # Sin --omit=dev a propósito: en frontend, vite/vitest/esbuild son
+      # devDependencies (herramientas de build y test, nunca se sirven en
+      # producción) y ahí es exactamente donde vivía la vulnerabilidad que
+      # este job no habría visto hasta ahora (ver ESTADO_TECNICO.md,
+      # "Vulnerabilidad preexistente en el frontend", 2026-07-27).
+      - run: npm audit
+        working-directory: frontend
