@@ -364,13 +364,15 @@ describe("eliminar la cuenta se lleva los proyectos", () => {
 });
 
 describe("condiciones de carrera al crear proyectos", () => {
-  // La ruta POST /proyectos aplica el limite del plan con un patron
-  // leer-y-luego-escribir (server.js): cuenta cuantos proyectos tiene el
-  // usuario y, si no llego al limite, recien despues parsea el cuerpo y
-  // guarda. Entre el conteo y el guardado no hay ningun candado ni chequeo
-  // atomico, asi que dos POST que se solapen pueden leer el MISMO conteo
-  // antes de que cualquiera de los dos escriba: los dos pasan la validacion
-  // y el usuario termina con mas proyectos que los que su plan permite.
+  // La ruta POST /proyectos tenia un patron leer-y-luego-escribir: contaba
+  // cuantos proyectos tiene el usuario y, si no llegaba al limite, recien
+  // despues parseaba el cuerpo y guardaba, sin ningun candado ni chequeo
+  // atomico entre medias. Dos POST que se solapaban podian leer el MISMO
+  // conteo antes de que cualquiera escribiera, y el usuario terminaba con mas
+  // proyectos que los que su plan permite. Corregido con
+  // `crearProyectoSiCabe` (lib/proyectos/store.js): cuenta y guarda en el
+  // mismo tramo atomico (sin await de por medio en el backend de archivo;
+  // con `pg_advisory_xact_lock` por usuario en Postgres).
   //
   // Se fuerza la superposicion con el mismo truco que ya usa
   // usuarios-concurrencia.test.js: la peticion A se manda con el cuerpo JSON
@@ -378,16 +380,7 @@ describe("condiciones de carrera al crear proyectos", () => {
   // ocurre antes de leer el cuerpo, y quedo esperando el resto del JSON).
   // En esa ventana entra la peticion B, completa, que hace SU conteo antes
   // de que A alcance a guardar.
-  test("dos creaciones solapadas no deberian superar el límite del plan (bug de carrera)", {
-    todo: "BUG real: POST /proyectos en server.js comprueba el limite del plan "
-      + "(contarProyectos) y guarda (guardarProyecto) sin ninguna seccion atomica "
-      + "entre ambos pasos. Dos creaciones solapadas para el mismo usuario pueden "
-      + "pasar las dos el chequeo del limite antes de que cualquiera guarde, dejando "
-      + "al usuario con mas proyectos que los que su plan permite (reproducido de forma "
-      + "determinista con el truco del cuerpo partido). Corregir con una comprobacion "
-      + "atomica (p.ej. recontar y guardar bajo un lock por usuario, o una restriccion "
-      + "a nivel de store) y entonces quitar este `todo`.",
-  }, async () => {
+  test("dos creaciones solapadas no deberian superar el límite del plan", async () => {
     const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
     const token = await crearUsuario(admin, "carrera@test.local", "free"); // límite: 1
 
