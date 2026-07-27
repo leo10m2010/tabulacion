@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "tesistab:smoke": "node tesistab-smoke-test.js",
-    "test": "node --test tests/tesistab-api.test.js tests/tesistab-aislamiento.test.js tests/submit-xss.test.js"
+    "test": "node --test tests/tesistab-api.test.js tests/tesistab-aislamiento.test.js tests/submit-xss.test.js tests/inspect-google-response.test.js"
   },
   "license": "MIT",
   "dependencies": {
