@@ -295,7 +295,12 @@ async function startTesistabRun(form, event) {
     if (prefill.missingRequired.length) {
       const firstMissing = prefill.missingRequired[0];
       const suffix = prefill.missingRequired.length > 1 ? ` (+${prefill.missingRequired.length - 1})` : '';
-      const message = `Faltan respuestas obligatorias no compatibles con TesisHub: ${firstMissing}${suffix}`;
+      // No siempre podemos confirmar que la pregunta es obligatoria (ver
+      // fillUnansweredFormInputs), asi que el mensaje no lo afirma: solo dice
+      // que no se pudo rellenar sola y que hay que completarla a mano antes
+      // de reintentar, en vez de mandarla vacia y descubrir el rechazo de
+      // Google recien despues de gastar los intentos.
+      const message = `TesisHub no pudo completar sola esta pregunta, respondela y reintenta: ${firstMissing}${suffix}`;
       showStatus(message, true);
       recordDiagnostics({
         lastError: message,
@@ -2217,16 +2222,32 @@ function fillUnansweredFormInputs(form) {
       continue;
     }
 
-    const required = isQuestionRequired(group.container);
     const completed = fillEntryGroup(group);
     if (completed) {
       filled += 1;
       continue;
     }
 
-    if (required) {
-      missingRequired.push(extractQuestionText(group.container) || group.name || 'Pregunta sin titulo');
-    }
+    // Antes esto solo se reportaba si isQuestionRequired(group.container)
+    // confirmaba que la pregunta era obligatoria (por texto "obligatoria" o
+    // un atributo aria-required). Esa deteccion depende de como Google Forms
+    // marque el requisito en el DOM en cada momento, y si el marcador no
+    // coincide (o el contenedor no se encuentra, p.ej. Google cambio sus
+    // clases CSS internas), el resultado era asumir "no es obligatoria" y
+    // dejar pasar la pregunta vacia hasta que Google la rechazaba en el envio
+    // real — gastando los intentos sin ningun aviso util (asi se reprodujo el
+    // caso real: una escala lineal de 1 a 5 que nunca se pudo rellenar sola,
+    // enviada igual, con 5 fallos HTTP 400 sin explicacion).
+    //
+    // Ahora cualquier pregunta que NO pudimos rellenar solos se reporta,
+    // independientemente de si logramos confirmar que es obligatoria: el
+    // costo de avisar de mas sobre una pregunta opcional (el usuario la
+    // completa manualmente, o ignora el aviso y esta ya tenia otra respuesta)
+    // es minimo comparado con enviar una base incompleta y quemar intentos
+    // reales contra Google sin poder explicar por que fallaron.
+    const label = extractQuestionText(group.container) || group.name || 'Pregunta sin titulo';
+    const confirmedRequired = isQuestionRequired(group.container);
+    missingRequired.push(confirmedRequired ? label : `${label} (no se pudo confirmar si es obligatoria)`);
   }
 
   return {
