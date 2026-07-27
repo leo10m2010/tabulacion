@@ -2192,9 +2192,11 @@ function randomizeFormInputs(form) {
   });
 
   radioGroups.forEach((group) => {
-    const pick = group[Math.floor(Math.random() * group.length)];
-    pick.checked = true;
-    pick.dispatchEvent(new Event('change', { bubbles: true }));
+    // shuffled().some(tryCheckOption): igual que en fillEntryGroup, prueba
+    // opciones hasta que una se CONFIRME marcada (via .click() real primero,
+    // checked+eventos sinteticos como respaldo) en vez de asumir que la
+    // primera elegida funciono sin verificarlo.
+    shuffled(group).some((candidate) => tryCheckOption(candidate));
   });
 
   form.querySelectorAll('select').forEach((select) => {
@@ -2312,6 +2314,42 @@ function elementHasAnswer(element) {
   return false;
 }
 
+// Intenta CONFIRMAR una opcion de radio/checkbox, no solo "intentarlo una
+// vez y asumir que funciono" (asi estaba antes: devolvia true sin verificar,
+// asi que una pregunta que en realidad seguia sin responder se contaba como
+// "rellenada" y se enviaba vacia igual). Primero .click() real — dispara
+// mousedown/mouseup/click/change tal como un click humano, lo que Google
+// Forms necesita cuando el control visible es un decorativo por encima del
+// input nativo — y si eso no lo marca, cae al metodo anterior
+// (checked + eventos sinteticos) como respaldo. Si ninguno de los dos
+// confirma la respuesta, se prueba con OTRA opcion del grupo en vez de
+// rendirse con la primera que fallo (reproducido con una escala lineal 1-5
+// real: la primera opcion no siempre "prendia", la segunda si).
+function tryCheckOption(candidate) {
+  if (!(candidate instanceof HTMLInputElement)) {
+    return false;
+  }
+
+  candidate.click();
+  if (elementHasAnswer(candidate)) {
+    return true;
+  }
+
+  candidate.checked = true;
+  candidate.dispatchEvent(new Event('input', { bubbles: true }));
+  candidate.dispatchEvent(new Event('change', { bubbles: true }));
+  return elementHasAnswer(candidate);
+}
+
+function shuffled(list) {
+  const copy = list.slice();
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
 function fillEntryGroup(group) {
   const visibleElements = group.elements.filter((element) => isElementInteractable(element));
   if (!visibleElements.length) {
@@ -2321,15 +2359,7 @@ function fillEntryGroup(group) {
   const first = visibleElements[0];
   if (first instanceof HTMLInputElement) {
     if (first.type === 'radio' || first.type === 'checkbox') {
-      const pick = visibleElements[Math.floor(Math.random() * visibleElements.length)];
-      if (!(pick instanceof HTMLInputElement)) {
-        return false;
-      }
-
-      pick.checked = true;
-      pick.dispatchEvent(new Event('input', { bubbles: true }));
-      pick.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
+      return shuffled(visibleElements).some((candidate) => tryCheckOption(candidate));
     }
 
     return fillTextLikeInput(first);
@@ -2393,7 +2423,16 @@ function isElementInteractable(element) {
     return false;
   }
 
-  return element.getClientRects().length > 0;
+  // Ya NO se exige getClientRects().length > 0: Google Forms suele dejar el
+  // <input type="radio"/checkbox> nativo con tamaño 0 o superpuesto por un
+  // decorativo estilizado encima (patron comun de accesibilidad: el control
+  // real sigue siendo el input nativo, clickeable via JS, aunque no ocupe
+  // espacio visual propio). Ese input pasaba display/visibility pero fallaba
+  // este chequeo de tamaño, así que se descartaba como "no interactuable" y
+  // fillEntryGroup nunca llegaba a intentar rellenarlo (reproducido con una
+  // pregunta de escala lineal 1-5 real). display/visibility ya cubren el caso
+  // que de verdad importa (elemento oculto de proposito, no solo sin tamaño).
+  return true;
 }
 
 function isQuestionRequired(container) {
