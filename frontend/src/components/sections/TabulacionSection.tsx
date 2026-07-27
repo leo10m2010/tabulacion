@@ -1166,6 +1166,7 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
               <div className="rounded-xl border border-border/60 bg-card/60">
                 <button
                   onClick={() => setShowAdvancedJson((v) => !v)}
+                  aria-expanded={showAdvancedJson}
                   className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground"
                 >
                   <span>Modo avanzado (editar JSON directamente)</span>
@@ -1177,6 +1178,7 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
                       value={jsonDraft}
                       onChange={(e) => setJsonDraft(e.target.value)}
                       className="min-h-[200px] font-mono text-xs"
+                      aria-label="JSON de configuración del asistente"
                     />
                     <div className="flex gap-2">
                       <Button variant="outline" size="sm" onClick={handleApplyJson}>Aplicar JSON</Button>
@@ -1188,7 +1190,7 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
 
               <div className="space-y-3">
                 {step2Error && (
-                  <div className="flex items-center gap-2 rounded-xl border border-danger/30 bg-danger/8 px-4 py-3 text-sm text-danger">
+                  <div role="alert" className="flex items-center gap-2 rounded-xl border border-danger/30 bg-danger/8 px-4 py-3 text-sm text-danger">
                     <AlertTriangle className="h-4 w-4 shrink-0" />
                     {step2Error}
                   </div>
@@ -1302,7 +1304,7 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
 
               {/* Validations */}
               {validationMessages.length > 0 && (
-                <Card className="rounded-2xl border-danger/40 bg-danger/5 shadow-sm">
+                <Card role="alert" className="rounded-2xl border-danger/40 bg-danger/5 shadow-sm">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base text-danger">Corrige estos errores antes de continuar</CardTitle>
                   </CardHeader>
@@ -1381,7 +1383,7 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
                                 <span className={cn(
                                   "rounded-full px-2.5 py-0.5 text-xs font-semibold",
                                   comp.significant
-                                    ? "bg-green-500/15 text-green-600 dark:text-green-400"
+                                    ? "bg-green-500/15 text-green-700 dark:text-green-400"
                                     : "bg-muted text-muted-foreground",
                                 )}>
                                   {comp.significant ? "Diferencia significativa" : "Sin diferencia significativa"}
@@ -1410,11 +1412,11 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
                           </p>
                           {result.correlationControl.activo ? (
                             result.correlationControl.cumple ? (
-                              <span className="rounded-full bg-green-500/15 px-2.5 py-0.5 text-xs font-semibold text-green-600 dark:text-green-400">
+                              <span className="rounded-full bg-green-500/15 px-2.5 py-0.5 text-xs font-semibold text-green-700 dark:text-green-400">
                                 ✓ Dentro del rango elegido
                               </span>
                             ) : (
-                              <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                              <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
                                 Fuera del rango (se aproximó lo máximo posible)
                               </span>
                             )

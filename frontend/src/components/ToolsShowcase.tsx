@@ -108,7 +108,7 @@ function VignetteAlfa({ reduce }: { reduce: boolean }) {
         <span className="font-mono text-5xl font-bold tracking-tight">
           α = <AnimatedNumber value={alpha} decimals={3} />
         </span>
-        <span className="rounded-full bg-green-500/15 px-2.5 py-0.5 text-xs font-semibold text-green-600 dark:text-green-400">
+        <span className="rounded-full bg-green-500/15 px-2.5 py-0.5 text-xs font-semibold text-green-700 dark:text-green-400">
           Excelente
         </span>
       </div>

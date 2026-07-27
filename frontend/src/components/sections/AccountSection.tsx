@@ -124,7 +124,7 @@ export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {error && <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</div>}
+          {error && <div role="alert" className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</div>}
           {message && !error && (
             <div className="rounded-md border border-green-500/40 bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-300">{message}</div>
           )}
@@ -174,7 +174,7 @@ export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh
           </CardHeader>
           <CardContent className="space-y-4">
             {deleteError && (
-              <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{deleteError}</div>
+              <div role="alert" className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{deleteError}</div>
             )}
 
             {!confirmingDelete ? (
@@ -197,6 +197,15 @@ export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh
                   onChange={(e) => setDeleteConfirmEmail(e.target.value)}
                   placeholder={authUser.email}
                   autoComplete="off"
+                  aria-label={`Escribe ${authUser.email} para confirmar la eliminación de tu cuenta`}
+                  // autoFocus: al confirmar, el botón "Eliminar mi cuenta" que
+                  // tenía el foco se desmonta y lo sustituye este bloque; sin
+                  // esto el foco caía al <body> y quien navega por teclado
+                  // perdía su lugar en la página.
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") { setConfirmingDelete(false); setDeleteConfirmEmail(""); setDeleteError(null); }
+                  }}
                 />
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button
@@ -207,7 +216,7 @@ export function AccountSection({ apiBaseUrl, authToken, authUser, onTokenRefresh
                     Cancelar
                   </Button>
                   <Button
-                    className="bg-danger text-white hover:bg-danger/90"
+                    className="bg-danger-deep text-white hover:bg-danger-deep/90"
                     onClick={submitDelete}
                     // El botón solo se activa con el correo exacto: evita el
                     // clic accidental en una acción irreversible.

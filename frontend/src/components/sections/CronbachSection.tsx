@@ -277,14 +277,14 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser, proyecto, onP
           </div>
 
           {issues.length > 0 && (
-            <div className="space-y-1 rounded-xl border border-danger/30 bg-danger/8 px-4 py-3 text-sm text-danger">
+            <div role="alert" className="space-y-1 rounded-xl border border-danger/30 bg-danger/8 px-4 py-3 text-sm text-danger">
               {issues.map((msg) => (
                 <p key={msg} className="flex items-start gap-2"><span className="mt-0.5 shrink-0">•</span>{msg}</p>
               ))}
             </div>
           )}
           {error && (
-            <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</div>
+            <div role="alert" className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</div>
           )}
 
           <MagicButton size="lg" className="h-12 w-full" onClick={handleGenerate} disabled={busy || issues.length > 0}>
@@ -319,11 +319,11 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser, proyecto, onP
                   Alfa de Cronbach · {result.K} ítems · {result.encuestados} encuestados
                 </p>
                 {result.cumple ? (
-                  <span className="rounded-full bg-green-500/15 px-2.5 py-0.5 text-xs font-semibold text-green-600 dark:text-green-400">
+                  <span className="rounded-full bg-green-500/15 px-2.5 py-0.5 text-xs font-semibold text-green-700 dark:text-green-400">
                     ✓ Dentro del nivel elegido ({result.etiqueta})
                   </span>
                 ) : (
-                  <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                  <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
                     Fuera del rango (se aproximó lo máximo posible)
                   </span>
                 )}
