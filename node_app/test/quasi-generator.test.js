@@ -54,6 +54,30 @@ test("rechaza grupos invalidos y muestras excesivas", () => {
   );
 });
 
+// generateArtifacts es el camino real (CLI y API): ejercita
+// generateQuasiArtifacts -> resolveMediciones -> normalizeConfig con
+// `opciones.presupuesto`. Antes de la auditoria del 2026-07-26 nada probaba
+// este cableado end-to-end: los tests de presupuesto.test.js prueban
+// evaluarPresupuesto/costoGeneracion directo, y normalizedExample() (arriba)
+// llama a normalizeConfig SIN opciones, así que ninguno de los dos habría
+// detectado si generator.js dejara de pasarle `cuasiexperimental`/`mediciones`
+// a normalizeConfig.
+test("generateArtifacts rechaza el cuasiexperimental que no cabe con el peso REAL del diseño", async () => {
+  // 12 items fijos (del ejemplo). Con el peso correlacional (+30 por variable
+  // extra, que no aplica aqui) 600 encuestados pasaria de sobra; con el peso
+  // cuasiexperimental real (+40) ya no cabe: 600*(12+40)=31.200 > 30.000.
+  await assert.rejects(
+    () => generateArtifacts({ ...raw, nExperimental: 300, nControl: 300 }),
+    /no cabe en la memoria del servidor/i,
+  );
+});
+
+test("generateArtifacts acepta el mismo diseño justo por debajo del limite", async () => {
+  // 500 encuestados con los mismos 12 items: 500*(12+40)=26.000 <= 30.000.
+  const result = await generateArtifacts({ ...raw, nExperimental: 250, nControl: 250 });
+  assert.ok(result.excelBuffer);
+});
+
 test("genera grupos coherentes: escala respetada, totales y cambio", () => {
   const cfg = normalizedExample();
   const data = generateQuasiExperimentalData(cfg);

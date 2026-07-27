@@ -29,7 +29,7 @@
      BLANCO se lea encima (con L=58% solo da 3.94:1, bajo el 4.5:1 de AA). No
      existe un L que sirva para los dos roles a la vez (verificado punto por
      punto), de ahí el token separado — mismo patrón que --primary-deep.
-     Verificado: hsl(2 72% 42%) con texto blanco = 5.92:1. */
+     Verificado: hsl(2 72% 42%) con texto blanco = 6.36:1. */
   --danger-deep: 2 76% 50%;
   --border: 50 8% 86%;
   --input: 50 8% 86%;

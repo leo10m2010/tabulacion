@@ -635,8 +635,12 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                   // focuseable ni activable por teclado por defecto, así que
                   // todo el panel de gestión (recargas, reset de contraseña,
                   // eliminar) era inalcanzable sin ratón. tabIndex + onKeyDown
-                  // la vuelven un control real sin perder la semántica de fila
-                  // (las celdas se siguen leyendo con sus encabezados).
+                  // la vuelven un control real por teclado. Contrapartida
+                  // aceptada: role="button" reemplaza el rol implícito de
+                  // fila, así que un lector de pantalla en modo tabla ya no
+                  // la anuncia como fila con sus encabezados de columna, sino
+                  // como un botón con el aria-label de abajo — se prioriza que
+                  // sea operable sobre conservar esa semántica de tabla.
                   tabIndex={0}
                   role="button"
                   aria-haspopup="dialog"

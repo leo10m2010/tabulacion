@@ -197,3 +197,58 @@ test("descriptiva: el mensaje explica que acortar y que no se descuenta el uso",
 test("descriptiva: los maximos no se han tocado", () => {
   assert.equal(PRESUPUESTO_MAXIMO_DESCRIPTIVA, 16_000);
 });
+
+// ── Presupuesto cuasiexperimental (auditoria de arquitectura/backend, 2026-07-26) ──
+//
+// generator.js nunca le pasaba `cuasiexperimental`/`mediciones` a
+// evaluarPresupuesto: el diseño se evaluaba como si fuera una variable
+// correlacional cualquiera, sin el peso extra de escribir 5 (o 7, con
+// seguimiento) hojas completas por encuestado. El multiplicador subio de "+10"
+// (nunca calibrado) a "+40". Estos casos vienen de
+// scripts/benchmark-generacion-cuasiexperimental.mjs (mismo heap que
+// produccion); ver el comentario "CUASIEXPERIMENTAL" en lib/presupuesto.js
+// para la tabla completa con el pico de RSS de cada uno.
+const MEDIDOS_CUASIEXPERIMENTAL = [
+  { encuestados: 30, itemsTotales: 12, mediciones: 2, picoMb: 120, cabe: true },
+  { encuestados: 100, itemsTotales: 10, mediciones: 2, picoMb: 186, cabe: true },
+  { encuestados: 200, itemsTotales: 60, mediciones: 2, picoMb: 448, cabe: true },
+  { encuestados: 500, itemsTotales: 20, mediciones: 2, picoMb: 422, cabe: true },
+  // A partir de aqui, el diseño cuasiexperimental (5-7 hojas completas de N
+  // filas) ya no deja sitio al servidor HTTP dentro de los 512 MB del
+  // contenedor.
+  { encuestados: 700, itemsTotales: 15, mediciones: 2, picoMb: 485, cabe: false },
+  { encuestados: 600, itemsTotales: 20, mediciones: 2, picoMb: 494, cabe: false },
+  { encuestados: 800, itemsTotales: 10, mediciones: 2, picoMb: 477, cabe: false },
+  { encuestados: 900, itemsTotales: 10, mediciones: 2, picoMb: 509, cabe: false },
+  { encuestados: 1000, itemsTotales: 10, mediciones: 2, picoMb: 541, cabe: false },
+  { encuestados: 1200, itemsTotales: 10, mediciones: 2, picoMb: 545, cabe: false },
+  { encuestados: 500, itemsTotales: 60, mediciones: 2, picoMb: null, cabe: false }, // OOM
+  { encuestados: 1500, itemsTotales: 15, mediciones: 2, picoMb: null, cabe: false }, // OOM
+  { encuestados: 100, itemsTotales: 15, mediciones: 3, picoMb: 333, cabe: true },
+  { encuestados: 200, itemsTotales: 15, mediciones: 3, picoMb: 455, cabe: true },
+  { encuestados: 600, itemsTotales: 15, mediciones: 3, picoMb: 583, cabe: false },
+  { encuestados: 1000, itemsTotales: 15, mediciones: 3, picoMb: null, cabe: false }, // OOM
+];
+
+test("el presupuesto cuasiexperimental separa lo medido que cabe de lo que no", () => {
+  for (const caso of MEDIDOS_CUASIEXPERIMENTAL) {
+    const r = evaluarPresupuesto({ ...caso, cuasiexperimental: true });
+    assert.equal(
+      r.cabe, caso.cabe,
+      `nExp+nCon=${caso.encuestados} items=${caso.itemsTotales} mediciones=${caso.mediciones} `
+      + `(pico ${caso.picoMb ?? "OOM"} MB): costo ${r.costo}, esperado cabe=${caso.cabe}`,
+    );
+  }
+});
+
+test("a igual N x items, el diseño cuasiexperimental pesa mas que el correlacional de 1 variable", () => {
+  const correlacional = costoGeneracion({ encuestados: 500, itemsTotales: 20, variables: 1 });
+  const cuasi = costoGeneracion({ encuestados: 500, itemsTotales: 20, cuasiexperimental: true, mediciones: 2 });
+  assert.ok(cuasi > correlacional, `correlacional=${correlacional} cuasi=${cuasi}`);
+});
+
+test("el seguimiento (mediciones=3) cuesta mas que sin seguimiento con el mismo N x items", () => {
+  const sinSeguimiento = costoGeneracion({ encuestados: 200, itemsTotales: 15, cuasiexperimental: true, mediciones: 2 });
+  const conSeguimiento = costoGeneracion({ encuestados: 200, itemsTotales: 15, cuasiexperimental: true, mediciones: 3 });
+  assert.ok(conSeguimiento > sinSeguimiento, `sin=${sinSeguimiento} con=${conSeguimiento}`);
+});
