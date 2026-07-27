@@ -132,3 +132,93 @@ export const mensajePresupuesto = (evaluacion) => {
     + "encuestados y cada variable hasta 60 ítems; lo que no cabe es esta combinación concreta."
   );
 };
+
+// ── Presupuesto de Tabulacion Descriptiva (IA) ───────────────────────────────
+//
+// POR QUE EXISTE (auditoria de rendimiento, 2026-07-26)
+// A diferencia del generador principal, Descriptiva NO corre en el worker
+// aislado de lib/generation/: lib/descriptiva/index.js construye el .xlsx
+// (xlsx-populate + graficos OOXML) en el mismo proceso que el servidor HTTP.
+// Un pico de memoria aqui no solo mata ESE job (como en el worker): puede
+// tumbar el proceso entero y con el TODAS las peticiones en curso de TODOS
+// los usuarios. La muestra ya esta acotada (10-400, ver DEFAULT_N/MAX_N en
+// lib/descriptiva/index.js) pero el numero de preguntas del instrumento NO
+// tenia ningun tope: lo fija el cuestionario que el usuario pega o sube
+// (hasta MAX_CUESTIONARIO_CHARS = 40.000 caracteres), que alcanza de sobra
+// para 100+ items Likert cortos.
+//
+// DE DONDE SALE EL NUMERO
+// Medido con scripts/benchmark-ia.mjs (mismo patron que benchmark-generacion:
+// proceso hijo con el heap de produccion, --max-old-space-size=400), armando
+// el JSON que la IA devolveria (sin llamada de red) y construyendo el .xlsx:
+//
+//   N     items  resultado   pico RSS
+//   60    20     ok            146 MB
+//   400   20     ok            262 MB
+//   400   40     ok         346-377 MB
+//   400   45     ok            387 MB
+//   200   60     ok            345 MB
+//   400   50     ok            430 MB   <- ya arriesgado
+//   300   60     ok            440 MB   <- ya arriesgado
+//   400   55     ok            450 MB   <- ya arriesgado
+//   400   60     ok         432-455 MB  <- ya arriesgado
+//   200   120    ok            473 MB   <- ya arriesgado
+//   100   120    ok            401 MB   <- ya arriesgado
+//   400   80     ok            529 MB   <- no cabe
+//   400   120    OOM             —
+//
+// A diferencia del generador principal (donde la fila base son formulas y el
+// costo escala sobre todo con los ENCUESTADOS), en Descriptiva la hoja "Base
+// de datos" son valores planos (sin formulas): el costo dominante es el de
+// la hoja "Resultados", que arma una tabla + un grafico OOXML POR PREGUNTA
+// sin importar N. Por eso los items pesan mas de lo que pesarian en el
+// generador principal, y el presupuesto se expresa igual (N x items) pero
+// con un techo mucho mas bajo.
+//
+// El limite se fija donde la tabla separa limpiamente lo medido que cabe
+// (<=400 MB) de lo que ya no es seguro compartiendolo con el servidor HTTP
+// sin ningun worker que lo aisle.
+export const PRESUPUESTO_MAXIMO_DESCRIPTIVA = 16_000;
+
+/** Coste estimado de Descriptiva: N x items (sin variables ni cuasiexperimental). */
+export const costoDescriptiva = ({ encuestados, itemsTotales }) => {
+  const n = Math.max(0, Number(encuestados) || 0);
+  const items = Math.max(0, Number(itemsTotales) || 0);
+  return Math.round(n * items);
+};
+
+/**
+ * ¿Cabe este instrumento? Se evalua DESPUES de que la IA responde (recien
+ * ahi se conoce `itemsTotales`, el numero real de preguntas del
+ * cuestionario) y ANTES de construir el .xlsx.
+ */
+export const evaluarPresupuestoDescriptiva = (entrada) => {
+  const costo = costoDescriptiva(entrada);
+  const cabe = costo <= PRESUPUESTO_MAXIMO_DESCRIPTIVA;
+  if (cabe) return { cabe: true, costo, maximo: PRESUPUESTO_MAXIMO_DESCRIPTIVA, sugerencias: [] };
+
+  const n = Math.max(1, Number(entrada.encuestados) || 1);
+  const items = Math.max(1, Number(entrada.itemsTotales) || 1);
+  const sugerencias = [];
+  const nMax = Math.floor(PRESUPUESTO_MAXIMO_DESCRIPTIVA / items);
+  if (nMax >= 10 && nMax < n) {
+    sugerencias.push(`baja la muestra (N) a ${nMax} o menos (ahora ${n})`);
+  }
+  const itemsMax = Math.floor(PRESUPUESTO_MAXIMO_DESCRIPTIVA / n);
+  if (itemsMax >= 1 && itemsMax < items) {
+    sugerencias.push(`acorta el cuestionario a ${itemsMax} preguntas o menos (ahora ${items})`);
+  }
+  return { cabe: false, costo, maximo: PRESUPUESTO_MAXIMO_DESCRIPTIVA, sugerencias };
+};
+
+/** Mensaje para el usuario (error de job, no de validacion previa: el numero
+ * real de preguntas solo se conoce despues de que la IA responde). */
+export const mensajePresupuestoDescriptiva = (evaluacion) => {
+  const opciones = evaluacion.sugerencias.length > 0
+    ? ` Para tu próxima generación, ${evaluacion.sugerencias.join("; ")}.`
+    : "";
+  return (
+    "Tu instrumento tiene demasiadas preguntas para la muestra (N) solicitada; la combinación no cabe "
+    + `en la memoria del servidor.${opciones} No se descontó tu uso.`
+  );
+};
