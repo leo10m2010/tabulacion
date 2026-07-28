@@ -520,3 +520,34 @@
     opacity: 1;
   }
 }
+
+/* Resalta la pregunta (o el boton "Siguiente") que TesisHub no pudo
+   completar/alcanzar sola, para encontrarla rapido en un formulario largo o
+   de varias paginas (ver scrollToAndHighlight en content.js). Color fijo a
+   proposito, NO hsl(var(--primary)): ese token solo esta definido dentro de
+   los elementos que la extension inyecta (#tesistab-qa-actions y hermanos),
+   pero esto se aplica sobre elementos de Google Forms, fuera de ese scope —
+   ahi var(--primary) no resuelve a nada, el outline queda invalido y el
+   navegador lo descarta entero (reproducido: el outline nunca se veia). */
+.tesistab-qa-highlight {
+  outline: 3px solid #0f9d68 !important;
+  outline-offset: 4px;
+  border-radius: 8px;
+  animation: tesistab-qa-highlight-pulse 1s ease-in-out 2;
+}
+
+@keyframes tesistab-qa-highlight-pulse {
+  0%, 100% {
+    outline-color: #0f9d68;
+  }
+
+  50% {
+    outline-color: rgba(15, 157, 104, 0.35);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tesistab-qa-highlight {
+    animation: none;
+  }
+}

@@ -280,6 +280,30 @@ async function startTesistabRun(form, event) {
   syncJobActionButtons();
 
   try {
+    // TesisHub NUNCA avanza solo entre paginas de un formulario de varias
+    // secciones: solo captura y rellena lo que esta en la pagina ACTUAL. Si
+    // esta pagina todavia tiene un boton "Siguiente" visible, quiere decir
+    // que hay mas preguntas mas adelante que esta corrida no va a ver —
+    // mandar de aca es mandar una base incompleta (o vacia, si esta pagina
+    // es solo la portada). Reproducido en vivo: un formulario cuya primera
+    // pagina es puro titulo/descripcion sin ninguna pregunta; "Iniciar" ahi
+    // mandaba una respuesta vacia y Google la rechazaba con HTTP 400 sin
+    // ninguna pista, porque fillUnansweredFormInputs no tenia nada que
+    // reportar (no habia ninguna pregunta que rellenar EN ESA PAGINA).
+    const nextButton = findNextPageButton(form);
+    if (nextButton) {
+      showStatus(
+        'Este formulario tiene mas paginas. Avanza con "Siguiente" hasta la ultima antes de darle Iniciar.',
+        true
+      );
+      scrollToAndHighlight(nextButton);
+      recordDiagnostics({
+        lastError: 'Boton "Siguiente" detectado: hay mas paginas antes de la ultima.',
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
     const rawCount = Number(settings.submissionCount) || 1;
     const count = clamp(rawCount, 1, MAX_UI_SUBMISSIONS);
     const delayMs = clamp(Number(settings.delayMs) || 1000, 300, 60_000);
@@ -301,8 +325,12 @@ async function startTesistabRun(form, event) {
       // que no se pudo rellenar sola y que hay que completarla a mano antes
       // de reintentar, en vez de mandarla vacia y descubrir el rechazo de
       // Google recien despues de gastar los intentos.
-      const message = `TesisHub no pudo completar sola esta pregunta, respondela y reintenta: ${firstMissing}${suffix}`;
+      const message = `TesisHub no pudo completar sola esta pregunta, respondela y reintenta: ${firstMissing.label}${suffix}`;
       showStatus(message, true);
+      // Ademas del mensaje, se hace scroll y se resalta la pregunta en la
+      // pagina: en un formulario largo o de varias paginas, saber el NOMBRE
+      // de la pregunta no alcanza para encontrarla rapido.
+      scrollToAndHighlight(firstMissing.container);
       recordDiagnostics({
         lastError: message,
         updatedAt: new Date().toISOString(),
@@ -462,6 +490,37 @@ function isGoogleFormsSubmitTrigger(target) {
   }
 
   return /(submit|enviar|send|kirim)/.test(marker);
+}
+
+// Escanea la pagina en busca de un boton "Siguiente" visible, SIN esperar a
+// que el usuario lo clickee (a diferencia de isGoogleFormsNextTrigger, que
+// solo reacciona a un click). Se usa para bloquear "Iniciar" de entrada
+// cuando la pagina actual no es la ultima del formulario.
+function findNextPageButton(form) {
+  const scope = form instanceof HTMLElement ? form : document;
+  const candidates = scope.querySelectorAll('button, input[type="button"], div[role="button"]');
+
+  for (const trigger of candidates) {
+    if (
+      trigger.closest('#tesistab-qa-actions') ||
+      trigger.closest('#tesistab-qa-status') ||
+      trigger.closest('#tesistab-qa-pill') ||
+      trigger.closest('#tesistab-qa-confirm-overlay') ||
+      !isElementInteractable(trigger)
+    ) {
+      continue;
+    }
+
+    const text = String(trigger.textContent || '').toLowerCase();
+    const ariaLabel = String(trigger.getAttribute('aria-label') || '').toLowerCase();
+    const marker = `${text} ${ariaLabel}`;
+
+    if (/(next|siguiente|continuar|continue)/.test(marker)) {
+      return trigger;
+    }
+  }
+
+  return null;
 }
 
 function isGoogleFormsNextTrigger(target) {
@@ -2267,6 +2326,23 @@ function randomizeFormInputs(form) {
   });
 }
 
+// Lleva la vista a la pregunta que no se pudo completar sola y la resalta
+// unos segundos. En un formulario largo (o de varias paginas: todas las
+// preguntas viven en el mismo <form>, aunque solo una se vea a la vez) el
+// mensaje de estado dice el NOMBRE de la pregunta, pero no ayuda a
+// encontrarla rapido — esto la pone directamente frente al usuario.
+function scrollToAndHighlight(container) {
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  container.classList.add('tesistab-qa-highlight');
+  window.setTimeout(() => {
+    container.classList.remove('tesistab-qa-highlight');
+  }, 4000);
+}
+
 function fillUnansweredFormInputs(form) {
   const groups = collectEntryGroups(form);
   let filled = 0;
@@ -2302,7 +2378,10 @@ function fillUnansweredFormInputs(form) {
     // reales contra Google sin poder explicar por que fallaron.
     const label = extractQuestionText(group.container) || group.name || 'Pregunta sin titulo';
     const confirmedRequired = isQuestionRequired(group.container);
-    missingRequired.push(confirmedRequired ? label : `${label} (no se pudo confirmar si es obligatoria)`);
+    missingRequired.push({
+      label: confirmedRequired ? label : `${label} (no se pudo confirmar si es obligatoria)`,
+      container: group.container || null,
+    });
   }
 
   return {
