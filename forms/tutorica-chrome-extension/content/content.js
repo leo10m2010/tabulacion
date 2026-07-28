@@ -313,7 +313,7 @@ async function startTesistabRun(form, event) {
       randomizeFormInputs(form);
     }
 
-    const prefill = fillUnansweredFormInputs(form);
+    const prefill = await fillUnansweredFormInputs(form);
     if (prefill.filled > 0) {
       showStatus(`Se completaron ${prefill.filled} respuestas faltantes para TesisHub.`);
     }
@@ -2343,22 +2343,22 @@ function scrollToAndHighlight(container) {
   }, 4000);
 }
 
-function fillUnansweredFormInputs(form) {
+async function fillUnansweredFormInputs(form) {
   const groups = collectEntryGroups(form);
   let filled = 0;
   const missingRequired = [];
+  // Preguntas cuyo input oculto Google todavia no creo (ver collectEntryGroups
+  // / asyncCreate): se dispara UN click por pregunta aca abajo, sin verificar
+  // nada todavia, y se juntan para esperar UNA sola vez al final. Verificar
+  // pregunta por pregunta (click, esperar, click, esperar...) tardaria
+  // ~2-3.5s POR PREGUNTA — con 24 preguntas Likert en una sola pagina, mas de
+  // un minuto — cuando en la practica Google parece vaciar ese lote entero
+  // de una vez, sin importar cuantas preguntas se hayan clickeado antes de
+  // esperar (confirmado en vivo: 4 preguntas clickeadas seguidas aparecieron
+  // las 4 juntas tras una sola espera de 3.5s).
+  const pendingAsync = [];
 
-  for (const group of groups.values()) {
-    if (groupHasAnswer(group)) {
-      continue;
-    }
-
-    const completed = fillEntryGroup(group);
-    if (completed) {
-      filled += 1;
-      continue;
-    }
-
+  const reportMissing = (group) => {
     // Antes esto solo se reportaba si isQuestionRequired(group.container)
     // confirmaba que la pregunta era obligatoria (por texto "obligatoria" o
     // un atributo aria-required). Esa deteccion depende de como Google Forms
@@ -2382,12 +2382,73 @@ function fillUnansweredFormInputs(form) {
       label: confirmedRequired ? label : `${label} (no se pudo confirmar si es obligatoria)`,
       container: group.container || null,
     });
+  };
+
+  for (const group of groups.values()) {
+    if (groupHasAnswer(group)) {
+      continue;
+    }
+
+    if (group.asyncCreate) {
+      const candidates = (group.options || []).filter((label) => isElementInteractable(label));
+      if (!candidates.length) {
+        reportMissing(group);
+        continue;
+      }
+      candidates[Math.floor(Math.random() * candidates.length)].click();
+      pendingAsync.push(group);
+      continue;
+    }
+
+    const completed = fillEntryGroup(group);
+    if (completed) {
+      filled += 1;
+      continue;
+    }
+
+    reportMissing(group);
+  }
+
+  if (pendingAsync.length) {
+    const stillPending = await waitForAsyncWidgetGroups(pendingAsync);
+    filled += pendingAsync.length - stillPending.length;
+    stillPending.forEach(reportMissing);
   }
 
   return {
     filled,
     missingRequired,
   };
+}
+
+const ASYNC_WIDGET_POLL_INTERVAL_MS = 250;
+const ASYNC_WIDGET_TIMEOUT_MS = 6000;
+
+// Espera UNA sola vez (con polling corto, para salir apenas terminen en vez
+// de siempre esperar el maximo) a que Google termine de crear/sincronizar
+// los input ocultos de un lote de preguntas ya clickeadas. Devuelve las que
+// siguen sin responder pasado el limite.
+function waitForAsyncWidgetGroups(groups) {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + ASYNC_WIDGET_TIMEOUT_MS;
+
+    const check = () => {
+      const stillPending = groups.filter((group) => {
+        const scope = group.container || document;
+        const hiddenInput = scope.querySelector(`[name="${group.name}"]`);
+        return !(hiddenInput && elementHasAnswer(hiddenInput));
+      });
+
+      if (!stillPending.length || Date.now() >= deadline) {
+        resolve(stillPending);
+        return;
+      }
+
+      window.setTimeout(check, ASYNC_WIDGET_POLL_INTERVAL_MS);
+    };
+
+    check();
+  });
 }
 
 function collectEntryGroups(form) {
@@ -2407,11 +2468,83 @@ function collectEntryGroups(form) {
       groups.set(name, {
         name,
         elements: [],
+        options: null,
         container: element.closest('[role="listitem"], .Qr7Oae, .geS5n'),
       });
     }
 
     groups.get(name).elements.push(element);
+  });
+
+  // Google Forms mas reciente no pone `name="entry.X"` en el control VISIBLE
+  // de opcion multiple/casillas: el usuario clickea un <label> sin ningun
+  // input nativo adentro, y el propio JS de Google recien sincroniza el
+  // valor a un <input type="hidden" name="entry.X"> aparte cuando detecta el
+  // click real. Si el UNICO elemento que encontramos para ese name es ese
+  // input oculto, no hay nada clickeable en `elements` — se buscan las
+  // opciones reales (los <label>) dentro del mismo contenedor de la
+  // pregunta, para que fillEntryGroup tenga algo que clickear de verdad en
+  // vez de rendirse porque lo unico que ve esta oculto.
+  groups.forEach((group) => {
+    const onlyHidden = group.elements.every(
+      (el) => el instanceof HTMLInputElement && el.type === 'hidden'
+    );
+    if (!onlyHidden || !group.container) {
+      return;
+    }
+
+    const labels = Array.from(group.container.querySelectorAll('label'));
+    if (labels.length) {
+      group.options = labels;
+    }
+  });
+
+  // Variante mas dificil del mismo problema: en algunas preguntas, el input
+  // oculto real entry.X NI SIQUIERA EXISTE en el DOM todavia — Google solo
+  // lo crea/rellena la primera vez que detecta un click real. Antes de eso
+  // lo unico presente es su "_sentinel" (entry.X_sentinel), que YA se
+  // ignoraba a proposito (no matchea /^entry\.\d+$/) porque no es una
+  // pregunta real — pero es la unica pista que existe todavia de que ESA
+  // pregunta esta ahi y sigue sin responder. Se agrupa por CONTENEDOR (no
+  // por name, que todavia no existe), usando el sentinel solo para saber
+  // cual seria el nombre real una vez que exista.
+  const containersYaCubiertos = new Set(
+    Array.from(groups.values()).map((g) => g.container).filter(Boolean)
+  );
+  form.querySelectorAll('[name$="_sentinel"]').forEach((sentinel) => {
+    const container = sentinel.closest('[role="listitem"], .Qr7Oae, .geS5n');
+    if (!container || containersYaCubiertos.has(container)) {
+      return;
+    }
+    containersYaCubiertos.add(container);
+
+    const sentinelName = String(sentinel.getAttribute('name') || '').trim();
+    const realName = sentinelName.replace(/_sentinel$/, '');
+    if (!/^entry\.\d+$/.test(realName) || realName === sentinelName) {
+      return;
+    }
+
+    const labels = Array.from(container.querySelectorAll('label'));
+    if (!labels.length) {
+      return;
+    }
+
+    groups.set(realName, {
+      name: realName,
+      elements: [],
+      options: labels,
+      container,
+      // A diferencia del grupo de la pasada anterior (donde entry.X ya
+      // existe, aunque vacio, y Google lo actualiza en el momento del
+      // click), aca entry.X TODAVIA NO EXISTE — Google recien lo crea en un
+      // ciclo propio de guardado (el mismo de "Borrador guardado"), medido
+      // en vivo entre ~2 y ~3.5 segundos DESPUES del click, y compartido
+      // entre varias preguntas a la vez. Este flag le dice a
+      // fillUnansweredFormInputs que no puede verificar esta pregunta en el
+      // momento del click: tiene que disparar el click y esperar despues,
+      // junto con las demas preguntas iguales, no una por una.
+      asyncCreate: true,
+    });
   });
 
   return groups;
@@ -2483,6 +2616,10 @@ function shuffled(list) {
 }
 
 function fillEntryGroup(group) {
+  if (group.options && group.options.length) {
+    return fillCustomWidgetGroup(group);
+  }
+
   const visibleElements = group.elements.filter((element) => isElementInteractable(element));
   if (!visibleElements.length) {
     return false;
@@ -2514,6 +2651,38 @@ function fillEntryGroup(group) {
     first.dispatchEvent(new Event('input', { bubbles: true }));
     first.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
+  }
+
+  return false;
+}
+
+// Pregunta de opcion multiple/casillas de la Google Forms mas reciente: el
+// unico elemento con name="entry.X" es el <input type="hidden"> que Google
+// sincroniza solo, y group.options son los <label> visibles que el usuario
+// clickearia de verdad (ver collectEntryGroups). Se clickea un <label> al
+// azar y se CONFIRMA mirando si el input oculto paso a tener valor — clickear
+// no alcanza si el JS de Google no llego a reaccionar, y sin esta
+// verificacion se estaria dando por respondida una pregunta que en realidad
+// sigue vacia (el mismo patron de tryCheckOption, pero mirando el input
+// oculto en vez de .checked porque aqui no hay ningun input nativo visible).
+function fillCustomWidgetGroup(group) {
+  const candidates = group.options.filter((label) => isElementInteractable(label));
+  if (!candidates.length) {
+    return false;
+  }
+
+  for (const label of shuffled(candidates)) {
+    label.click();
+    // Se busca el input oculto DE NUEVO despues de cada click, en vez de
+    // guardar una referencia de antes: en algunas preguntas el input
+    // entry.X ni siquiera existe en el DOM hasta que Google detecta el
+    // primer click real (antes de eso solo esta su "_sentinel"), asi que
+    // no hay nada que guardar de antemano.
+    const scope = group.container || document;
+    const hiddenInput = scope.querySelector(`[name="${group.name}"]`);
+    if (hiddenInput && elementHasAnswer(hiddenInput)) {
+      return true;
+    }
   }
 
   return false;

@@ -7,11 +7,14 @@
   "scripts": {
     "start": "node server.js",
     "tesistab:smoke": "node tesistab-smoke-test.js",
-    "test": "node --test tests/tesistab-api.test.js tests/tesistab-aislamiento.test.js tests/submit-xss.test.js tests/inspect-google-response.test.js"
+    "test": "node --test tests/tesistab-api.test.js tests/tesistab-aislamiento.test.js tests/submit-xss.test.js tests/inspect-google-response.test.js tests/extension-fill-widgets.test.js"
   },
   "license": "MIT",
   "dependencies": {
     "compression": "^1.7.4",
     "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.0"
   }
 }

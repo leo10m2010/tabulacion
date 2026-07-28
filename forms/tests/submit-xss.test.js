@@ -52,7 +52,15 @@ describe('/_submit no refleja HTML del parametro id', () => {
 });
 
 function startServer(extraEnv = {}) {
-  const port = 6600 + Math.floor(Math.random() * 300);
+  // Rango 6600-6899 (usado antes) se solapa con puertos de la lista de
+  // "bad ports" del Fetch spec que undici tambien aplica (6665-6669, 6697):
+  // si Math.random() caia justo ahi, fetch() tiraba "TypeError: fetch
+  // failed" / "Error: bad port" de forma intermitente (reproducido en vivo,
+  // 1 de cada pocas corridas de `npm test`). 6900-7299 no colisiona con los
+  // rangos de los otros tests (tesistab-api.test.js: 5600-6099,
+  // tesistab-aislamiento.test.js: 6100-6499) ni con ningun puerto de esa
+  // lista.
+  const port = 6900 + Math.floor(Math.random() * 400);
   const child = spawn(process.execPath, ['server.js'], {
     cwd: __dirname + '/..',
     env: { ...process.env, PORT: String(port), ...extraEnv },

@@ -430,3 +430,59 @@ real (dev server, login, cambio de tema) sin errores de consola. **0
 vulnerabilidades tras el upgrade.** Pendiente sugerido: agregar `frontend` al
 job "Vulnerabilidades" de `.github/workflows/ci.yml` para que esto no vuelva a
 pasar desapercibido.
+
+## Extensión de Chrome: relleno automático fallaba en preguntas de escala Likert (2026-07-27)
+
+Bug real reportado en vivo: "Iniciar" en un formulario con 24 preguntas de
+escala Likert terminaba siempre con "Enviados: 0, fallidos: 5, missing required
+answers (HTTP 400)", incluso después de agregar soporte para el widget de
+opción múltiple de Google Forms sin `<input>` nativo (`fillCustomWidgetGroup`,
+sección anterior de este mismo documento). Se investigó en vivo con dos
+navegadores en paralelo: la pestaña real de "Marketing Verde..." (con la
+extensión) y una pestaña limpia del mismo formulario sin ninguna extensión
+instalada, para aislar qué era comportamiento genuino de Google Forms.
+
+**Causa real:** Google Forms no sincroniza el `<input type="hidden"
+name="entry.X">` de una pregunta de escala en el mismo tick del clic. Antes del
+primer clic solo existe un `entry.X_sentinel` vacío; el `entry.X` real recién
+se crea en un ciclo propio de guardado (el mismo que muestra "Borrador
+guardado" en pantalla), medido en vivo entre ~2 y ~3.5 segundos DESPUÉS del
+clic — y ese ciclo parece compartido entre varias preguntas a la vez: clickear
+4 preguntas seguidas y esperar una sola vez alcanzó para que las 4 aparecieran
+juntas. `fillCustomWidgetGroup` verificaba el input oculto inmediatamente
+después de cada `.click()`, así que la verificación fallaba siempre — no
+porque el clic no funcionara (`aria-checked` sí cambiaba a `true` al
+instante), sino porque se le preguntaba a Google demasiado pronto.
+
+**Arreglo** (`content.js`): `collectEntryGroups` marca estos grupos con
+`asyncCreate: true`. `fillUnansweredFormInputs` (ahora `async`) separa el
+llenado en dos fases: dispara el clic de todas las preguntas `asyncCreate`
+primero, sin verificar nada todavía, y recién al final espera UNA sola vez
+(polling cada 250ms, tope de 6s) a que Google termine de sincronizar todo el
+lote — en vez de esperar pregunta por pregunta, que con 24 preguntas hubiera
+tardado más de un minuto. `startTesistabRun` ahora hace `await` de esa
+llamada.
+
+**Prueba de regresión** (`forms/tests/extension-fill-widgets.test.js`, carga
+el `content.js` real vía jsdom): el simulador de clic ahora reproduce el
+retraso asincrónico real (antes actualizaba el input oculto en el mismo tick,
+lo cual ocultaba exactamente este bug). Se agregó un test específico que mide
+el tiempo total de llenar 2 preguntas asincrónicas y confirma que se resuelven
+juntas (una sola espera) y no una por una — si alguien reintroduce el patrón
+"clic, esperar, clic, esperar" por pregunta, ese test lo detecta por tiempo.
+
+De paso, se encontró y corrigió un test flaky preexistente y no relacionado:
+`forms/tests/submit-xss.test.js` elegía un puerto aleatorio en el rango
+6600-6899, que se solapa con puertos de la lista "bad ports" del Fetch spec
+que Node/undici también aplica (6665-6669, 6697) — 1 de cada pocas corridas de
+`npm test` fallaba con "TypeError: fetch failed" / "bad port" sin relación
+alguna con el código bajo prueba. Movido a 6900-7299 (fuera de esa lista y sin
+solaparse con los rangos de los otros archivos de test); confirmado estable en
+5 corridas consecutivas de `npm test` tras el cambio, contra al menos 1 fallo
+en 3 corridas antes.
+
+**Pendiente que requiere manos del usuario:** confirmar en vivo recargando la
+extensión desde `brave://extensions`. Esa página no se puede automatizar (ni
+por navegación CDP ni por control de UI a nivel de sistema operativo: el
+acceso de computer-use a navegadores es de solo lectura por diseño de
+seguridad), así que este único paso no se pudo cerrar sin la persona usuaria.
