@@ -131,6 +131,29 @@ describe("ciclo de vida del proyecto", () => {
     assert.equal(lista.body.proyectos[0].nombre, "Proyecto A");
     assert.ok(lista.body.limite > 0, "informa el límite del plan");
   });
+
+  test("una edición con versión antigua devuelve 409 y no pisa cambios nuevos", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "versionado@test.local");
+    const creado = await api("POST", "/proyectos", token, {
+      nombre: "Versión inicial", instrumento: INSTRUMENTO,
+    });
+    const { id, version } = creado.body.proyecto;
+    assert.equal(version, 1);
+
+    const actualizado = await api("PATCH", `/proyectos/${id}`, token, {
+      nombre: "Cambio vigente", version,
+    });
+    assert.equal(actualizado.status, 200);
+    assert.equal(actualizado.body.proyecto.version, 2);
+
+    const obsoleto = await api("PATCH", `/proyectos/${id}`, token, {
+      nombre: "Cambio obsoleto", version,
+    });
+    assert.equal(obsoleto.status, 409);
+    assert.equal(obsoleto.body.code, "PROJECT_VERSION_CONFLICT");
+    assert.equal((await api("GET", `/proyectos/${id}`, token)).body.proyecto.nombre, "Cambio vigente");
+  });
 });
 
 describe("aislamiento entre usuarios", () => {

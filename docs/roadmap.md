@@ -1,5 +1,12 @@
 # Roadmap de TesisHub
 
+> **Archivo historico, no fuente operativa.** Conserva decisiones y estimaciones
+> de julio de 2026 que ya fueron reemplazadas (por ejemplo Postgres en Render,
+> PayPal/USD, cuotas Forms por corrida y retencion indefinida). La fuente actual
+> para despliegue es `docs/PRODUCTION_RUNBOOK.md`: Neon sigue como base,
+> Taypi/PEN es la pasarela, Forms cobra por respuesta, R2 retiene 30 dias y el
+> plan Institucion permanece oculto hasta implementar organizaciones y roles.
+
 Acordado el 2026-07-18. Cada fase funciona por sí sola y deja valor aunque se pare ahí. El orden respeta las dependencias reales (no empezar una fase sin la anterior salvo que se indique).
 
 ## Ya hecho (base para todo lo demás)

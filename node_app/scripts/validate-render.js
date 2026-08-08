@@ -59,6 +59,8 @@ for (const key of [
 assert(envValue(api, "ARTIFACT_RETENTION_DAYS") === "30", "R2 debe retener artefactos 30 dias.");
 assert(envValue(api, "ARTIFACT_SIGNED_URL_SECONDS") === "300", "Las URLs R2 deben durar 300 segundos.");
 assert(envValue(api, "TAYPI_TIMEOUT_MS") === "10000", "Taypi debe tener timeout de 10 segundos por intento.");
+assert(envValue(api, "TAYPI_SANDBOX") === "true",
+  "Taypi debe permanecer en sandbox mientras el gate comercial del Blueprint este cerrado.");
 assert(envValue(api, "REGISTRATION_ENABLED") === "false", "El registro por email debe seguir apagado.");
 assert(envValue(api, "TESISTAB_RUN_JOBS_INLINE") === "false", "API no debe ejecutar Forms inline.");
 assert(!envMap(api).has("ADMIN_API_KEY"),
@@ -106,6 +108,9 @@ assert((ciSource.match(/node-version:\s*["']24["']/g) ?? []).length === 4,
   "Todos los jobs CI deben usar Node 24.");
 assert(/permissions:\s*\n\s+contents:\s*read/.test(ciSource),
   "CI debe declarar permisos minimos contents: read.");
+const serverSource = fs.readFileSync(path.join(root, "node_app/server.js"), "utf8");
+assert(serverSource.includes("taypiCheckoutEnabledFromEnv"),
+  "El runtime debe aplicar el gate comercial antes de exponer checkout Taypi.");
 
 if (issues.length) {
   process.stderr.write(`${issues.map((issue) => `- ${issue}`).join("\n")}\n`);

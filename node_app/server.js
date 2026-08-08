@@ -69,6 +69,11 @@ import {
   setEntitlementBalances,
   settleEntitlement,
   findDevicePairingByCodeHash,
+  findAuthoritativeUserByEmail,
+  findAuthoritativeUserById,
+  findAuthoritativeUserByIdentity,
+  saveAuthoritativeUser,
+  usingPostgres,
   updateDevicePairing,
   updateDurableJob,
   updateDurableJobBatch,
@@ -81,9 +86,11 @@ import {
   createTaypiClient,
   normalizeTaypiCheckout,
   parseTaypiEvent,
+  taypiCheckoutEnabledFromEnv,
 } from "./lib/payments/taypi.js";
 import { errorLogFields, metrics, structuredLog } from "./lib/observability.js";
 import { googleClientId, googleEnabled, verifyGoogleIdToken } from "./lib/google-auth.js";
+import { isEmailRegistrationEnabled, isRestorableUser } from "./lib/auth-policy.js";
 // Proyecto de tesis: el instrumento se define UNA vez aqui y lo reutilizan las
 // herramientas, en vez de re-escribirlo en cada una.
 import {
@@ -148,6 +155,7 @@ if (LEGACY_API_SUNSET_HEADER === "Invalid Date") {
 }
 const artifactStore = createR2ArtifactStore();
 const taypi = createTaypiClient();
+const taypiCheckoutEnabled = taypiCheckoutEnabledFromEnv();
 const ALLOWED_ORIGIN_RAW = String(process.env.CORS_ORIGIN ?? "*").trim();
 const ALLOWED_ORIGINS = ALLOWED_ORIGIN_RAW.split(",")
   .map((item) => item.trim())
@@ -206,8 +214,10 @@ const LOGIN_WINDOW_MS = Number.parseInt(process.env.LOGIN_WINDOW_SECONDS ?? "900
 
 // ── Auto-registro (plan gratuito) ───────────────────────────────────────────
 // Se puede apagar sin tocar codigo si hiciera falta cerrar el registro.
-const REGISTRATION_ENABLED = !new Set(["0", "false", "no", "off"])
-  .has(String(process.env.REGISTRATION_ENABLED ?? "false").trim().toLowerCase());
+// Hasta disponer de dominio y correo transaccional, produccion solo permite
+// alta publica mediante Google. El flag se conserva exclusivamente para
+// pruebas y desarrollo local de compatibilidad.
+const REGISTRATION_ENABLED = isEmailRegistrationEnabled();
 // Cuentas nuevas por IP. La ventana es larga (24 h por defecto) a proposito:
 // con una ventana corta se pueden crear cuentas en tandas indefinidamente.
 const REGISTER_MAX_PER_IP = Number.parseInt(process.env.REGISTER_MAX_PER_IP ?? "3", 10);
@@ -615,9 +625,10 @@ const usesLeftOf = (owner, tool) => (
 // Descuenta 1 uso o lanza 403. En modo dev sin store (AUTH_REQUIRED=false) el
 // usuario sintetico no existe en users: acceso ilimitado.
 const consumeUse = async (authUser, tool, amount = 1, metadata = {}) => {
-  const owner = users.find((item) => item.id === authUser.id);
+  const owner = await authoritativeUserById(authUser.id);
   if (!owner) return null;
   if (owner.role === "admin") return null;
+  const ownerExpectedUpdatedAt = owner.updatedAt;
   normalizeUses(owner);
   const charged = await consumeEntitlement({
     userId: owner.id,
@@ -639,7 +650,7 @@ const consumeUse = async (authUser, tool, amount = 1, metadata = {}) => {
     ? `${amount} respuesta(s) de Forms consumida(s) (quedan ${owner.uses.forms})`
     : `Uso de ${TOOL_LABELS[tool]} (quedan ${owner.uses[tool]})`);
   owner.updatedAt = new Date().toISOString();
-  await writeUsers();
+  await commitUser(owner, ownerExpectedUpdatedAt);
   return owner.uses[tool];
 };
 
@@ -651,8 +662,9 @@ const refundUse = async (
   amount = 1,
   { idempotencyKey = null } = {},
 ) => {
-  const owner = users.find((item) => item.id === userId);
+  const owner = await authoritativeUserById(userId);
   if (!owner || owner.role === "admin") return;
+  const ownerExpectedUpdatedAt = owner.updatedAt;
   normalizeUses(owner);
   const refunded = await refundEntitlement({
     userId, tool, amount, idempotencyKey, metadata: { motivo },
@@ -664,7 +676,7 @@ const refundUse = async (
   owner.formsUsesUsed = owner.usesConsumed.forms;
   logActivity(owner, `Uso de ${TOOL_LABELS[tool]} devuelto (${motivo})`);
   owner.updatedAt = new Date().toISOString();
-  await writeUsers();
+  await commitUser(owner, ownerExpectedUpdatedAt);
 };
 
 // ── Usos de jobs de IA: consumo con red de seguridad ────────────────────────
@@ -695,8 +707,9 @@ const settleJobUse = async (jobId, userId, tool, { refund }) => {
   await flushStore();
 };
 
-// Al arrancar: todo uso anotado corresponde a un job que ya no existe (los
-// jobs no sobreviven al reinicio), asi que se devuelve.
+// Al arrancar: un uso pendiente corresponde a una ejecucion que no puede
+// reanudarse de forma exacta. El job durable se conserva como fallido y el
+// movimiento idempotente devuelve la cuota.
 const recoverPendingUses = async () => {
   const pending = drainPendingUses();
   if (pending.length === 0) return;
@@ -765,23 +778,62 @@ const cleanUsesPayload = (raw) => {
   return any ? out : null;
 };
 
-// La escritura es diferida (ver lib/store): la memoria es la fuente de verdad
-// en caliente y la persistencia sale por detras en una cola ordenada. Se
-// mantiene utilizable de forma sincrona a proposito — la llaman decenas de
-// sitios, incluido el callback de consumo de usos de Forms, que es sincrono
-// por contrato.
+// En producción Neon es la autoridad y `users` es solo una caché de la única
+// instancia API: autenticación y mutaciones críticas refrescan y confirman por
+// consulta dirigida. En desarrollo y tests sin DATABASE_URL, el arreglo y el
+// archivo JSON conservan el adaptador histórico.
 //
-// Devuelve la promesa del vaciado para quien SI necesite durabilidad antes de
-// responder. La regla: si al usuario se le confirma algo que no puede
-// reconstruir (su clave de API, su contraseña nueva, la recarga que le hizo el
-// admin), hay que `await writeUsers()`. Si no, se ignora el retorno y la
-// escritura sale por detras.
-//
-// Las rutas criticas esperan esta promesa y fallan si Neon no confirma. Las
-// marcas reconstruibles pueden encolarla sin bloquear la respuesta.
+// `writeUsers` queda para el adaptador masivo/compatibilidad. Las rutas críticas
+// usan `commitUser`, que bloquea la fila, verifica la versión observada y no
+// responde antes del COMMIT.
 const writeUsers = () => {
   persistUsers(users);
   return flushStore();
+};
+
+const cacheCommittedUser = (committed) => {
+  if (!committed) return null;
+  const index = users.findIndex((candidate) => candidate.id === committed.id);
+  if (index >= 0) Object.assign(users[index], committed);
+  else users.push(committed);
+  return index >= 0 ? users[index] : committed;
+};
+
+const authoritativeUserById = async (id) => {
+  if (!usingPostgres) return users.find((candidate) => candidate.id === id) ?? null;
+  return cacheCommittedUser(await findAuthoritativeUserById(id));
+};
+
+const authoritativeUserByEmail = async (emailLower) => {
+  if (!usingPostgres) {
+    return users.find((candidate) => candidate.emailLower === emailLower) ?? null;
+  }
+  return cacheCommittedUser(await findAuthoritativeUserByEmail(emailLower));
+};
+
+const authoritativeUserByGoogleSub = async (subject) => {
+  if (!usingPostgres) return users.find((candidate) => candidate.googleSub === subject) ?? null;
+  return cacheCommittedUser(await findAuthoritativeUserByIdentity("google", subject));
+};
+
+const commitUser = async (user, expectedUpdatedAt = null) => {
+  if (!usingPostgres) {
+    await writeUsers();
+    return user;
+  }
+  try {
+    return cacheCommittedUser(await saveAuthoritativeUser(user, { expectedUpdatedAt }));
+  } catch (error) {
+    if (error?.code === "23505") {
+      throw new HttpError(409, "La identidad o el correo ya pertenece a otra cuenta.", {
+        code: "IDENTITY_ALREADY_EXISTS",
+      });
+    }
+    if (error?.code === "USER_VERSION_CONFLICT") {
+      throw new HttpError(409, error.message, { code: "USER_VERSION_CONFLICT", retryable: true });
+    }
+    throw error;
+  }
 };
 
 const sanitizeUser = (user) => ({
@@ -923,7 +975,6 @@ const createUser = ({
   logActivity(user, "Cuenta creada");
 
   users.push(user);
-  writeUsers();
   return user;
 };
 
@@ -1075,7 +1126,8 @@ const ensureBootstrapAdmin = () => {
     plan: "enterprise",
     subscriptionEndsAt: null,
   });
-  if (syncAdminApiKey(admin)) writeUsers();
+  syncAdminApiKey(admin);
+  writeUsers();
   structuredLog("warn", "auth.bootstrap_admin_created", {
     generatedPassword: generated,
     operatorActionRequired: true,
@@ -1172,7 +1224,7 @@ const requireAuth = async (req, opts = {}) => {
     || !Number.isFinite(sessionExpiresAt) || sessionExpiresAt <= Date.now()) {
     throw new HttpError(401, "Sesion revocada o expirada.");
   }
-  const user = users.find((item) => item.id === claims.sub);
+  const user = await authoritativeUserById(claims.sub);
   if (!user) throw new HttpError(401, "Usuario del token no existe.");
   if (user.status !== "active") throw new HttpError(403, "Usuario inactivo.");
   if ((claims.ver ?? 1) !== (user.tokenVersion ?? 1)) {
@@ -1197,13 +1249,14 @@ const logActivity = (user, detail) => {
 // Metricas de generacion por usuario (Excel de tabulacion o de confiabilidad;
 // el usuario dev sin store no se contabiliza).
 const registerGeneration = async (authUser, detail) => {
-  const owner = users.find((item) => item.id === authUser.id);
+  const owner = await authoritativeUserById(authUser.id);
   if (!owner) return;
+  const ownerExpectedUpdatedAt = owner.updatedAt;
   owner.generationsCount = (owner.generationsCount ?? 0) + 1;
   owner.lastGenerationAt = new Date().toISOString();
   owner.updatedAt = owner.lastGenerationAt;
   logActivity(owner, detail);
-  await writeUsers();
+  await commitUser(owner, ownerExpectedUpdatedAt);
 };
 
 // ── Rate limiting de login (en memoria) ─────────────────────────────────────
@@ -1428,27 +1481,23 @@ formsApp.setKeyValidator((apiKey) => {
   const owner = findKeyOwner(apiKey);
   if (!owner) return { valid: false, reason: "clave_desconocida" };
   if (owner.status !== "active") return { valid: false, reason: "usuario_inactivo" };
+  const formsResponses = owner.role === "admin" ? null : usesLeftOf(owner, "forms");
   return {
     valid: true,
     email: owner.email,
     plan: owner.plan,
     role: owner.role,
-    usesLeft: usesLeftOf(owner, "forms"),
+    // `usesLeft` se conserva durante la ventana de compatibilidad. El contrato
+    // comercial y la extension consumen respuestas, no corridas de 250.
+    usesLeft: formsResponses,
+    formsResponses,
   };
 });
 
-// 1 uso de Forms = 1 corrida de llenado. El consumo ocurre al crear el job
-// (los admins tienen usos ilimitados: usesLeft null).
-formsApp.setUsageConsumer((apiKey) => {
-  const owner = findKeyOwner(apiKey);
-  if (!owner) return { ok: false, reason: "clave_desconocida" };
-  if (owner.role === "admin") return { ok: true, usesLeft: null };
-  return consumeUse(owner, "forms", 250).then((left) => ({
-    ok: true, usesLeft: left, responsesLeft: left,
-  })).catch(() => {
-    return { ok: false, reason: "sin_usos" };
-  });
-});
+// El adaptador HTTP legado sigue disponible, pero usa el mismo usageManager
+// transaccional que /api/forms/jobs. Se desactiva expresamente el consumidor
+// por "corrida de 250" para que ningun camino pueda volver a esa semantica.
+formsApp.setUsageConsumer(null);
 
 const parseJsonBody = async (req) => {
   const rawBody = await readRawBody(req);
@@ -1462,6 +1511,10 @@ const parseJsonBody = async (req) => {
 
 if (typeof formsApp.setUsageManager === "function") {
   formsApp.setUsageManager({
+    // Los trabajos terminales conservan su userId en Neon, no la credencial
+    // del navegador. Esto permite reintentar una liquidacion tras reiniciar el
+    // API sin persistir secretos ni dejar respuestas reservadas para siempre.
+    supportsCredentiallessSettlement: true,
     async reserve(apiKey, requested, meta = {}) {
       const owner = findKeyOwner(apiKey);
       if (!owner) return { ok: false, reason: "clave_desconocida" };
@@ -1495,7 +1548,11 @@ if (typeof formsApp.setUsageManager === "function") {
       };
     },
     async settle(apiKey, reservationId, outcome = {}) {
-      const owner = findKeyOwner(apiKey);
+      let owner = apiKey ? findKeyOwner(apiKey) : null;
+      if (!owner && outcome.jobId) {
+        const durableJob = await getDurableJob(String(outcome.jobId));
+        owner = durableJob ? users.find((item) => item.id === durableJob.userId) : null;
+      }
       if (!owner) return { ok: false, reason: "clave_desconocida" };
       const accepted = Math.max(0, Math.floor(Number(outcome.accepted) || 0));
       if (owner.role === "admin") {
@@ -1684,8 +1741,10 @@ if (typeof formsApp.setJobRepository === "function") {
 }
 
 const server = http.createServer(async (req, res) => {
-  const requestId = String(req.headers["x-request-id"] ?? "").trim().slice(0, 100)
-    || crypto.randomUUID();
+  const requestedId = String(req.headers["x-request-id"] ?? "").trim();
+  const requestId = /^[a-zA-Z0-9._:-]{8,100}$/.test(requestedId)
+    ? requestedId
+    : crypto.randomUUID();
   res.setHeader("X-Request-Id", requestId);
   // Cabeceras de seguridad para TODA la superficie HTTP, incluidas las rutas
   // de Forms (por eso van antes del despacho). La API sirve JSON: no debe
@@ -1754,8 +1813,9 @@ const server = http.createServer(async (req, res) => {
           devicePairing: true,
           versionedProjects: true,
           formsResponseReservations: true,
-          taypiPayments: taypi.enabled,
-          formsTopups: taypi.enabled
+          commercialLaunch: taypiCheckoutEnabled,
+          taypiPayments: taypiCheckoutEnabled,
+          formsTopups: taypiCheckoutEnabled
             && Number.isSafeInteger(Number(process.env.FORMS_RESPONSE_PRICE_CENTS))
             && Number(process.env.FORMS_RESPONSE_PRICE_CENTS) > 0,
         },
@@ -1768,7 +1828,7 @@ const server = http.createServer(async (req, res) => {
     // saldo: esa decisión pertenece exclusivamente al webhook HMAC de Taypi.
     if (req.method === "POST" && pathname === "/payments/taypi/checkout") {
       const user = await requireAuth(req);
-      if (!taypi.enabled) {
+      if (!taypiCheckoutEnabled) {
         throw new HttpError(503, "Los pagos todavía no están habilitados.", {
           code: "PAYMENTS_NOT_CONFIGURED", retryable: true,
         });
@@ -1831,7 +1891,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && pathname === "/payments/taypi/forms-topup") {
       const user = await requireAuth(req);
-      if (!taypi.enabled) {
+      if (!taypiCheckoutEnabled) {
         throw new HttpError(503, "Los pagos todavía no están habilitados.", {
           code: "PAYMENTS_NOT_CONFIGURED", retryable: true,
         });
@@ -1939,7 +1999,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const order = stored.payload?.order ?? {};
-      const owner = users.find((item) => item.id === stored.userId);
+      let owner = await authoritativeUserById(stored.userId);
       if (!owner) {
         sendJson(res, 200, { ok: true, ignored: true });
         return;
@@ -1992,6 +2052,8 @@ const server = http.createServer(async (req, res) => {
         },
       });
       if (isPaid) {
+        owner = await authoritativeUserById(owner.id);
+        const ownerExpectedUpdatedAt = owner.updatedAt;
         if (!isFormsTopup) {
           owner.plan = purchase.id;
           owner.subscriptionEndsAt = result.subscriptionEndsAt
@@ -2005,7 +2067,7 @@ const server = http.createServer(async (req, res) => {
             ? `Pago Taypi acreditó ${topupQuantity} respuestas de Forms`
             : `Pago Taypi acreditó el plan ${purchase.name}`);
         }
-        await writeUsers();
+        await commitUser(owner, ownerExpectedUpdatedAt);
       }
       metrics.increment("payments_webhooks_total", 1, {
         provider: "taypi", outcome: result.credited ? "credited" : "duplicate",
@@ -2022,7 +2084,7 @@ const server = http.createServer(async (req, res) => {
       const rateKey = `${ip}|${email}`;
       assertLoginAllowedForIp(ip);
       assertLoginAllowed(rateKey);
-      const user = users.find((item) => item.emailLower === email);
+      let user = await authoritativeUserByEmail(email);
       if (!user || !checkPassword(password, user)) {
         registerLoginFailure(rateKey);
         if (ip && ip !== "unknown") registerLoginFailure(`ip|${ip}`);
@@ -2037,9 +2099,10 @@ const server = http.createServer(async (req, res) => {
       }
       // La suscripcion vencida NO bloquea el login: el usuario puede entrar a
       // ver su cuenta y usar Forms con sus usos; /generate si exige dias.
+      const loginExpectedUpdatedAt = user.updatedAt;
       user.lastLoginAt = new Date().toISOString();
       user.updatedAt = user.lastLoginAt;
-      await writeUsers();
+      user = await commitUser(user, loginExpectedUpdatedAt);
       const signed = await persistSignedSession(user, signToken(user));
       sendJson(res, 200, {
         ok: true,
@@ -2086,14 +2149,17 @@ const server = http.createServer(async (req, res) => {
       registerRegistration(ip);
       logActivity(user, "Se registró desde la web (plan gratuito)");
       // La cuenta debe estar en firme antes de devolver la sesion.
-      await writeUsers();
+      const committedUser = await commitUser(user).catch((error) => {
+        users = users.filter((candidate) => candidate.id !== user.id);
+        throw error;
+      });
 
-      const signed = await persistSignedSession(user, signToken(user));
+      const signed = await persistSignedSession(committedUser, signToken(committedUser));
       sendJson(res, 201, {
         ok: true,
         token: signed.token,
         tokenExpiresAt: signed.expiresAt,
-        user: sanitizeUser(user),
+        user: sanitizeUser(committedUser),
       });
       return;
     }
@@ -2121,12 +2187,12 @@ const server = http.createServer(async (req, res) => {
       const emailLower = normalizeEmail(perfil.email);
       // Google se resuelve siempre por el identificador estable `sub`.
       // Compartir correo nunca vincula automaticamente dos credenciales.
-      let user = users.find((item) => item.googleSub === perfil.sub);
+      let user = await authoritativeUserByGoogleSub(perfil.sub);
       const previousUser = user ? structuredClone(user) : null;
       let creado = false;
 
       if (!user) {
-        const emailOwner = users.find((item) => item.emailLower === emailLower);
+        const emailOwner = await authoritativeUserByEmail(emailLower);
         if (emailOwner) {
           throw new HttpError(
             409,
@@ -2138,6 +2204,8 @@ const server = http.createServer(async (req, res) => {
         // correo. Que Google verifique el correo no impide que alguien tenga
         // muchas cuentas de Google.
         assertRegisterAllowed(ip);
+        // `user` es local a esta petición; el CAS del commit protege la fila.
+        // eslint-disable-next-line require-atomic-updates
         user = createUser({
           email: perfil.email,
           // Sin contraseña utilizable: se entra por Google. Es aleatoria y no
@@ -2156,9 +2224,8 @@ const server = http.createServer(async (req, res) => {
       } else if (user.status !== "active") {
         throw new HttpError(403, "Usuario inactivo.");
       } else {
-        const emailOwner = users.find(
-          (item) => item.emailLower === emailLower && item.id !== user.id,
-        );
+        const emailOwnerCandidate = await authoritativeUserByEmail(emailLower);
+        const emailOwner = emailOwnerCandidate?.id !== user.id ? emailOwnerCandidate : null;
         if (!emailOwner) {
           user.email = perfil.email;
           user.emailLower = emailLower;
@@ -2173,21 +2240,19 @@ const server = http.createServer(async (req, res) => {
       user.lastLoginAt = new Date().toISOString();
       user.updatedAt = user.lastLoginAt;
       // Una cuenta recien creada no puede confirmarse antes de estar en firme.
-      try {
-        await writeUsers();
-      } catch (error) {
+      const committedUser = await commitUser(user, previousUser?.updatedAt ?? null).catch((error) => {
         if (creado) users = users.filter((candidate) => candidate.id !== user.id);
         else if (previousUser) Object.assign(user, previousUser);
         throw error;
-      }
+      });
 
-      const signed = await persistSignedSession(user, signToken(user));
+      const signed = await persistSignedSession(committedUser, signToken(committedUser));
       sendJson(res, creado ? 201 : 200, {
         ok: true,
         creado,
         token: signed.token,
         tokenExpiresAt: signed.expiresAt,
-        user: sanitizeUser(user),
+        user: sanitizeUser(committedUser),
       });
       return;
     }
@@ -2219,9 +2284,8 @@ const server = http.createServer(async (req, res) => {
           code: "IDENTITY_EMAIL_MISMATCH",
         });
       }
-      const subjectOwner = users.find(
-        (candidate) => candidate.googleSub === profile.sub && candidate.id !== user.id,
-      );
+      const subjectOwnerCandidate = await authoritativeUserByGoogleSub(profile.sub);
+      const subjectOwner = subjectOwnerCandidate?.id !== user.id ? subjectOwnerCandidate : null;
       if (subjectOwner) {
         throw new HttpError(409, "Esa identidad Google ya pertenece a otra cuenta.", {
           code: "IDENTITY_ALREADY_LINKED",
@@ -2229,12 +2293,13 @@ const server = http.createServer(async (req, res) => {
       }
       const previousSub = user.googleSub;
       const previousLinkedAt = user.googleLinkedAt;
+      const previousUpdatedAt = user.updatedAt;
       user.googleSub = profile.sub;
       user.googleLinkedAt = new Date().toISOString();
       user.updatedAt = user.googleLinkedAt;
       logActivity(user, "Vinculó su acceso con Google");
       try {
-        await writeUsers();
+        await commitUser(user, previousUpdatedAt);
       } catch (error) {
         user.googleSub = previousSub;
         user.googleLinkedAt = previousLinkedAt;
@@ -2275,11 +2340,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === "POST" && pathname === "/auth/sessions/revoke-others") {
       const user = await requireAuth(req);
+      const userExpectedUpdatedAt = user.updatedAt;
       const currentHash = sessionTokenHash(getBearerToken(req));
       const revoked = await revokeOtherSessions(user.id, currentHash);
       logActivity(user, `Revoco ${revoked} sesion(es) adicional(es)`);
       user.updatedAt = new Date().toISOString();
-      await writeUsers();
+      await commitUser(user, userExpectedUpdatedAt);
       sendJson(res, 200, { ok: true, revoked });
       return;
     }
@@ -2453,7 +2519,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, { ok: true, status: "pending", expiresAt: new Date(pairing.expiresAt).toISOString() });
         return;
       }
-      const owner = users.find((item) => item.id === pairing.userId);
+      const owner = await authoritativeUserById(pairing.userId);
       if (!owner || owner.status !== "active") {
         throw new HttpError(403, "La cuenta que aprobo el dispositivo no esta activa.");
       }
@@ -2479,6 +2545,7 @@ const server = http.createServer(async (req, res) => {
         lastUsedAt: null,
         revokedAt: null,
       };
+      const ownerExpectedUpdatedAt = owner.updatedAt;
       owner.deviceCredentials = [
         ...(Array.isArray(owner.deviceCredentials) ? owner.deviceCredentials : []),
         device,
@@ -2486,7 +2553,7 @@ const server = http.createServer(async (req, res) => {
       owner.updatedAt = nowIso;
       logActivity(owner, `Vinculo el dispositivo "${device.name}"`);
       try {
-        await writeUsers();
+        await commitUser(owner, ownerExpectedUpdatedAt);
       } catch (err) {
         owner.deviceCredentials = owner.deviceCredentials.filter((item) => item.id !== device.id);
         await updateDevicePairing(pairing.id, {
@@ -2522,13 +2589,14 @@ const server = http.createServer(async (req, res) => {
     const deviceRoute = pathname.match(/^\/auth\/devices\/([0-9a-fA-F-]+)$/);
     if (deviceRoute && req.method === "DELETE") {
       const user = await requireAuth(req);
+      const userExpectedUpdatedAt = user.updatedAt;
       const device = (Array.isArray(user.deviceCredentials) ? user.deviceCredentials : [])
         .find((item) => item.id === deviceRoute[1] && !item.revokedAt);
       if (!device) throw new HttpError(404, "Dispositivo no encontrado.");
       device.revokedAt = new Date().toISOString();
       user.updatedAt = device.revokedAt;
       logActivity(user, `Revoco el dispositivo "${device.name}"`);
-      await writeUsers();
+      await commitUser(user, userExpectedUpdatedAt);
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -2577,7 +2645,7 @@ const server = http.createServer(async (req, res) => {
       await borrarProyectosDeUsuario(user.id);
       users = users.filter((item) => item.id !== user.id);
       await deleteUserStoreData(user.id);
-      await writeUsers();
+      if (!usingPostgres) await writeUsers();
       structuredLog("info", "account.deleted", { remainingUserCount: users.length });
       sendJson(res, 200, {
         ok: true,
@@ -2602,6 +2670,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (req.method === "POST") {
+        const userExpectedUpdatedAt = user.updatedAt;
         const installationId = String(req.headers["x-device-id"] ?? "").trim();
         if (installationId && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(installationId)) {
           throw new HttpError(400, "X-Device-Id debe ser un UUID v4.", {
@@ -2647,7 +2716,7 @@ const server = http.createServer(async (req, res) => {
           logActivity(user, "Generó su clave de API heredada");
         }
         user.updatedAt = nowIso;
-        await writeUsers();
+        await commitUser(user, userExpectedUpdatedAt);
         // La clave en claro solo viaja en esta respuesta.
         sendJson(res, 200, {
           ok: true,
@@ -2659,12 +2728,13 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (req.method === "DELETE") {
+        const userExpectedUpdatedAt = user.updatedAt;
         delete user.apiKeyHash;
         delete user.apiKeyLast4;
         delete user.apiKeyCreatedAt;
         user.updatedAt = new Date().toISOString();
         logActivity(user, "Revocó su clave de API");
-        await writeUsers();
+        await commitUser(user, userExpectedUpdatedAt);
         sendJson(res, 200, { ok: true });
         return;
       }
@@ -2711,6 +2781,7 @@ const server = http.createServer(async (req, res) => {
     // limiting: un token robado no puede probar contraseñas sin freno.
     if (req.method === "POST" && pathname === "/auth/change-password") {
       const user = await requireAuth(req);
+      const userExpectedUpdatedAt = user.updatedAt;
       const payload = await parseJsonBody(req);
       const rateKey = `chpwd|${user.id}`;
       assertLoginAllowed(rateKey);
@@ -2726,7 +2797,7 @@ const server = http.createServer(async (req, res) => {
       user.tokenVersion = (user.tokenVersion ?? 1) + 1;
       logActivity(user, "Cambió su contraseña");
       user.updatedAt = new Date().toISOString();
-      await writeUsers();
+      await commitUser(user, userExpectedUpdatedAt);
       await revokeSessionsByUser(user.id);
       const signed = await persistSignedSession(user, signToken(user));
       sendJson(res, 200, { ok: true, token: signed.token, tokenExpiresAt: signed.expiresAt });
@@ -2749,8 +2820,7 @@ const server = http.createServer(async (req, res) => {
       if (!incoming || incoming.length === 0) {
         throw new HttpError(400, "El respaldo debe incluir un arreglo 'users' con al menos un usuario.");
       }
-      const shapeOk = incoming.every((u) => u && typeof u === "object"
-        && u.id && u.emailLower && u.passwordHash && u.passwordSalt);
+      const shapeOk = incoming.every(isRestorableUser);
       if (!shapeOk) {
         throw new HttpError(400, "El respaldo tiene un formato invalido (faltan campos de usuario).");
       }
@@ -2788,8 +2858,11 @@ const server = http.createServer(async (req, res) => {
       });
       // La cuenta debe estar en firme antes de confirmarla: el admin le pasa
       // esas credenciales al usuario y no puede reconstruirlas.
-      await writeUsers();
-      sendJson(res, 201, { ok: true, user: sanitizeUser(user) });
+      const committedUser = await commitUser(user).catch((error) => {
+        users = users.filter((candidate) => candidate.id !== user.id);
+        throw error;
+      });
+      sendJson(res, 201, { ok: true, user: sanitizeUser(committedUser) });
       return;
     }
 
@@ -2798,14 +2871,15 @@ const server = http.createServer(async (req, res) => {
     const userApiKeyRoute = pathname.match(/^\/auth\/users\/([0-9a-fA-F-]+)\/api-key$/);
     if (userApiKeyRoute && req.method === "DELETE") {
       await requireAuth(req, { adminOnly: true });
-      const target = users.find((item) => item.id === userApiKeyRoute[1]);
+      const target = await authoritativeUserById(userApiKeyRoute[1]);
       if (!target) throw new HttpError(404, "Usuario no encontrado.");
+      const targetExpectedUpdatedAt = target.updatedAt;
       delete target.apiKeyHash;
       delete target.apiKeyLast4;
       delete target.apiKeyCreatedAt;
       target.updatedAt = new Date().toISOString();
       logActivity(target, "Clave de API revocada por el administrador");
-      await writeUsers();
+      await commitUser(target, targetExpectedUpdatedAt);
       sendJson(res, 200, { ok: true, user: sanitizeUser(target) });
       return;
     }
@@ -2814,8 +2888,9 @@ const server = http.createServer(async (req, res) => {
     if (authUserRoute && req.method === "PATCH") {
       const admin = await requireAuth(req, { adminOnly: true });
       const targetId = authUserRoute[1];
-      const target = users.find((item) => item.id === targetId);
+      const target = await authoritativeUserById(targetId);
       if (!target) throw new HttpError(404, "Usuario no encontrado.");
+      const targetExpectedUpdatedAt = target.updatedAt;
 
       const payload = await parseJsonBody(req);
       if (target.id === admin.id) {
@@ -2868,7 +2943,7 @@ const server = http.createServer(async (req, res) => {
         });
       }
       Object.assign(target, updated);
-      await writeUsers();
+      await commitUser(target, targetExpectedUpdatedAt);
       if (payload?.password !== undefined) await revokeSessionsByUser(target.id);
       sendJson(res, 200, { ok: true, user: sanitizeUser(target) });
       return;
@@ -2880,7 +2955,7 @@ const server = http.createServer(async (req, res) => {
       if (targetId === admin.id) {
         throw new HttpError(400, "No puedes eliminar tu propio usuario admin.");
       }
-      const target = users.find((item) => item.id === targetId);
+      const target = await authoritativeUserById(targetId);
       if (!target) throw new HttpError(404, "Usuario no encontrado.");
       for (const [id, item] of results.entries()) {
         if (item.ownerUserId === targetId) results.delete(id);
@@ -2897,7 +2972,7 @@ const server = http.createServer(async (req, res) => {
       await borrarProyectosDeUsuario(targetId);
       users = users.filter((item) => item.id !== targetId);
       await deleteUserStoreData(targetId);
-      await writeUsers();
+      if (!usingPostgres) await writeUsers();
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -3977,7 +4052,21 @@ const server = http.createServer(async (req, res) => {
     if (statusCode === 429 && Number.isFinite(err?.retryAfterSeconds)) {
       res.setHeader("Retry-After", String(err.retryAfterSeconds));
     }
-    const message = err instanceof Error ? err.message : "Error no controlado.";
+    // Ningun fallo 5xx devuelve mensajes del proveedor, SQL, rutas internas o
+    // stacks. Los detalles utiles quedan en el log estructurado por codigo y
+    // requestId; el cliente recibe un contrato estable y no sensible.
+    const internalMessage = err instanceof Error ? err.message : "Error no controlado.";
+    const message = statusCode >= 500
+      ? "No se pudo completar la solicitud. Intenta nuevamente."
+      : internalMessage;
+    if (statusCode >= 500) {
+      structuredLog("error", "http.request_failed", {
+        requestId,
+        method: req.method,
+        statusCode,
+        ...errorLogFields(err),
+      });
+    }
     sendJson(res, statusCode, {
       ok: false,
       error: message,

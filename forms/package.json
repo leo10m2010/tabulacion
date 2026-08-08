@@ -12,7 +12,7 @@
     "worker": "node worker.js",
     "build:extension": "node scripts/build-extension.js",
     "tesistab:smoke": "node tesistab-smoke-test.js",
-    "test": "node --test tests/tesistab-api.test.js tests/tesistab-aislamiento.test.js tests/submit-xss.test.js tests/inspect-google-response.test.js tests/extension-fill-widgets.test.js tests/multipage-routes.test.js"
+    "test": "node --test tests/tesistab-api.test.js tests/tesistab-aislamiento.test.js tests/submit-xss.test.js tests/inspect-google-response.test.js tests/extension-fill-widgets.test.js tests/multipage-routes.test.js tests/settlement-retry.test.js"
   },
   "license": "MIT",
   "dependencies": {

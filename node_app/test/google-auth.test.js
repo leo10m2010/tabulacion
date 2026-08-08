@@ -164,6 +164,46 @@ describe("Google configurado", () => {
     assert.equal(renamed.body.user.email, "google-renamed@test.local");
   });
 
+  test("el respaldo y la restauracion conservan una cuenta creada con Google", async () => {
+    const google = await fetch(`${BASE}/auth/google`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ credential: "google-new" }),
+    });
+    assert.ok([200, 201].includes(google.status));
+    const googleUser = (await google.json()).user;
+
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "admin@test.local", password: "ClaveDePrueba123!" }),
+    });
+    assert.equal(login.status, 200);
+    const { token } = await login.json();
+    const headers = { Authorization: `Bearer ${token}` };
+    const backupResponse = await fetch(`${BASE}/auth/users/backup`, { headers });
+    assert.equal(backupResponse.status, 200);
+    const backup = await backupResponse.json();
+    const backedUpGoogleUser = backup.users.find((user) => user.id === googleUser.id);
+    assert.equal(backedUpGoogleUser.passwordEnabled, false);
+    assert.equal(backedUpGoogleUser.googleSub, "sub-google-new");
+
+    const restoreResponse = await fetch(`${BASE}/auth/users/restore`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ users: backup.users }),
+    });
+    assert.equal(restoreResponse.status, 200);
+
+    const restoredLogin = await fetch(`${BASE}/auth/google`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ credential: "google-new" }),
+    });
+    assert.equal(restoredLogin.status, 200);
+    assert.equal((await restoredLogin.json()).user.id, googleUser.id);
+  });
+
   test("no vincula por correo una cuenta manual y permite vinculación con ambas sesiones", async () => {
     const login = async (email, password) => {
       const response = await fetch(`${BASE}/auth/login`, {

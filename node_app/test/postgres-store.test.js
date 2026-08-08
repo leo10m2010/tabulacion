@@ -22,6 +22,14 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN_EMAIL = "admin@test.local";
 const ADMIN_PASSWORD = "ClaveDePrueba123!";
 const PREFIJO = "test_";
+const GOOGLE_CLIENT_ID = "postgres-test.apps.googleusercontent.com";
+const GOOGLE_TEST_PROFILES = {
+  "google-concurrent": {
+    email: "google-concurrent@test.local",
+    email_verified: true,
+    sub: "google-concurrent-http-sub",
+  },
+};
 
 const HAY_DB = Boolean(String(process.env.DATABASE_URL ?? "").trim());
 
@@ -41,6 +49,9 @@ const arrancar = async () => {
       STORE_TABLE_PREFIX: PREFIJO,
       ADMIN_EMAIL,
       ADMIN_PASSWORD,
+      GOOGLE_CLIENT_ID,
+      GOOGLE_TEST_PROFILES_JSON: JSON.stringify(GOOGLE_TEST_PROFILES),
+      NODE_ENV: "test",
     },
     stdio: process.env.VER_LOGS ? "inherit" : "ignore",
   });
@@ -165,10 +176,43 @@ describe("almacen en Postgres", { skip: HAY_DB ? false : "sin DATABASE_URL" }, (
     );
   });
 
-  // No todas las escrituras esperan a Postgres: las que salen de codigo
-  // sincrono (metricas, consumo de usos desde Forms, la marca de ultimo
-  // acceso) se encolan y siguen. Lo que las salva en un deploy es el apagado
-  // ordenado, que vacia la cola al recibir SIGTERM.
+  test("dos altas Google concurrentes crean una sola identidad y sobreviven al reinicio", async () => {
+    const request = () => fetch(`${BASE}/auth/google`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ credential: "google-concurrent" }),
+    });
+    const responses = await Promise.all([request(), request()]);
+    const bodies = await Promise.all(responses.map((response) => response.json()));
+    assert.equal(responses.filter((response) => response.status === 201).length, 1);
+    assert.ok(responses.every((response) => [200, 201, 409].includes(response.status)));
+    const created = bodies.find((body) => body.creado === true);
+    assert.ok(created?.user?.id);
+    const recurrentBody = bodies.find((body, index) => responses[index].status === 200);
+    if (recurrentBody) assert.equal(recurrentBody.user.id, created.user.id);
+
+    const { default: pg } = await import("pg");
+    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+    const identities = await pool.query(
+      `SELECT user_id FROM ${PREFIJO}identities WHERE provider='google' AND subject=$1`,
+      ["google-concurrent-http-sub"],
+    );
+    await pool.end();
+    assert.equal(identities.rowCount, 1);
+    assert.equal(identities.rows[0].user_id, created.user.id);
+
+    await detener();
+    borrarDisco();
+    await arrancar();
+
+    const recurrent = await request();
+    assert.equal(recurrent.status, 200);
+    assert.equal((await recurrent.json()).user.id, created.user.id);
+  });
+
+  // Las rutas críticas ya esperan a PostgreSQL. Esta prueba conserva la
+  // garantía adicional del apagado ordenado para escrituras de compatibilidad
+  // o métricas reconstruibles que todavía usen la cola masiva.
   //
   // OJO: en Windows no se puede comprobar. `child.kill()` alli no entrega una
   // señal interceptable — termina el proceso de golpe y `process.on("SIGTERM")`
@@ -184,8 +228,8 @@ describe("almacen en Postgres", { skip: HAY_DB ? false : "sin DATABASE_URL" }, (
   }, async () => {
     const email = "tesista-persistente@test.local";
 
-    // El login marca lastLoginAt con una escritura NO esperada: la respuesta
-    // sale antes de que Postgres la confirme.
+    // El login confirma lastLoginAt antes de responder; el reinicio inmediato
+    // verifica además que no dependía del disco o de la caché del proceso.
     const sesion = await login(email, "ClaveTesista123!");
     assert.equal(sesion.status, 200);
     const marcaEsperada = sesion.body.user.lastLoginAt;

@@ -233,13 +233,24 @@ const backendArchivo = (rutaUsuarios) => {
         return { ok: true, reservation, balance: { ...saldo(userId, reservation.tool) } };
       }
       const inPlay = reservation.reservedRemaining ?? reservation.requested;
-      const consumed = Math.min(inPlay, Math.max(0, Math.floor(accepted)));
+      // `accepted` es el total acumulado confirmado por el job, no un delta.
+      // Tras un primer settlement con respuestas inciertas, consumir otra vez
+      // ese total agotaria toda la reserva restante al conciliar solo una.
+      const previousAccepted = Math.max(0, Math.floor(Number(reservation.accepted) || 0));
+      const targetAccepted = Math.min(
+        Number(reservation.requested) || 0,
+        Math.max(previousAccepted, Math.floor(Number(accepted) || 0)),
+      );
+      const consumed = Math.min(inPlay, targetAccepted - previousAccepted);
       const uncertain = Math.min(
         inPlay - consumed,
         Math.max(0, Math.floor(Number(uncertainInput) || 0)),
       );
       const refunded = inPlay - consumed - uncertain;
       const actual = saldo(userId, reservation.tool);
+      if (consumed === 0 && refunded === 0 && uncertain === inPlay) {
+        return { ok: true, reservation, balance: { ...actual } };
+      }
       const next = {
         available: actual.available + refunded,
         consumed: actual.consumed + consumed,
@@ -527,6 +538,10 @@ const backendArchivo = (rutaUsuarios) => {
         subscriptionEndsAt: input.subscriptionEndsAt ?? null,
       };
     },
+    async findUserById() { return null; },
+    async findUserByEmail() { return null; },
+    async findUserByIdentity() { return null; },
+    async saveUser() { return null; },
     async cerrar() {},
     async ready() { return true; },
   };
@@ -558,10 +573,90 @@ const backendPostgres = async () => {
     updatedAt: row.updated_at,
   } : null);
 
-  const guardarUsuarios = async (json) => {
-    const client = await pool.connect();
+  const iso = (value) => value?.toISOString?.() ?? value ?? null;
+  const cargarUsuarioAutoritativo = async (whereSql, params) => {
+    const result = await pool.query(
+      `SELECT u.*,
+              google.subject AS google_subject,
+              google.created_at AS google_linked_at
+         FROM ${t.users} u
+         LEFT JOIN ${t.identities} google
+           ON google.user_id=u.id AND google.provider='google'
+        WHERE ${whereSql}
+        LIMIT 1`,
+      params,
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const [devices, balances, audit] = await Promise.all([
+      pool.query(`SELECT * FROM ${t.devices} WHERE user_id=$1 ORDER BY created_at`, [row.id]),
+      pool.query(`SELECT * FROM ${t.balances} WHERE user_id=$1`, [row.id]),
+      pool.query(
+        `SELECT metadata, created_at
+           FROM ${t.audit}
+          WHERE subject_user_id=$1 AND event_type='user_activity'
+          ORDER BY created_at DESC, id DESC LIMIT 30`,
+        [row.id],
+      ),
+    ]);
+    const user = {
+      ...(row.profile ?? row.data ?? {}),
+      id: row.id,
+      email: row.email,
+      emailLower: row.email_lower,
+      role: row.role,
+      status: row.status,
+      plan: row.plan,
+      passwordHash: row.password_hash,
+      passwordSalt: row.password_salt,
+      passwordEnabled: row.password_enabled,
+      tokenVersion: Number(row.token_version ?? 1),
+      createdAt: iso(row.created_at),
+      lastLoginAt: iso(row.last_login_at),
+      subscriptionEndsAt: iso(row.subscription_ends_at),
+      apiKeyHash: row.api_key_hash ?? undefined,
+      apiKeyLast4: row.api_key_last4 ?? undefined,
+      generationsCount: Number(row.generations_count ?? 0),
+      lastGenerationAt: iso(row.last_generation_at),
+      updatedAt: iso(row.updated_at),
+      deviceCredentials: devices.rows.map((device) => ({
+        id: device.id,
+        name: device.name,
+        credentialHash: device.credential_hash,
+        last4: device.last4,
+        createdAt: iso(device.created_at),
+        lastUsedAt: iso(device.last_used_at),
+        revokedAt: iso(device.revoked_at),
+      })),
+      activity: audit.rows.map((event) => ({
+        at: iso(event.created_at),
+        detail: event.metadata?.detail ?? "Actividad de cuenta",
+      })),
+    };
+    if (row.google_subject) {
+      user.googleSub = row.google_subject;
+      user.googleLinkedAt = iso(row.google_linked_at);
+    }
+    for (const balance of balances.rows) {
+      user.uses = { ...(user.uses ?? {}), [balance.tool]: Number(balance.available) };
+      user.usesConsumed = {
+        ...(user.usesConsumed ?? {}), [balance.tool]: Number(balance.consumed),
+      };
+      if (balance.tool === "forms") {
+        user.formsUsesLeft = Number(balance.available);
+        user.formsUsesUsed = Number(balance.consumed);
+        user.formsResponsesReserved = Number(balance.reserved);
+        user.formsQuotaUnit = "response";
+      }
+    }
+    return user;
+  };
+
+  const guardarUsuarios = async (json, externalClient = null) => {
+    const client = externalClient ?? await pool.connect();
+    const ownsTransaction = externalClient === null;
     try {
-      await client.query("BEGIN");
+      if (ownsTransaction) await client.query("BEGIN");
       await client.query(`
         WITH incoming AS (
           SELECT elem, elem->>'id' AS id
@@ -621,7 +716,13 @@ const backendPostgres = async () => {
           generations_count = EXCLUDED.generations_count,
           last_generation_at = EXCLUDED.last_generation_at,
           profile = EXCLUDED.profile,
-          updated_at = now()
+          -- updated_at es el token CAS de identidad. clock_timestamp()
+          -- evita el timestamp fijo de la transaccion y el incremento minimo
+          -- garantiza monotonicidad aun si dos commits caen en el mismo ms.
+          updated_at = GREATEST(
+            ${t.users}.updated_at + interval '1 millisecond',
+            clock_timestamp()
+          )
       `, [json]);
       await client.query(`
         WITH incoming AS (
@@ -700,12 +801,12 @@ const backendPostgres = async () => {
       // borrado: API y worker pueden tener vistas distintas en memoria. Las
       // cuentas solo se eliminan mediante deleteUserStoreData(), con cascadas
       // y objetivo explicito dentro de Neon.
-      await client.query("COMMIT");
+      if (ownsTransaction) await client.query("COMMIT");
     } catch (err) {
-      await client.query("ROLLBACK").catch(() => {});
+      if (ownsTransaction) await client.query("ROLLBACK").catch(() => {});
       throw err;
     } finally {
-      client.release();
+      if (ownsTransaction) client.release();
     }
   };
 
@@ -876,6 +977,39 @@ const backendPostgres = async () => {
         borradas: borradas.rows.map((r) => ({ emailHash: r.email_hash, at: r.deleted_at })),
       };
     },
+    async findUserById(id) {
+      return cargarUsuarioAutoritativo("u.id=$1", [id]);
+    },
+    async findUserByEmail(emailLower) {
+      return cargarUsuarioAutoritativo("u.email_lower=$1", [emailLower]);
+    },
+    async findUserByIdentity(provider, subject) {
+      return cargarUsuarioAutoritativo(
+        `EXISTS (
+           SELECT 1 FROM ${t.identities} identity
+            WHERE identity.user_id=u.id AND identity.provider=$1 AND identity.subject=$2
+         )`,
+        [provider, subject],
+      );
+    },
+    async saveUser(user, { expectedUpdatedAt = null } = {}) {
+      await conTransaccion(async (client) => {
+        const locked = await client.query(
+          `SELECT updated_at FROM ${t.users} WHERE id=$1 FOR UPDATE`, [user.id],
+        );
+        if (locked.rows[0] && expectedUpdatedAt) {
+          const current = new Date(locked.rows[0].updated_at).getTime();
+          const expected = new Date(expectedUpdatedAt).getTime();
+          if (!Number.isFinite(expected) || current !== expected) {
+            const error = new Error("El usuario cambio en otra operacion. Recarga antes de guardar.");
+            error.code = "USER_VERSION_CONFLICT";
+            throw error;
+          }
+        }
+        await guardarUsuarios(JSON.stringify([user]), client);
+      });
+      return cargarUsuarioAutoritativo("u.id=$1", [user.id]);
+    },
     guardarUsuarios,
     async guardarPendientes(json) { await guardarColeccion(t.pending, "job_id,user_id,tool", json); },
     async guardarBorradas(json) { await guardarColeccion(t.deleted, "email_hash,deleted_at", json); },
@@ -1017,23 +1151,44 @@ const backendPostgres = async () => {
     },
     async settle(input) {
       return conTransaccion(async (client) => {
+        // `tool` es inmutable. Se lee sin lock para poder respetar el orden
+        // global saldo -> reserva usado tambien por reserve(). El segundo
+        // SELECT bajo FOR UPDATE vuelve a leer todo el estado mutable.
+        const located = await client.query(
+          `SELECT tool FROM ${t.reservations} WHERE id=$1 AND user_id=$2`,
+          [input.reservationId, input.userId],
+        );
+        if (!located.rows[0]) return { ok: false, reason: "reserva_desconocida" };
+        const balance = filaBalance(await bloquearSaldo(
+          client, input.userId, located.rows[0].tool,
+        ));
         const found = await client.query(
           `SELECT * FROM ${t.reservations} WHERE id=$1 AND user_id=$2 FOR UPDATE`,
           [input.reservationId, input.userId],
         );
         const reservation = found.rows[0];
         if (!reservation) return { ok: false, reason: "reserva_desconocida" };
-        const balance = filaBalance(await bloquearSaldo(client, input.userId, reservation.tool));
         if (!["reserved", "uncertain"].includes(reservation.status)) {
           return { ok: true, reservation, balance };
         }
         const inPlay = Number(reservation.reserved_remaining || reservation.requested);
-        const consumed = Math.min(inPlay, Math.max(0, Math.floor(input.accepted)));
+        // El worker informa totales acumulados. Se consume solo la diferencia
+        // contra lo ya confirmado en esta reserva para que cada conciliacion
+        // parcial sea exactamente una vez.
+        const previousAccepted = Math.max(0, Number(reservation.accepted) || 0);
+        const targetAccepted = Math.min(
+          Number(reservation.requested) || 0,
+          Math.max(previousAccepted, Math.floor(Number(input.accepted) || 0)),
+        );
+        const consumed = Math.min(inPlay, targetAccepted - previousAccepted);
         const uncertain = Math.min(
           inPlay - consumed,
           Math.max(0, Math.floor(Number(input.uncertain) || 0)),
         );
         const refunded = inPlay - consumed - uncertain;
+        if (consumed === 0 && refunded === 0 && uncertain === inPlay) {
+          return { ok: true, reservation, balance };
+        }
         const next = {
           available: balance.available + refunded,
           consumed: balance.consumed + consumed,
@@ -1058,7 +1213,7 @@ const backendPostgres = async () => {
           userId: input.userId, tool: reservation.tool, kind: "settle",
           availableDelta: refunded, consumedDelta: consumed,
           reservedDelta: -inPlay + uncertain, referenceId: reservation.id,
-          idempotencyKey: `settle:${reservation.id}:${reservation.status}`,
+          idempotencyKey: `settle:${reservation.id}:${targetAccepted}:${uncertain}`,
           metadata: input.metadata ?? {},
         });
         return { ok: true, reservation: updated.rows[0], balance: next };
@@ -1411,8 +1566,11 @@ const backendPostgres = async () => {
           }
           let subscriptionEndsAt = null;
           if (input.plan) {
-            const storedUser = await client.query(`SELECT data FROM ${t.users} WHERE id=$1`, [payment.user_id]);
-            subscriptionEndsAt = storedUser.rows[0]?.data?.subscriptionEndsAt ?? null;
+            const storedUser = await client.query(
+              `SELECT subscription_ends_at FROM ${t.users} WHERE id=$1`,
+              [payment.user_id],
+            );
+            subscriptionEndsAt = storedUser.rows[0]?.subscription_ends_at ?? null;
           }
           return {
             payment,
@@ -1444,10 +1602,10 @@ const backendPostgres = async () => {
         let subscriptionEndsAt = input.subscriptionEndsAt ?? null;
         if (input.plan && Number(input.subscriptionDays) > 0) {
           const lockedUser = await client.query(
-            `SELECT data FROM ${t.users} WHERE id=$1 FOR UPDATE`,
+            `SELECT subscription_ends_at FROM ${t.users} WHERE id=$1 FOR UPDATE`,
             [payment.user_id],
           );
-          const currentEnd = Date.parse(lockedUser.rows[0]?.data?.subscriptionEndsAt ?? "");
+          const currentEnd = Date.parse(lockedUser.rows[0]?.subscription_ends_at ?? "");
           const base = Number.isFinite(currentEnd) && currentEnd > Date.now()
             ? currentEnd
             : Date.now();
@@ -1459,11 +1617,11 @@ const backendPostgres = async () => {
           await client.query(
             `UPDATE ${t.users}
                 SET plan=$2,
-                    data=jsonb_set(
-                      jsonb_set(data, '{plan}', to_jsonb($2::text), true),
-                      '{subscriptionEndsAt}', to_jsonb($3::text), true
-                    ),
-                    updated_at=now()
+                    subscription_ends_at=$3::timestamptz,
+                    updated_at=GREATEST(
+                      updated_at + interval '1 millisecond',
+                      clock_timestamp()
+                    )
               WHERE id=$1`,
             [payment.user_id, input.plan, subscriptionEndsAt],
           );
@@ -1516,6 +1674,12 @@ export const initStore = async (rutaUsuarios) => {
 export const persistUsers = (usuarios) => escritorUsuarios?.encolar(usuarios);
 export const persistPending = (pendientes) => escritorPendientes?.encolar(pendientes);
 export const persistDeleted = (borradas) => escritorBorradas?.encolar(borradas);
+export const findAuthoritativeUserById = (id) => backend.findUserById(id);
+export const findAuthoritativeUserByEmail = (emailLower) => backend.findUserByEmail(emailLower);
+export const findAuthoritativeUserByIdentity = (provider, subject) => (
+  backend.findUserByIdentity(provider, subject)
+);
+export const saveAuthoritativeUser = (user, options) => backend.saveUser(user, options);
 export const flushStore = async () => {
   const results = await Promise.allSettled([
     escritorUsuarios?.vaciar(), escritorPendientes?.vaciar(), escritorBorradas?.vaciar(),

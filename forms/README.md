@@ -110,8 +110,13 @@ Variables principales:
 | `FORMS_WORKER_ADAPTER` | `node_app/forms-worker-adapter.js` |
 | `TESISTAB_JOB_BATCH_SIZE` | `100` |
 | `TESISTAB_JOB_LEASE_MS` | `30000` |
+| `TESISTAB_SETTLEMENT_RETRIES` | `3` |
+| `TESISTAB_SETTLEMENT_RETRY_DELAY_MS` | `250` |
 | `LEGACY_API_SUNSET_AT` | fecha RFC 3339 del retiro del adaptador legado |
 | `DATABASE_URL` | endpoint pooled de Neon |
 
 El almacenamiento JSON es solo fallback standalone. En producción, si no se
 inyecta un repositorio durable, la API de jobs responde `503`.
+Las liquidaciones que agotan sus reintentos quedan como `pending_retry`; el
+watchdog las recupera desde Neon por `jobId`, sin persistir la credencial del
+navegador.

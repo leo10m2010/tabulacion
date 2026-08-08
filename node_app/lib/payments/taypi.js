@@ -32,6 +32,18 @@ export const taypiConfigFromEnv = (env = process.env) => {
   };
 };
 
+// Tener credenciales presentes solo significa que el servidor puede hablar
+// con Taypi (incluido recibir webhooks). El checkout publico exige ademas el
+// gate operativo y el entorno real: asi una clave sandbox cargada durante
+// staging no convierte accidentalmente la UI de produccion en una caja de
+// pagos de prueba.
+export const taypiCheckoutEnabledFromEnv = (env = process.env) => {
+  const config = taypiConfigFromEnv(env);
+  const commercialLaunchEnabled = new Set(["1", "true", "yes", "on"])
+    .has(String(env.COMMERCIAL_LAUNCH_ENABLED ?? "false").trim().toLowerCase());
+  return commercialLaunchEnabled && config.enabled && !config.sandbox;
+};
+
 export const signTaypiRequest = ({ secretKey, timestamp, method, path, body = "" }) => (
   crypto
     .createHmac("sha256", secretKey)

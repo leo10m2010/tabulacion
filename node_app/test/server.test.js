@@ -1,6 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -31,6 +32,7 @@ before(async () => {
       ADMIN_PASSWORD,
       LOGIN_MAX_ATTEMPTS: "3",
       LOGIN_WINDOW_SECONDS: "60",
+      TESISTAB_RUN_JOBS_INLINE: "false",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -339,11 +341,11 @@ test("un usuario con rol 'user' y suscripcion vigente puede generar", async () =
   assert.equal(typeof payload.correlationControl?.obtenido, "number");
 });
 
-test("/generate reutiliza el resultado con la misma idempotencyKey", async () => {
+test("/generate genera, persiste y reutiliza una semilla segura con la misma idempotencyKey", async () => {
   const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
   const raw = JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, "..", "..", "Tabulacion.json"), "utf-8"));
   const body = JSON.stringify({
-    config: { ...raw, muestra: "12", seed: "api-idempotente" },
+    config: { ...raw, muestra: "12", seed: undefined },
     responseMode: "links",
     idempotencyKey: "generate-idempotente-001",
   });
@@ -360,6 +362,7 @@ test("/generate reutiliza el resultado con la misma idempotencyKey", async () =>
   assert.equal(secondResponse.status, 200);
   assert.equal(second.id, first.id);
   assert.equal(second.idempotentReplay, true);
+  assert.match(first.seed, /^[0-9a-f]{32}$/);
   assert.equal(second.seed, first.seed);
 });
 
@@ -537,18 +540,23 @@ test("claves de API: generar, validar, vencimiento y revocar", async () => {
   assert.equal(v.valid, false);
 });
 
-test("Forms por respuestas: reserva el total, bloquea sin saldo y admin recarga", async () => {
+test("Forms por respuestas: 1200, idempotencia, lotes y cancelacion con reembolso", async () => {
   const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
   const auth = { "Content-Type": "application/json", Authorization: `Bearer ${admin.body.token}` };
 
-  // Usuario nuevo con 2 usos asignados desde la creacion.
+  // Usuario nuevo con 1200 respuestas asignadas desde la creacion.
   const created = await fetch(`${BASE}/auth/users`, {
     method: "POST",
     headers: auth,
-    body: JSON.stringify({ email: "usos@test.local", password: "ClaveUsos123!", subscriptionDays: 30, formsUses: 2 }),
+    body: JSON.stringify({
+      email: "usos@test.local",
+      password: "ClaveUsos123!",
+      subscriptionDays: 30,
+      formsUses: 1200,
+    }),
   });
   const createdBody = await created.json();
-  assert.equal(createdBody.user.formsUsesLeft, 2);
+  assert.equal(createdBody.user.formsUsesLeft, 1200);
 
   const userLogin = await login("usos@test.local", "ClaveUsos123!");
   const keyRes = await fetch(`${BASE}/auth/api-key`, {
@@ -557,12 +565,15 @@ test("Forms por respuestas: reserva el total, bloquea sin saldo y admin recarga"
   });
   const apiKey = (await keyRes.json()).apiKey;
 
-  // La extension ve los usos restantes en /api/tesistab/config.
+  // La extension ve respuestas disponibles, no una cantidad de corridas.
   const cfgRes = await fetch(`${BASE}/api/tesistab/config`, { headers: { "X-API-Key": apiKey } });
   assert.equal(cfgRes.status, 200);
-  assert.equal((await cfgRes.json()).user.usesLeft, 2);
+  const initialConfig = await cfgRes.json();
+  assert.equal(initialConfig.user.usesLeft, 1200);
+  assert.equal(initialConfig.user.formsResponses, 1200);
+  assert.equal(initialConfig.quota.responsesLeft, 1200);
 
-  const submit = (count = 1) => fetch(`${BASE}/api/tesistab/submit`, {
+  const submit = (count = 1, idempotencyKey = crypto.randomUUID()) => fetch(`${BASE}/api/tesistab/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
     body: JSON.stringify({
@@ -570,24 +581,61 @@ test("Forms por respuestas: reserva el total, bloquea sin saldo y admin recarga"
       payload: { "entry.1": "hola" },
       count,
       ownOrAuthorized: true,
+      idempotencyKey,
     }),
   });
 
   // Se reservan todas las respuestas del trabajo de forma atomica; otro
   // trabajo no puede gastar el mismo saldo mientras el primero está activo.
-  let res = await submit(2);
+  let res = await submit(1200, "forms-server-1200-idempotent");
   assert.equal(res.status, 202);
-  assert.equal((await res.json()).responsesLeft, 0);
+  const createdJob = await res.json();
+  assert.equal(createdJob.responsesLeft, 0);
+  assert.equal(createdJob.applied.batchSize, 100);
+
+  // Un retry con la misma clave devuelve el mismo job y no reserva de nuevo.
+  res = await submit(1200, "forms-server-1200-idempotent");
+  assert.equal(res.status, 202);
+  const replay = await res.json();
+  assert.equal(replay.id, createdJob.id);
+  assert.equal(replay.idempotentReplay, true);
+
+  const jobResponse = await fetch(`${BASE}/api/forms/jobs/${createdJob.id}`, {
+    headers: { "X-API-Key": apiKey },
+  });
+  const job = await jobResponse.json();
+  assert.equal(job.totalBatches, 12);
+  assert.equal(job.progress.requested, 1200);
+
   res = await submit();
   assert.equal(res.status, 403);
 
-  // El admin recarga usos desde el dashboard.
+  // Cancelar antes de enviar consume cero y devuelve las 1200 reservadas.
+  const cancelled = await fetch(`${BASE}/api/forms/jobs/${createdJob.id}/cancel`, {
+    method: "POST",
+    headers: { "X-API-Key": apiKey },
+  });
+  assert.equal(cancelled.status, 202);
+  const cancelledJob = await (await fetch(`${BASE}/api/forms/jobs/${createdJob.id}`, {
+    headers: { "X-API-Key": apiKey },
+  })).json();
+  assert.equal(cancelledJob.status, "cancelled");
+  assert.equal(cancelledJob.accepted, 0);
+  assert.equal(cancelledJob.refunded, 1200);
+  assert.equal(cancelledJob.reserved, 0);
+
+  const afterCancel = await (await fetch(`${BASE}/api/tesistab/config`, {
+    headers: { "X-API-Key": apiKey },
+  })).json();
+  assert.equal(afterCancel.quota.responsesLeft, 1200);
+
+  // El admin recarga respuestas desde el dashboard.
   const patch = await fetch(`${BASE}/auth/users/${createdBody.user.id}`, {
     method: "PATCH",
     headers: auth,
     body: JSON.stringify({ formsUsesDelta: 5 }),
   });
-  assert.equal((await patch.json()).user.formsUsesLeft, 5);
+  assert.equal((await patch.json()).user.formsUsesLeft, 1205);
 
   // El admin puede revocar la clave del usuario: la extension deja de validar.
   const revoke = await fetch(`${BASE}/auth/users/${createdBody.user.id}/api-key`, { method: "DELETE", headers: auth });

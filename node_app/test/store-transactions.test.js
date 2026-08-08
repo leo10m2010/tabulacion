@@ -18,6 +18,7 @@ import {
   recordPaymentAndCredit,
   reserveEntitlement,
   setEntitlementBalances,
+  settleEntitlement,
   updateDurableJob,
   revokeSessionByTokenHash,
 } from "../lib/store/index.js";
@@ -191,5 +192,48 @@ describe("transacciones durables en el backend local", () => {
     assert.deepEqual(await getEntitlementBalance(userId, "forms"), {
       available: 0, consumed: 0, reserved: 1200,
     });
+  });
+
+  test("concilia una reserva 1200 por totales acumulados sin consumir inciertos de mas", async () => {
+    await setEntitlementBalances(userId, {
+      forms: { available: 1200, consumed: 0, reserved: 0 },
+    });
+    const reservationId = "reservation-reconcile-1200";
+    assert.equal((await reserveEntitlement({
+      userId,
+      tool: "forms",
+      amount: 1200,
+      reservationId,
+      idempotencyKey: "reserve-reconcile-1200",
+    })).ok, true);
+
+    const initial = await settleEntitlement({
+      userId, reservationId, accepted: 1100, uncertain: 100,
+    });
+    assert.equal(initial.reservation.accepted, 1100);
+    assert.equal(initial.reservation.reservedRemaining, 100);
+    assert.deepEqual(initial.balance, { available: 0, consumed: 1100, reserved: 100 });
+
+    const partial = await settleEntitlement({
+      userId, reservationId, accepted: 1101, uncertain: 99,
+    });
+    assert.equal(partial.reservation.accepted, 1101);
+    assert.equal(partial.reservation.reservedRemaining, 99);
+    assert.deepEqual(partial.balance, { available: 0, consumed: 1101, reserved: 99 });
+
+    // Repetir el mismo objetivo es un no-op idempotente.
+    const duplicate = await settleEntitlement({
+      userId, reservationId, accepted: 1101, uncertain: 99,
+    });
+    assert.deepEqual(duplicate.balance, partial.balance);
+
+    // Se resuelven las 99 restantes: 49 aceptadas y 50 devueltas.
+    const completed = await settleEntitlement({
+      userId, reservationId, accepted: 1150, uncertain: 0,
+    });
+    assert.equal(completed.reservation.accepted, 1150);
+    assert.equal(completed.reservation.refunded, 50);
+    assert.equal(completed.reservation.reservedRemaining, 0);
+    assert.deepEqual(completed.balance, { available: 50, consumed: 1150, reserved: 0 });
   });
 });

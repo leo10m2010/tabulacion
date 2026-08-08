@@ -91,6 +91,37 @@ test("tambien las respuestas de error las llevan", async () => {
   assert.equal(res.headers.get("x-frame-options"), "DENY");
 });
 
+test("un 5xx conserva contrato normalizado sin filtrar detalle interno", async () => {
+  const login = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(ADMIN),
+  });
+  const { token } = await login.json();
+  const res = await fetch(`${BASE}/payments/taypi/checkout`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      "X-Request-Id": "request-gate-test",
+    },
+    body: JSON.stringify({
+      plan: "esencial",
+      billingCycle: "monthly",
+      idempotencyKey: "checkout-gate-test",
+    }),
+  });
+  const payload = await res.json();
+
+  assert.equal(res.status, 503);
+  assert.equal(payload.code, "PAYMENTS_NOT_CONFIGURED");
+  assert.equal(payload.requestId, "request-gate-test");
+  assert.equal(payload.retryable, true);
+  assert.equal(payload.message, "No se pudo completar la solicitud. Intenta nuevamente.");
+  assert.equal(payload.error, payload.message, "error queda solo como adaptador legado");
+  assert.doesNotMatch(JSON.stringify(payload), /TAYPI|credencial|sandbox/i);
+});
+
 test("dos generaciones simultaneas del mismo usuario: solo una arranca", async () => {
   const login = await fetch(`${BASE}/auth/login`, {
     method: "POST",

@@ -183,7 +183,9 @@ function startServer(extraEnv = {}) {
       reject(new Error(`Server exited early with code ${code}. Logs:\n${logs}`));
     });
     child.stdout.on('data', (chunk) => {
-      if (chunk.toString().includes('escuchando en el puerto')) {
+      const line = chunk.toString();
+      if (line.includes('"event":"forms.service_started"')
+        || line.includes('escuchando en el puerto')) {
         clearTimeout(timeout);
         resolve({ child, baseUrl: `http://localhost:${port}` });
       }

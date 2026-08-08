@@ -233,4 +233,160 @@ describe("ledger y cola transaccional en PostgreSQL", {
     await store.revokeSessionByTokenHash("postgres-session-hash");
     assert.ok((await store.getSessionByTokenHash("postgres-session-hash")).revoked_at);
   });
+
+  test("concilia 1200 respuestas inciertas por delta acumulado en PostgreSQL", async () => {
+    await store.setEntitlementBalances(USER_ID, {
+      forms: { available: 1200, consumed: 0, reserved: 0 },
+    });
+    const reservationId = "postgres-reconcile-1200";
+    assert.equal((await store.reserveEntitlement({
+      userId: USER_ID,
+      tool: "forms",
+      amount: 1200,
+      reservationId,
+      idempotencyKey: "postgres-reconcile-1200",
+    })).ok, true);
+
+    const initial = await store.settleEntitlement({
+      userId: USER_ID, reservationId, accepted: 1100, uncertain: 100,
+    });
+    assert.equal(Number(initial.reservation.accepted), 1100);
+    assert.equal(Number(initial.reservation.reserved_remaining), 100);
+    assert.deepEqual(initial.balance, { available: 0, consumed: 1100, reserved: 100 });
+
+    const partial = await store.settleEntitlement({
+      userId: USER_ID, reservationId, accepted: 1101, uncertain: 99,
+    });
+    assert.equal(Number(partial.reservation.accepted), 1101);
+    assert.equal(Number(partial.reservation.reserved_remaining), 99);
+    assert.deepEqual(partial.balance, { available: 0, consumed: 1101, reserved: 99 });
+
+    const duplicate = await store.settleEntitlement({
+      userId: USER_ID, reservationId, accepted: 1101, uncertain: 99,
+    });
+    assert.deepEqual(duplicate.balance, partial.balance);
+
+    const completed = await store.settleEntitlement({
+      userId: USER_ID, reservationId, accepted: 1150, uncertain: 0,
+    });
+    assert.equal(Number(completed.reservation.accepted), 1150);
+    assert.equal(Number(completed.reservation.refunded), 50);
+    assert.equal(Number(completed.reservation.reserved_remaining), 0);
+    assert.deepEqual(completed.balance, { available: 50, consumed: 1150, reserved: 0 });
+  });
+
+  test("reserve y settle concurrentes respetan el mismo orden de locks", async () => {
+    for (let index = 0; index < 12; index += 1) {
+      await store.setEntitlementBalances(USER_ID, {
+        forms: { available: 10, consumed: 0, reserved: 0 },
+      });
+      const reservationId = `lock-order-${index}`;
+      const input = {
+        userId: USER_ID,
+        tool: "forms",
+        amount: 10,
+        reservationId,
+        idempotencyKey: reservationId,
+      };
+      assert.equal((await store.reserveEntitlement(input)).ok, true);
+
+      const [settled, retried] = await Promise.all([
+        store.settleEntitlement({ userId: USER_ID, reservationId, accepted: 10 }),
+        store.reserveEntitlement(input),
+      ]);
+      assert.equal(settled.ok, true);
+      assert.equal(retried.ok, true);
+      assert.equal(retried.reservation.id, reservationId);
+      assert.deepEqual(await store.getEntitlementBalance(USER_ID, "forms"), {
+        available: 0, consumed: 10, reserved: 0,
+      });
+    }
+  });
+
+  test("un plan acreditado conserva plan y vencimiento normalizados tras reiniciar", async () => {
+    const order = {
+      userId: USER_ID,
+      provider: "taypi",
+      providerOrderId: "99999999-9999-4999-8999-999999999999",
+      amountMinor: 9900,
+      currency: "PEN",
+    };
+    await store.recordPaymentAndCredit({ ...order, status: "pending" });
+    const paid = await store.recordPaymentAndCredit({
+      ...order,
+      status: "paid",
+      plan: "esencial",
+      subscriptionDays: 30,
+      credits: { tabulacion: 1 },
+    });
+    assert.equal(paid.credited, true);
+    assert.ok(Date.parse(paid.subscriptionEndsAt) > Date.now());
+
+    await store.closeStore();
+    const reloaded = await store.initStore(path.join(tempDir, "users.json"));
+    const user = reloaded.usuarios.find((candidate) => candidate.id === USER_ID);
+    assert.equal(user.plan, "esencial");
+    assert.equal(user.subscriptionEndsAt, paid.subscriptionEndsAt);
+  });
+
+  test("el repositorio de identidad consulta Neon, aplica CAS y rechaza Google duplicado", async () => {
+    const original = await store.findAuthoritativeUserByEmail("transactions@test.local");
+    assert.equal(original.id, USER_ID);
+    const expectedUpdatedAt = original.updatedAt;
+    original.googleSub = "google-authoritative-sub";
+    original.googleLinkedAt = new Date().toISOString();
+    original.updatedAt = new Date().toISOString();
+    const linked = await store.saveAuthoritativeUser(original, { expectedUpdatedAt });
+    assert.ok(Date.parse(linked.updatedAt) > Date.parse(expectedUpdatedAt));
+    assert.equal((await store.findAuthoritativeUserById(USER_ID)).googleSub, "google-authoritative-sub");
+    assert.equal(
+      (await store.findAuthoritativeUserByIdentity("google", "google-authoritative-sub")).id,
+      USER_ID,
+    );
+
+    const stale = { ...linked, plan: "free", updatedAt: new Date().toISOString() };
+    const current = { ...linked, plan: "esencial", updatedAt: new Date().toISOString() };
+    const currentSaved = await store.saveAuthoritativeUser(current, {
+      expectedUpdatedAt: linked.updatedAt,
+    });
+    assert.ok(Date.parse(currentSaved.updatedAt) > Date.parse(linked.updatedAt));
+    await assert.rejects(
+      () => store.saveAuthoritativeUser(stale, { expectedUpdatedAt: linked.updatedAt }),
+      (error) => error?.code === "USER_VERSION_CONFLICT",
+    );
+
+    const baseUser = (id, email) => ({
+      id,
+      email,
+      emailLower: email,
+      role: "user",
+      status: "active",
+      plan: "free",
+      passwordEnabled: false,
+      tokenVersion: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      uses: {},
+      usesConsumed: {},
+      deviceCredentials: [],
+      googleSub: "concurrent-google-sub",
+      googleLinkedAt: new Date().toISOString(),
+    });
+    const concurrent = await Promise.allSettled([
+      store.saveAuthoritativeUser(baseUser("google-concurrent-a", "google-a@test.local")),
+      store.saveAuthoritativeUser(baseUser("google-concurrent-b", "google-b@test.local")),
+    ]);
+    assert.equal(concurrent.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(concurrent.filter(
+      (result) => result.status === "rejected" && result.reason?.code === "23505",
+    ).length, 1);
+
+    await store.closeStore();
+    const reloaded = await store.initStore(path.join(tempDir, "users.json"));
+    assert.equal(reloaded.usuarios.find((user) => user.id === USER_ID).plan, "esencial");
+    assert.equal(
+      (await store.findAuthoritativeUserByIdentity("google", "google-authoritative-sub")).id,
+      USER_ID,
+    );
+  });
 });

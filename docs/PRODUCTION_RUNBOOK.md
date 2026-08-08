@@ -48,6 +48,10 @@ secretos, cuestionarios, respuestas ni URLs firmadas en tickets o logs.
 3. Antes de pasar a live rota las tres credenciales, define
    `TAYPI_SANDBOX=false`, confirma la URL de webhook y conserva
    `TAYPI_TIMEOUT_MS=10000` salvo evidencia de otra necesidad.
+4. Comprueba que `/config` mantiene `taypiPayments=false` mientras
+   `COMMERCIAL_LAUNCH_ENABLED=false`, incluso con credenciales cargadas. El
+   checkout solo se publica con gate comercial y Taypi live; el webhook queda
+   activo para no perder una confirmacion ya emitida.
 
 ## 5. Carga, observabilidad y promoción
 
@@ -64,6 +68,9 @@ secretos, cuestionarios, respuestas ni URLs firmadas en tickets o logs.
    después define las attestations `*_CONFIRMED=true`. El dominio propio y CORS
    HTTPS propio son obligatorios antes de cambiar
    `COMMERCIAL_LAUNCH_ENABLED=true`.
+5. Verifica el estado realmente desplegado, no solo `render.yaml`: deben existir
+   API y worker, el trigger debe ser `checksPass`, `/ready` debe responder 200 y
+   `/config` no debe publicar Institucion ni cuotas Forms antiguas.
 
 ## 6. Rollback
 

@@ -3,6 +3,17 @@ const { pathToFileURL } = require('node:url');
 
 const formsApp = require('./server');
 
+function writeWorkerError(event, error) {
+  const candidate = String(error?.code || error?.name || 'internal_error');
+  const code = /^[a-z0-9_.-]{1,64}$/i.test(candidate) ? candidate : 'internal_error';
+  process.stderr.write(`${JSON.stringify({
+    at: new Date().toISOString(),
+    level: 'error',
+    event,
+    code,
+  })}\n`);
+}
+
 async function main() {
   const adapterPath = String(process.env.FORMS_WORKER_ADAPTER || '').trim();
   if (!adapterPath) {
@@ -37,7 +48,7 @@ async function main() {
       await adapter.close?.();
       process.exit(0);
     } catch (error) {
-      process.stderr.write(`${error.stack || error.message}\n`);
+      writeWorkerError('forms.worker_shutdown_failed', error);
       process.exit(1);
     }
   };
@@ -48,6 +59,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  process.stderr.write(`${error.stack || error.message}\n`);
+  writeWorkerError('forms.worker_start_failed', error);
   process.exitCode = 1;
 });

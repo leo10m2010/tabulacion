@@ -5,6 +5,18 @@ const { after, before, describe, test } = require('node:test');
 const SERVER_START_TIMEOUT_MS = 15000;
 const SERVER_STOP_TIMEOUT_MS = 7000;
 
+function assertPublicJobHasNoExecutionSecrets(job) {
+  for (const key of [
+    'payload', 'parameters', 'formUrl', 'ownerEmail', 'reservationId',
+    'idempotencyKey', 'leaseOwner', 'leaseExpiresAt', 'uncertainDeliveries',
+    'smartProfile', 'recentAppliedRules',
+  ]) {
+    assert.equal(Object.hasOwn(job, key), false, `campo interno filtrado: ${key}`);
+  }
+  const serialized = JSON.stringify(job);
+  assert.doesNotMatch(serialized, /pageHistory|draftResponse|partialResponse|fbzx/);
+}
+
 describe('TESISTAB API regression (no API key)', () => {
   let server;
 
@@ -218,6 +230,14 @@ describe('TESISTAB Forms por respuestas y controles de job', () => {
     assert.equal(job.status, 200);
     assert.equal(job.body.structureHash, structureHash);
     assert.equal(job.body.label, 'canonical-contract');
+    assert.equal(job.body.formId, 'canonical-form');
+    assert.equal(job.body.authorizationConfirmed, true);
+    assertPublicJobHasNoExecutionSecrets(job.body);
+
+    const list = await fetchJson(`${server.baseUrl}/api/forms/jobs`);
+    const listedJob = list.body.jobs.find((item) => item.id === response.body.id);
+    assert.ok(listedJob, 'el trabajo aparece en el listado');
+    assertPublicJobHasNoExecutionSecrets(listedJob);
   });
 
   test('contrato /api/forms/jobs acepta rutas condicionales sanitizadas', async () => {
@@ -259,6 +279,14 @@ describe('TESISTAB Forms por respuestas y controles de job', () => {
     assert.equal(job.body.multiPage.routeCount, 2);
     assert.deepEqual(job.body.multiPage.selectorEntries, ['entry.1']);
     assert.equal(job.body.multiPage.routes, undefined, 'GET no debe exponer payloads capturados');
+    assertPublicJobHasNoExecutionSecrets(job.body);
+    assert.doesNotMatch(JSON.stringify(job.body), /solo A|solo B|0,1|0,2/);
+
+    const list = await fetchJson(`${server.baseUrl}/api/forms/jobs`);
+    const listedJob = list.body.jobs.find((item) => item.id === response.body.id);
+    assert.ok(listedJob, 'la ruta aparece en el listado sin datos de ejecucion');
+    assertPublicJobHasNoExecutionSecrets(listedJob);
+    assert.doesNotMatch(JSON.stringify(listedJob), /solo A|solo B|0,1|0,2/);
   });
 
   test('rechaza rutas condicionales con campos no permitidos', async () => {
@@ -354,7 +382,7 @@ function startServer(extraEnv = {}) {
 
     child.stdout.on('data', (chunk) => {
       const line = chunk.toString();
-      if (line.includes('escuchando en el puerto')) {
+      if (line.includes('"event":"forms.service_started"')) {
         clearTimeout(timeout);
         resolve({
           child,

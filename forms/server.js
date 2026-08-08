@@ -45,6 +45,14 @@ const TESISTAB_FINISHED_JOB_TTL_MS = Number(
 const TESISTAB_COMPAT_FORM_TTL_MS = Number(process.env.TESISTAB_COMPAT_FORM_TTL_MS || 10 * 60_000);
 const TESISTAB_MAX_COMPAT_FORMS = Number(process.env.TESISTAB_MAX_COMPAT_FORMS || 20);
 const TESISTAB_PROVIDER_RETRIES = Math.max(1, Number(process.env.TESISTAB_PROVIDER_RETRIES || 3));
+const TESISTAB_SETTLEMENT_RETRIES = Math.max(
+  1,
+  Number(process.env.TESISTAB_SETTLEMENT_RETRIES || 3)
+);
+const TESISTAB_SETTLEMENT_RETRY_DELAY_MS = Math.max(
+  0,
+  Number(process.env.TESISTAB_SETTLEMENT_RETRY_DELAY_MS || 250)
+);
 const configuredBatchSize = Number(process.env.TESISTAB_JOB_BATCH_SIZE || 100);
 const TESISTAB_JOB_BATCH_SIZE =
   Number.isSafeInteger(configuredBatchSize) && configuredBatchSize > 0 ? configuredBatchSize : 100;
@@ -97,6 +105,7 @@ const tesistabSmartRuntimeStore = new Map();
 const tesistabQuotaRuntimeStore = new Map();
 const requestLimitStore = new Map();
 const tesistabCleanupTimers = new Map();
+const tesistabSettlementRetrying = new Set();
 const TESISTAB_WORKER_ID = String(process.env.TESISTAB_WORKER_ID || randomUUID());
 const TESISTAB_JOB_LEASE_MS = Number(process.env.TESISTAB_JOB_LEASE_MS || 30_000);
 const TESISTAB_WORKER_MODE = String(process.env.TESISTAB_WORKER_MODE || 'false') === 'true';
@@ -112,16 +121,31 @@ let inProcessJobRepository = null;
 let jobRepositoryReady = Promise.resolve();
 let jobClaimTimer = null;
 
+function safeFormsErrorCode(error) {
+  const candidate = String(error?.code || error?.name || 'internal_error');
+  return /^[a-z0-9_.-]{1,64}$/i.test(candidate) ? candidate : 'internal_error';
+}
+
+function formsStructuredLog(level, event, fields = {}) {
+  const writer = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+  writer(JSON.stringify({
+    at: new Date().toISOString(),
+    level,
+    event,
+    ...fields,
+  }));
+}
+
 bootstrapTesistabStore();
 registerShutdownHooks();
 startTesistabWatchdog();
 
 if (TESISTAB_VALIDATION_ENABLED) {
-  console.log(`Validacion de claves TesisTab activa (${TESISTAB_API_URL}) para /api/tesistab y /api/forms`);
+  formsStructuredLog('info', 'forms.key_validation_enabled', { remoteValidation: true });
 } else if (TESISTAB_API_KEY) {
-  console.log('TESISTAB API key protection enabled for /api/tesistab and /api/forms routes');
+  formsStructuredLog('info', 'forms.key_validation_enabled', { staticKey: true });
 } else {
-  console.warn('[AVISO] Sin validacion de claves (TESISTAB_VALIDATION=off y sin TESISTAB_API_KEY): solo para desarrollo.');
+  formsStructuredLog('warn', 'forms.key_validation_disabled', { developmentOnly: true });
 }
 
 // Repositorio durable inyectable (Neon en produccion). Todos los metodos
@@ -283,8 +307,7 @@ app.get(['/api/tesistab/jobs/:id', '/api/forms/jobs/:id'], async (req, res) => {
 
   res.json({
     requestId: req.requestId,
-    ...job,
-    progress: jobProgress(job),
+    ...publicTesistabJob(job),
   });
 });
 
@@ -343,7 +366,7 @@ app.get(['/api/tesistab/jobs', '/api/forms/jobs'], async (req, res) => {
       status: statusFilter,
       since: Number.isNaN(sinceTimestamp) ? null : new Date(sinceTimestamp).toISOString(),
     },
-    jobs: jobs.map((job) => ({ ...job, progress: jobProgress(job) })),
+    jobs: jobs.map(publicTesistabJob),
   });
 });
 
@@ -454,35 +477,41 @@ app.post(['/api/tesistab/jobs/:id/reconcile', '/api/forms/jobs/:id/reconcile'], 
     sendApiError(res, 404, 'job_not_found', 'Job not found', req.requestId);
     return;
   }
-  if (job.status !== 'blocked'
-    || job.recoverableError?.code !== 'delivery_uncertain_after_restart'
-    || !Number.isSafeInteger(Number(job.inFlightIndex))) {
-    sendApiError(res, 409, 'job_not_reconcilable', 'El trabajo no tiene una respuesta incierta.', req.requestId);
-    return;
-  }
   const accepted = req.body?.accepted;
   if (typeof accepted !== 'boolean') {
     sendApiError(res, 422, 'invalid_reconciliation', 'accepted debe ser true o false.', req.requestId);
     return;
   }
-  if (accepted) {
-    job.sent = Number(job.sent || 0) + 1;
-    job.accepted = Number(job.accepted || 0) + 1;
-    observeFormsEvent('response', { outcome: 'accepted' });
-  } else {
-    job.failed = Number(job.failed || 0) + 1;
-    observeFormsEvent('response', { outcome: 'failed' });
+  const reconciliation = reconcileTesistabDelivery(job, {
+    accepted,
+    index: req.body?.index,
+  });
+  if (!reconciliation.ok) {
+    sendApiError(
+      res,
+      reconciliation.status || 409,
+      reconciliation.code || 'job_not_reconcilable',
+      reconciliation.message || 'El trabajo no tiene una respuesta incierta.',
+      req.requestId
+    );
+    return;
   }
-  job.uncertain = Math.max(0, Number(job.uncertain || 0) - 1);
-  job.currentIndex = Number(job.inFlightIndex) + 1;
-  job.cursor = job.currentIndex;
-  job.inFlightIndex = null;
-  job.recoverableError = null;
-  job.pauseRequested = false;
-  job.status = 'queued';
+  observeFormsEvent('response', { outcome: accepted ? 'accepted' : 'failed' });
   job.updatedAt = new Date().toISOString();
+  if (reconciliation.terminal) {
+    // El primer settlement dejo estas respuestas reservadas. Cada decision
+    // vuelve a liquidar los totales acumulados; el ledger consume o devuelve
+    // exactamente una sin tocar las que aun siguen inciertas.
+    await settleTesistabJob(job);
+  }
   await persistTesistabJob(job);
-  res.json({ requestId: req.requestId, id: job.id, status: job.status, progress: jobProgress(job) });
+  res.json({
+    requestId: req.requestId,
+    id: job.id,
+    status: job.status,
+    settlementStatus: job.settlementStatus,
+    progress: jobProgress(job),
+  });
 });
 
 async function requestTesistabJobCancellation(req, res) {
@@ -511,6 +540,10 @@ async function requestTesistabJobCancellation(req, res) {
   await persistTesistabJob(job);
   if (canFinishHere) {
     await settleTesistabJob(job);
+    // La liquidacion cambia refunded/reserved/settlementStatus despues de la
+    // primera escritura de control. Persistirla evita que un GET inmediato o
+    // un reinicio recupere el snapshot anterior con la cuota aun reservada.
+    await persistTesistabJob(job);
     scheduleTesistabJobCleanup(job.id);
   }
   res.status(202).json({
@@ -685,6 +718,7 @@ app.post(['/api/tesistab/submit', '/api/forms/jobs'], async (req, res) => {
       sent: 0,
       failed: 0,
       uncertain: 0,
+      uncertainDeliveries: [],
       errors: [],
       latestResult: null,
       createdAt: new Date().toISOString(),
@@ -722,12 +756,15 @@ app.post(['/api/tesistab/submit', '/api/forms/jobs'], async (req, res) => {
         reason: 'job_create_failed',
       }).catch(() => null);
     }
-    console.error(`[${req.requestId}] Error creating TESISTAB job`, error);
+    formsStructuredLog('error', 'forms.job_create_failed', {
+      requestId: req.requestId,
+      code: safeFormsErrorCode(error),
+    });
     sendApiError(
       res,
       error?.statusCode || 500,
       error?.code || 'job_create_failed',
-      error?.statusCode === 503 ? error.message : 'Failed to create job',
+      error?.statusCode === 503 ? 'Forms service is temporarily unavailable' : 'Failed to create job',
       req.requestId
     );
   }
@@ -850,6 +887,7 @@ app.post('/api/forms/submit', async (req, res) => {
       sent: 0,
       failed: 0,
       uncertain: 0,
+      uncertainDeliveries: [],
       errors: [],
       latestResult: null,
       createdAt: new Date().toISOString(),
@@ -874,9 +912,12 @@ app.post('/api/forms/submit', async (req, res) => {
     }
     res.type('text/plain').send(`/_submit?id=${jobId}`);
   } catch (error) {
-    console.error(`[${req.requestId}] Compat submit error`, error);
+    formsStructuredLog('error', 'forms.compat_submit_failed', {
+      requestId: req.requestId,
+      code: safeFormsErrorCode(error),
+    });
     res.status(error?.statusCode || 500).type('text/plain')
-      .send(error?.statusCode === 503 ? error.message : 'Failed to submit form');
+      .send(error?.statusCode === 503 ? 'Forms service is temporarily unavailable' : 'Failed to submit form');
   }
 });
 
@@ -927,7 +968,7 @@ async function runTesistabJob(jobId, executionPayload) {
     && Number(job.inFlightIndex) >= alreadyProcessed) {
     job.status = 'blocked';
     job.pauseRequested = true;
-    job.uncertain = Math.max(1, Number(job.uncertain || 0));
+    recordUncertainDelivery(job, Number(job.inFlightIndex), 'restart');
     job.recoverableError = {
       code: 'delivery_uncertain_after_restart',
       message: 'El proceso se reinicio durante un envio. Confirma si esa respuesta fue aceptada antes de continuar.',
@@ -1053,7 +1094,7 @@ async function runTesistabJob(jobId, executionPayload) {
       }
 
       if (inspection.uncertain) {
-        job.uncertain += 1;
+        recordUncertainDelivery(job, i, 'provider_response');
       }
       job.inFlightIndex = null;
       job.accepted = Math.max(0, job.sent - job.uncertain);
@@ -1071,7 +1112,7 @@ async function runTesistabJob(jobId, executionPayload) {
       // duplicarla; se conserva inFlightIndex y se exige conciliacion.
       job.status = 'blocked';
       job.pauseRequested = true;
-      job.uncertain = Number(job.uncertain || 0) + 1;
+      recordUncertainDelivery(job, Number(job.inFlightIndex), 'transport_error');
       job.recoverableError = {
         code: 'delivery_uncertain_after_restart',
         message: error?.message || 'No se pudo confirmar si Google acepto la respuesta.',
@@ -2768,6 +2809,100 @@ function extractGoogleFormId(formUrl) {
   }
 }
 
+function publicJobCode(value) {
+  const code = String(value || '');
+  return /^[a-z0-9_.-]{1,64}$/i.test(code) ? code : null;
+}
+
+function publicJobMessage(code, status) {
+  const messages = {
+    delivery_uncertain_after_restart: 'Hay una respuesta pendiente de conciliacion.',
+    provider_verification_required: 'Google solicito verificacion manual; el trabajo esta pausado.',
+    provider_rate_limited: 'Google limito temporalmente los envios.',
+    provider_unavailable: 'Google Forms no esta disponible temporalmente.',
+    provider_rejected: 'Google rechazo la respuesta.',
+    form_closed: 'El formulario ya no acepta respuestas.',
+    form_restriction: 'El formulario tiene una restriccion incompatible.',
+    form_structure_changed: 'La estructura del formulario cambio.',
+  };
+  if (code && messages[code]) return messages[code];
+  if (Number(status) >= 400) return `El proveedor respondio HTTP ${Number(status)}.`;
+  return 'Estado de entrega actualizado.';
+}
+
+function publicTesistabJob(job) {
+  const latestCode = publicJobCode(job?.latestResult?.code);
+  const recoverableCode = publicJobCode(job?.recoverableError?.code);
+  const publicErrors = Array.isArray(job?.errors)
+    ? job.errors.slice(-15).map((error) => {
+      const code = publicJobCode(error?.code);
+      return {
+        at: Number.isFinite(Number(error?.at)) ? Number(error.at) : null,
+        code,
+        message: publicJobMessage(code, null),
+      };
+    })
+    : [];
+  return {
+    id: String(job?.id || ''),
+    status: String(job?.status || 'unknown'),
+    label: typeof job?.label === 'string' ? job.label.slice(0, 160) : null,
+    formId: typeof job?.formId === 'string' ? job.formId.slice(0, 180) : null,
+    authorizationConfirmed: Boolean(job?.authorizationConfirmed),
+    structureHash: /^[a-f0-9]{64}$/i.test(String(job?.structureHash || ''))
+      ? String(job.structureHash)
+      : null,
+    multiPage: job?.multiPage && typeof job.multiPage === 'object' ? {
+      version: Math.max(1, Number(job.multiPage.version) || 1),
+      guidedCapture: Boolean(job.multiPage.guidedCapture),
+      routeCount: Math.max(0, Number(job.multiPage.routeCount) || 0),
+      selectorEntries: Array.isArray(job.multiPage.selectorEntries)
+        ? job.multiPage.selectorEntries
+          .map((entry) => String(entry))
+          .filter((entry) => /^entry\.\d+$/.test(entry))
+          .slice(0, TESISTAB_MAX_ROUTE_CONDITIONS)
+        : [],
+    } : null,
+    requestedCount: Math.max(0, Number(job?.requestedCount ?? job?.count) || 0),
+    count: Math.max(0, Number(job?.count) || 0),
+    requested: Math.max(0, Number(job?.requested ?? job?.count) || 0),
+    reserved: Math.max(0, Number(job?.reserved) || 0),
+    responsesLeft: job?.responsesLeft ?? null,
+    accepted: Math.max(0, Number(job?.accepted) || 0),
+    refunded: Math.max(0, Number(job?.refunded) || 0),
+    pending: Math.max(0, Number(job?.pending) || 0),
+    settlementStatus: typeof job?.settlementStatus === 'string' ? job.settlementStatus : null,
+    delayMs: Math.max(0, Number(job?.delayMs) || 0),
+    jitterMs: Math.max(0, Number(job?.jitterMs) || 0),
+    autoRandomizeText: Boolean(job?.autoRandomizeText),
+    pauseRequested: Boolean(job?.pauseRequested),
+    cancelRequested: Boolean(job?.cancelRequested),
+    batchSize: Math.max(1, Number(job?.batchSize) || TESISTAB_JOB_BATCH_SIZE),
+    totalBatches: Math.max(0, Number(job?.totalBatches) || 0),
+    currentBatch: Math.max(0, Number(job?.currentBatch) || 0),
+    sent: Math.max(0, Number(job?.sent) || 0),
+    failed: Math.max(0, Number(job?.failed) || 0),
+    uncertain: Math.max(0, Number(job?.uncertain) || 0),
+    retryAttempts: Math.max(0, Number(job?.retryAttempts) || 0),
+    recoverableError: recoverableCode ? {
+      code: recoverableCode,
+      message: publicJobMessage(recoverableCode, null),
+      retryable: Boolean(job?.recoverableError?.retryable),
+    } : null,
+    latestResult: job?.latestResult ? {
+      at: Number.isFinite(Number(job.latestResult.at)) ? Number(job.latestResult.at) : null,
+      status: Number.isFinite(Number(job.latestResult.status)) ? Number(job.latestResult.status) : null,
+      code: latestCode,
+      message: publicJobMessage(latestCode, job.latestResult.status),
+    } : null,
+    errors: publicErrors,
+    createdAt: job?.createdAt ?? null,
+    updatedAt: job?.updatedAt ?? null,
+    finishedAt: job?.finishedAt ?? null,
+    progress: jobProgress(job),
+  };
+}
+
 function jobProgress(job) {
   const processed = Math.min(
     Number(job?.count || 0),
@@ -2785,6 +2920,122 @@ function jobProgress(job) {
     batch: Number(job?.currentBatch || 0),
     totalBatches: Number(job?.totalBatches || 0),
   };
+}
+
+function recordUncertainDelivery(job, index, source) {
+  const normalizedIndex = Number(index);
+  const deliveries = Array.isArray(job.uncertainDeliveries)
+    ? job.uncertainDeliveries.filter((item) => Number.isSafeInteger(Number(item?.index)))
+    : [];
+  const alreadyRecorded = Number.isSafeInteger(normalizedIndex)
+    && deliveries.some((item) => Number(item.index) === normalizedIndex);
+  if (!alreadyRecorded) {
+    deliveries.push({
+      index: Number.isSafeInteger(normalizedIndex) ? normalizedIndex : null,
+      source: ['provider_response', 'transport_error', 'watchdog_timeout', 'restart'].includes(source)
+        ? source
+        : 'unknown',
+    });
+    job.uncertain = Number(job.uncertain || 0) + 1;
+  }
+  job.uncertainDeliveries = deliveries;
+}
+
+function reconcileTesistabDelivery(job, decision = {}) {
+  if (typeof decision.accepted !== 'boolean') {
+    return {
+      ok: false,
+      status: 422,
+      code: 'invalid_reconciliation',
+      message: 'accepted debe ser true o false.',
+    };
+  }
+  const requestedIndex = decision.index === undefined || decision.index === null
+    ? null
+    : Number(decision.index);
+  if (requestedIndex !== null && !Number.isSafeInteger(requestedIndex)) {
+    return {
+      ok: false,
+      status: 422,
+      code: 'invalid_reconciliation_index',
+      message: 'index debe ser un entero valido.',
+    };
+  }
+
+  const blocked = job.status === 'blocked'
+    && job.recoverableError?.code === 'delivery_uncertain_after_restart'
+    && Number.isSafeInteger(Number(job.inFlightIndex));
+  const terminal = isTerminalJobStatus(job.status)
+    && Number(job.uncertain || 0) > 0
+    && job.settlementStatus === 'reconciliation_pending';
+  if (!blocked && !terminal) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'job_not_reconcilable',
+      message: 'El trabajo no tiene una respuesta incierta.',
+    };
+  }
+
+  const deliveries = Array.isArray(job.uncertainDeliveries)
+    ? [...job.uncertainDeliveries]
+    : [];
+  const fallbackIndex = blocked ? Number(job.inFlightIndex) : null;
+  const targetIndex = requestedIndex ?? deliveries[0]?.index ?? fallbackIndex;
+  if (blocked && targetIndex !== Number(job.inFlightIndex)) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'reconciliation_index_mismatch',
+      message: 'El indice no corresponde al envio bloqueado.',
+    };
+  }
+  if (requestedIndex !== null && deliveries.length > 0
+    && !deliveries.some((item) => Number(item?.index) === requestedIndex)) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'uncertain_delivery_not_found',
+      message: 'La respuesta incierta indicada ya fue conciliada o no existe.',
+    };
+  }
+
+  const removeAt = deliveries.findIndex((item) => Number(item?.index) === Number(targetIndex));
+  let reconciledDelivery = null;
+  if (removeAt >= 0) [reconciledDelivery] = deliveries.splice(removeAt, 1);
+  else if (deliveries.length > 0 && requestedIndex === null) reconciledDelivery = deliveries.shift();
+  job.uncertainDeliveries = deliveries;
+  job.uncertain = Math.max(0, Number(job.uncertain || 0) - 1);
+
+  if (blocked) {
+    if (decision.accepted) {
+      job.sent = Number(job.sent || 0) + 1;
+      job.accepted = Number(job.accepted || 0) + 1;
+    } else {
+      job.failed = Number(job.failed || 0) + 1;
+    }
+    job.currentIndex = Number(job.inFlightIndex) + 1;
+    job.cursor = job.currentIndex;
+    job.inFlightIndex = null;
+    job.recoverableError = null;
+    job.pauseRequested = false;
+    job.status = 'queued';
+    return { ok: true, terminal: false, index: targetIndex };
+  }
+
+  // Las entregas `provider_response` ya estaban incluidas en `sent`; las de
+  // restart/watchdog/transport no. La conciliacion conserva sent + failed como
+  // el total procesado en ambos casos, incluso si el job se cancelo bloqueado.
+  const alreadyCountedAsSent = !reconciledDelivery
+    || reconciledDelivery.source === 'provider_response';
+  if (decision.accepted) {
+    job.accepted = Number(job.accepted || 0) + 1;
+    if (!alreadyCountedAsSent) job.sent = Number(job.sent || 0) + 1;
+  } else {
+    if (alreadyCountedAsSent) job.sent = Math.max(0, Number(job.sent || 0) - 1);
+    job.failed = Number(job.failed || 0) + 1;
+  }
+  return { ok: true, terminal: true, index: targetIndex };
 }
 
 function isTerminalJobStatus(status) {
@@ -3011,8 +3262,11 @@ async function releaseTesistabReservation(req, reservationId, meta) {
   );
 }
 
-async function settleTesistabJob(job) {
-  const runtime = tesistabQuotaRuntimeStore.get(job.id) || {};
+async function settleTesistabJob(job, dependencies = {}) {
+  const manager = dependencies.manager || inProcessUsageManager;
+  const sleep = dependencies.sleep || wait;
+  const retries = Math.max(1, Number(dependencies.retries || TESISTAB_SETTLEMENT_RETRIES));
+  const runtime = dependencies.runtime || tesistabQuotaRuntimeStore.get(job.id) || {};
   const accepted = Math.max(0, Number(job.accepted ?? (job.sent - job.uncertain)) || 0);
   const uncertain = Math.max(0, Number(job.uncertain) || 0);
   const failed = Math.max(0, Number(job.failed) || 0);
@@ -3022,45 +3276,82 @@ async function settleTesistabJob(job) {
 
   job.accepted = accepted;
   job.pending = cancelled;
-  job.settlementStatus = inProcessUsageManager ? 'settling' : 'legacy';
+  job.settlementStatus = manager ? 'settling' : 'legacy';
 
-  if (!inProcessUsageManager
-    || (!runtime.apiKey && !inProcessUsageManager.supportsCredentiallessSettlement)) {
+  if (!manager
+    || (!runtime.apiKey && !manager.supportsCredentiallessSettlement)) {
     job.refunded = 0;
     job.settlementStatus = job.quotaMode === 'unlimited' ? 'not_required' : 'legacy_unavailable';
     return;
   }
 
-  try {
-    const result = await Promise.resolve(
-      inProcessUsageManager.settle(runtime.apiKey || '', runtime.reservationId || job.reservationId, {
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    job.settlementAttempts = Number(job.settlementAttempts || 0) + 1;
+    try {
+      const result = await Promise.resolve(
+        manager.settle(runtime.apiKey || '', runtime.reservationId || job.reservationId, {
+          jobId: job.id,
+          requested: job.count,
+          accepted,
+          failed,
+          uncertain,
+          cancelled,
+        })
+      );
+      if (!result?.ok) {
+        const settlementError = new Error('quota_settlement_failed');
+        settlementError.code = result?.reason || 'quota_settlement_failed';
+        throw settlementError;
+      }
+      job.refunded = Number.isFinite(Number(result.refunded))
+        ? Number(result.refunded)
+        : expectedRefund;
+      // En el job `reserved` significa lo que queda pendiente de reconciliar,
+      // no el total reservado global de la cuenta.
+      job.reserved = Number.isFinite(Number(result.reservedForJob ?? result.reserved))
+        ? Number(result.reservedForJob ?? result.reserved)
+        : uncertain;
+      job.responsesLeft = result.responsesLeft ?? null;
+      job.settlementStatus = uncertain > 0 ? 'reconciliation_pending' : 'settled';
+      job.settlementError = null;
+      return;
+    } catch (error) {
+      job.settlementError = safeFormsErrorCode(error);
+      if (attempt + 1 < retries) {
+        await sleep(TESISTAB_SETTLEMENT_RETRY_DELAY_MS * (2 ** attempt));
+        continue;
+      }
+      job.refunded = 0;
+      job.settlementStatus = 'pending_retry';
+      formsStructuredLog('warn', 'forms.settlement_pending_retry', {
         jobId: job.id,
-        requested: job.count,
-        accepted,
-        failed,
-        uncertain,
-        cancelled,
-      })
-    );
-    if (!result?.ok) {
-      throw new Error(result?.reason || 'quota_settlement_failed');
+        code: job.settlementError,
+        attempts: retries,
+      });
     }
-    job.refunded = Number.isFinite(Number(result.refunded))
-      ? Number(result.refunded)
-      : expectedRefund;
-    // En el job `reserved` significa lo que queda pendiente de reconciliar,
-    // no el total reservado global de la cuenta.
-    job.reserved = Number.isFinite(Number(result.reservedForJob))
-      ? Number(result.reservedForJob)
-      : uncertain;
-    job.responsesLeft = result.responsesLeft ?? null;
-    job.settlementStatus = uncertain > 0 ? 'reconciliation_pending' : 'settled';
-    job.settlementError = null;
-  } catch (error) {
-    job.refunded = 0;
-    job.settlementStatus = 'pending_retry';
-    job.settlementError = error?.message || 'quota_settlement_failed';
   }
+}
+
+async function retryPendingTesistabSettlements(dependencies = {}) {
+  const manager = dependencies.manager || inProcessUsageManager;
+  if (!manager) return 0;
+  const jobs = dependencies.jobs || await listTesistabJobs({ limit: TESISTAB_MAX_STORED_JOBS });
+  let settled = 0;
+  for (const job of jobs) {
+    if (!job?.id || job.settlementStatus !== 'pending_retry' || !isTerminalJobStatus(job.status)) {
+      continue;
+    }
+    if (tesistabSettlementRetrying.has(job.id)) continue;
+    tesistabSettlementRetrying.add(job.id);
+    try {
+      await settleTesistabJob(job, dependencies);
+      await (dependencies.persist || persistTesistabJob)(job);
+      if (job.settlementStatus !== 'pending_retry') settled += 1;
+    } finally {
+      tesistabSettlementRetrying.delete(job.id);
+    }
+  }
+  return settled;
 }
 
 async function validateTesistabKey(apiKey) {
@@ -3251,6 +3542,16 @@ async function persistTesistabJob(job) {
         resumeStatus: job.resumeStatus ?? null,
         recoverableError: job.recoverableError ?? null,
         updatedAt: job.updatedAt,
+        ...(job.status === 'blocked' ? {
+          inFlightIndex: job.inFlightIndex,
+          currentIndex: job.currentIndex,
+          cursor: job.cursor,
+          sent: job.sent,
+          accepted: job.accepted,
+          failed: job.failed,
+          uncertain: job.uncertain,
+          uncertainDeliveries: job.uncertainDeliveries ?? [],
+        } : {}),
         ...(job.status === 'queued' && job.inFlightIndex == null ? {
           inFlightIndex: null,
           currentIndex: job.currentIndex,
@@ -3259,12 +3560,17 @@ async function persistTesistabJob(job) {
           accepted: job.accepted,
           failed: job.failed,
           uncertain: job.uncertain,
+          uncertainDeliveries: job.uncertainDeliveries ?? [],
           pending: job.pending,
         } : {}),
         ...(terminal ? {
           finishedAt: job.finishedAt,
           settlementStatus: job.settlementStatus,
           accepted: job.accepted,
+          sent: job.sent,
+          failed: job.failed,
+          uncertain: job.uncertain,
+          uncertainDeliveries: job.uncertainDeliveries ?? [],
           refunded: job.refunded,
           reserved: job.reserved,
           responsesLeft: job.responsesLeft,
@@ -3341,7 +3647,9 @@ async function hydrateJobsFromRepository() {
       if (job?.id) tesistabJobStore[job.id] = job;
     });
   } catch (error) {
-    console.error(`Failed to hydrate durable Forms jobs: ${error.message}`);
+    formsStructuredLog('error', 'forms.jobs_hydration_failed', {
+      code: safeFormsErrorCode(error),
+    });
     throw error;
   }
 }
@@ -3351,7 +3659,9 @@ function startJobClaimLoop() {
     return;
   }
   const claim = () => claimDurableTesistabJobs().catch((error) => {
-    console.error(`Failed to claim durable Forms jobs: ${error.message}`);
+    formsStructuredLog('error', 'forms.job_claim_failed', {
+      code: safeFormsErrorCode(error),
+    });
   });
   claim();
   jobClaimTimer = setInterval(claim, Math.max(1000, Math.floor(TESISTAB_JOB_LEASE_MS / 3)));
@@ -3382,7 +3692,10 @@ async function claimDurableTesistabJobs() {
     });
     runTesistabJob(job.id, claimed.payload).catch((error) => {
       failTesistabJob(job.id, error).catch((persistError) => {
-        console.error(`Failed to persist claimed Forms job ${job.id}: ${persistError.message}`);
+        formsStructuredLog('error', 'forms.claimed_job_persist_failed', {
+          jobId: job.id,
+          code: safeFormsErrorCode(persistError),
+        });
       });
     });
   }
@@ -3437,9 +3750,13 @@ function bootstrapTesistabStore() {
     });
 
     trimTesistabStoreIfNeeded();
-    console.log(`Loaded ${Object.keys(tesistabJobStore).length} persisted TESISTAB jobs`);
+    formsStructuredLog('info', 'forms.local_jobs_loaded', {
+      count: Object.keys(tesistabJobStore).length,
+    });
   } catch (error) {
-    console.warn(`Failed to load persisted TESISTAB jobs: ${error.message}`);
+    formsStructuredLog('warn', 'forms.local_jobs_load_failed', {
+      code: safeFormsErrorCode(error),
+    });
   }
 }
 
@@ -3450,10 +3767,21 @@ function startTesistabWatchdog() {
   // require('./server.js') sin levantar el servidor (como un test unitario
   // de una funcion pura) se queda colgado para siempre esperando que el
   // proceso termine, aunque los tests ya hayan pasado.
-  setInterval(() => {
-    const now = Date.now();
+  const run = () => runTesistabWatchdogCycle().catch((error) => {
+    formsStructuredLog('error', 'forms.watchdog_failed', {
+      code: safeFormsErrorCode(error),
+    });
+  });
+  setInterval(run, 5000).unref();
+}
 
-    Object.values(tesistabJobStore).forEach((job) => {
+async function runTesistabWatchdogCycle(dependencies = {}) {
+    const now = Number(dependencies.now ?? Date.now());
+    const staleJobs = [];
+    const blockedUncertainJobs = [];
+    const jobsToInspect = dependencies.watchdogJobs || Object.values(tesistabJobStore);
+
+    jobsToInspect.forEach((job) => {
       if (!job || job.status !== 'running') {
         return;
       }
@@ -3469,6 +3797,30 @@ function startTesistabWatchdog() {
       const expectedCycleMs =
         Number(job.delayMs || 0) + Number(job.jitterMs || 0) + TESISTAB_REQUEST_TIMEOUT_MS;
       if (now - updatedAtMs < expectedCycleMs + TESISTAB_STALE_JOB_AFTER_MS) {
+        return;
+      }
+
+      if (Number.isSafeInteger(Number(job.inFlightIndex))) {
+        // El timeout puede ocurrir despues de que Google haya aceptado el POST.
+        // Reembolsarlo como failed permitiria gastar de nuevo la misma cuota y
+        // falsearia el conteo. Se conserva reservado hasta decision explicita.
+        recordUncertainDelivery(job, Number(job.inFlightIndex), 'watchdog_timeout');
+        job.status = 'blocked';
+        job.pauseRequested = true;
+        job.recoverableError = {
+          code: 'delivery_uncertain_after_restart',
+          message: 'El envio quedo sin confirmacion. Confirma si fue aceptado antes de continuar.',
+          retryable: false,
+        };
+        job.updatedAt = new Date(now).toISOString();
+        job.latestResult = {
+          at: Number(job.inFlightIndex) + 1,
+          status: null,
+          code: 'delivery_uncertain_after_restart',
+          message: 'Watchdog detected an unconfirmed in-flight delivery',
+          preview: null,
+        };
+        blockedUncertainJobs.push(job);
         return;
       }
 
@@ -3493,9 +3845,17 @@ function startTesistabWatchdog() {
       }
 
       scheduleTesistabJobCleanup(job.id);
-      persistTesistabJobsSoon();
+      staleJobs.push(job);
     });
-  }, 5000).unref();
+
+    for (const job of blockedUncertainJobs) {
+      await (dependencies.persist || persistTesistabJob)(job);
+    }
+    for (const job of staleJobs) {
+      await settleTesistabJob(job, dependencies);
+      await (dependencies.persist || persistTesistabJob)(job);
+    }
+    await retryPendingTesistabSettlements(dependencies);
 }
 
 function registerShutdownHooks() {
@@ -3550,7 +3910,7 @@ function persistTesistabJobsSoon() {
       ).then((results) => {
         const failed = results.filter((result) => result.status === 'rejected');
         if (failed.length) {
-          console.error(`Failed to persist ${failed.length} durable Forms jobs`);
+          formsStructuredLog('error', 'forms.jobs_persist_failed', { count: failed.length });
         }
       });
     }, 250);
@@ -3585,7 +3945,9 @@ function persistTesistabJobsNow() {
     fs.writeFileSync(temporaryPath, JSON.stringify(jobs, null, 2), 'utf8');
     fs.renameSync(temporaryPath, tesistabStorageFilePath);
   } catch (error) {
-    console.warn(`Failed to persist TESISTAB jobs: ${error.message}`);
+    formsStructuredLog('warn', 'forms.local_jobs_persist_failed', {
+      code: safeFormsErrorCode(error),
+    });
   }
 }
 
@@ -3673,7 +4035,10 @@ app.get('*', (req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error(`[${req.requestId}] Unhandled server error`, err);
+  formsStructuredLog('error', 'forms.unhandled_error', {
+    requestId: req.requestId,
+    code: safeFormsErrorCode(err),
+  });
   sendApiError(res, 500, 'internal_error', 'Unexpected server error', req.requestId);
 });
 
@@ -3682,7 +4047,7 @@ app.use((err, req, res, next) => {
 if (require.main === module) {
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
-    console.log('Tutorica Forms escuchando en el puerto', PORT);
+    formsStructuredLog('info', 'forms.service_started', { port: Number(PORT) });
   });
 }
 
@@ -3698,5 +4063,10 @@ app.buildRoutedAttemptPayload = buildRoutedAttemptPayload;
 app.parseRetryAfterMs = parseRetryAfterMs;
 app.computeProviderBackoffMs = computeProviderBackoffMs;
 app.retryProviderSubmission = retryProviderSubmission;
+app.settleTesistabJob = settleTesistabJob;
+app.retryPendingTesistabSettlements = retryPendingTesistabSettlements;
+app.runTesistabWatchdogCycle = runTesistabWatchdogCycle;
+app.recordUncertainDelivery = recordUncertainDelivery;
+app.reconcileTesistabDelivery = reconcileTesistabDelivery;
 
 module.exports = app;

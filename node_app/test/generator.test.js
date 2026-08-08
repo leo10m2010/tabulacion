@@ -29,6 +29,14 @@ test("una semilla reproduce exactamente la misma base", () => {
   assert.notDeepEqual(different.base, first.base);
 });
 
+test("sin semilla genera una criptograficamente aleatoria y la devuelve", async () => {
+  const first = await generateArtifacts({ ...baseConfig, muestra: "12", seed: undefined });
+  const second = await generateArtifacts({ ...baseConfig, muestra: "12", seed: undefined });
+  assert.match(first.seed, /^[0-9a-f]{32}$/);
+  assert.match(second.seed, /^[0-9a-f]{32}$/);
+  assert.notEqual(second.seed, first.seed);
+});
+
 test("items inversos se guardan como respuestas crudas y se puntuan al reves", async () => {
   const raw = {
     ...baseConfig,

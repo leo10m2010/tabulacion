@@ -7,6 +7,7 @@ import {
   normalizeTaypiCheckout,
   parseTaypiEvent,
   signTaypiRequest,
+  taypiCheckoutEnabledFromEnv,
   verifyTaypiWebhook,
 } from "../lib/payments/taypi.js";
 
@@ -17,6 +18,24 @@ const ENV = {
   TAYPI_SANDBOX: "true",
   TAYPI_TIMEOUT_MS: "10000",
 };
+
+test("el checkout publico exige gate comercial y Taypi real", () => {
+  assert.equal(taypiCheckoutEnabledFromEnv({
+    ...ENV,
+    COMMERCIAL_LAUNCH_ENABLED: "false",
+    TAYPI_SANDBOX: "false",
+  }), false, "las credenciales no deben saltarse el gate operativo");
+  assert.equal(taypiCheckoutEnabledFromEnv({
+    ...ENV,
+    COMMERCIAL_LAUNCH_ENABLED: "true",
+    TAYPI_SANDBOX: "true",
+  }), false, "sandbox no debe exponerse como checkout comercial");
+  assert.equal(taypiCheckoutEnabledFromEnv({
+    ...ENV,
+    COMMERCIAL_LAUNCH_ENABLED: "true",
+    TAYPI_SANDBOX: "false",
+  }), true);
+});
 
 test("catálogo cobra PEN desde backend y no ofrece Institución", () => {
   assert.equal(getPurchasablePlan("esencial", "monthly").amount, "49.00");

@@ -81,10 +81,14 @@ export const verifyGoogleIdToken = async (idToken) => {
   if (payload.email_verified !== true) {
     throw new Error("Tu correo de Google no esta verificado.");
   }
+  const sub = String(payload.sub ?? "").trim();
+  if (!sub) {
+    throw new Error("La identidad de Google no incluye un identificador estable.");
+  }
 
   return {
     email,
     name: String(payload.name ?? "").trim(),
-    sub: String(payload.sub ?? ""),
+    sub,
   };
 };
