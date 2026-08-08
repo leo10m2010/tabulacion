@@ -42,6 +42,9 @@ const TESISTAB_STALE_JOB_AFTER_MS = Number(process.env.TESISTAB_STALE_JOB_AFTER_
 const TESISTAB_FINISHED_JOB_TTL_MS = Number(
   process.env.TESISTAB_FINISHED_JOB_TTL_MS || 30 * 24 * 60 * 60_000
 );
+// Node convierte cualquier setTimeout mayor a un entero de 32 bits en 1 ms.
+// La retencion de 30 dias supera ese maximo, por lo que debe armarse en tramos.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const TESISTAB_COMPAT_FORM_TTL_MS = Number(process.env.TESISTAB_COMPAT_FORM_TTL_MS || 10 * 60_000);
 const TESISTAB_MAX_COMPAT_FORMS = Number(process.env.TESISTAB_MAX_COMPAT_FORMS || 20);
 const TESISTAB_PROVIDER_RETRIES = Math.max(1, Number(process.env.TESISTAB_PROVIDER_RETRIES || 3));
@@ -3123,6 +3126,10 @@ function withTimeout(promise, timeoutMs, message) {
   });
 }
 
+function nextTesistabCleanupDelay(expiresAt, now = Date.now()) {
+  return Math.min(Math.max(0, Number(expiresAt) - Number(now)), MAX_TIMER_DELAY_MS);
+}
+
 function scheduleTesistabJobCleanup(jobId) {
   if (!jobId || TESISTAB_FINISHED_JOB_TTL_MS <= 0) {
     return;
@@ -3133,25 +3140,35 @@ function scheduleTesistabJobCleanup(jobId) {
     clearTimeout(existing);
   }
 
-  const timer = setTimeout(() => {
-    tesistabCleanupTimers.delete(jobId);
+  const current = tesistabJobStore[jobId];
+  const finishedAt = Date.parse(current?.finishedAt || current?.updatedAt || '');
+  const expiresAt = (Number.isFinite(finishedAt) ? finishedAt : Date.now())
+    + TESISTAB_FINISHED_JOB_TTL_MS;
 
-    const job = tesistabJobStore[jobId];
-    if (!job) {
-      return;
-    }
+  const arm = () => {
+    const delay = nextTesistabCleanupDelay(expiresAt);
+    const timer = setTimeout(() => {
+      if (Date.now() < expiresAt) {
+        arm();
+        return;
+      }
+      tesistabCleanupTimers.delete(jobId);
 
-    if (['running', 'queued', 'paused', 'cancelling'].includes(job.status)) {
-      return;
-    }
+      const job = tesistabJobStore[jobId];
+      if (!job || ['running', 'queued', 'paused', 'cancelling'].includes(job.status)) {
+        return;
+      }
 
-    delete tesistabJobStore[jobId];
-    tesistabSmartRuntimeStore.delete(jobId);
-    tesistabQuotaRuntimeStore.delete(jobId);
-    persistTesistabJobsSoon();
-  }, TESISTAB_FINISHED_JOB_TTL_MS);
+      delete tesistabJobStore[jobId];
+      tesistabSmartRuntimeStore.delete(jobId);
+      tesistabQuotaRuntimeStore.delete(jobId);
+      persistTesistabJobsSoon();
+    }, delay);
+    timer.unref?.();
+    tesistabCleanupTimers.set(jobId, timer);
+  };
 
-  tesistabCleanupTimers.set(jobId, timer);
+  arm();
 }
 
 function sendApiError(res, status, code, message, requestId, details = null) {
@@ -4068,5 +4085,6 @@ app.retryPendingTesistabSettlements = retryPendingTesistabSettlements;
 app.runTesistabWatchdogCycle = runTesistabWatchdogCycle;
 app.recordUncertainDelivery = recordUncertainDelivery;
 app.reconcileTesistabDelivery = reconcileTesistabDelivery;
+app.nextTesistabCleanupDelay = nextTesistabCleanupDelay;
 
 module.exports = app;

@@ -19,6 +19,14 @@ function terminalJob(overrides = {}) {
 }
 
 describe('durable Forms quota settlement', () => {
+  test('retencion de 30 dias se arma en tramos sin desbordar setTimeout a 1 ms', () => {
+    const now = Date.UTC(2026, 7, 8);
+    const thirtyDays = 30 * 24 * 60 * 60_000;
+    assert.equal(app.nextTesistabCleanupDelay(now + thirtyDays, now), 2_147_483_647);
+    assert.equal(app.nextTesistabCleanupDelay(now + 500, now), 500);
+    assert.equal(app.nextTesistabCleanupDelay(now - 1, now), 0);
+  });
+
   test('retries transient settlement failures without real waits', async () => {
     const job = terminalJob();
     const waits = [];
