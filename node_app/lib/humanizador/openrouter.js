@@ -4,6 +4,7 @@
 // GLM) y temperatura ALTA (0.9): la tarea es producir variabilidad lexica,
 // exactamente lo contrario de lo que una temperatura baja induce.
 import { callOpenRouter, stripToolCallMarkup, DEFAULT_MODEL } from "../titulos/openrouter.js";
+import { metrics, providerUsageFields, structuredLog } from "../observability.js";
 import { countWords } from "./metrics.js";
 
 export const HUMANIZADOR_TEMPERATURE = 0.9;
@@ -55,19 +56,22 @@ const requestWithRetry = async ({ messages, textoBase, label, options }) => {
       reasoningEffort: "none",
       temperature: options.temperature ?? HUMANIZADOR_TEMPERATURE,
     });
-    // eslint-disable-next-line no-console
-    console.log(
-      `[humanizador] ${label} intento ${attempt}: finish_reason=${finishReason}, `
-      + `usage=${JSON.stringify(usage)}`,
-    );
+    metrics.increment("openrouter_requests_total", 1, { tool: "humanizador", stage: label });
+    structuredLog("info", "openrouter.request_completed", {
+      tool: "humanizador", stage: label, attempt, finishReason,
+      ...providerUsageFields(usage),
+    });
     const { cleaned, failure } = validateAttempt(content, textoBase);
     if (cleaned) return cleaned;
 
     lastFailure = failure;
-    // eslint-disable-next-line no-console
-    console.error(
-      `[humanizador] ${label} intento ${attempt} fallido (${failure}). Respuesta cruda:\n${String(content ?? "").slice(0, 1000)}`,
-    );
+    metrics.increment("openrouter_invalid_responses_total", 1, {
+      tool: "humanizador", stage: label,
+    });
+    structuredLog("warn", "openrouter.invalid_response", {
+      tool: "humanizador", stage: label, attempt,
+      responseLength: String(content ?? "").length,
+    });
     attemptMessages = [
       ...messages,
       ...(String(content ?? "").trim() ? [{ role: "assistant", content }] : []),

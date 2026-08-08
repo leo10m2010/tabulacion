@@ -71,7 +71,12 @@ const addVariableSheet = (sheet, cfg, variable, varIndex, firstItemNumber, base)
       const items = [];
       for (let k = 0; k < ind.items; k += 1) {
         itemIndexInVar += 1;
-        items.push({ code: `P${itemNumber}`, col, indexInVar: itemIndexInVar });
+        items.push({
+          code: `P${itemNumber}`,
+          col,
+          indexInVar: itemIndexInVar,
+          inverse: (variable.itemsInversos ?? []).includes(itemIndexInVar),
+        });
         itemNumber += 1;
         col += 1;
       }
@@ -105,14 +110,14 @@ const addVariableSheet = (sheet, cfg, variable, varIndex, firstItemNumber, base)
       sheet.range(3, ind.startCol, 3, ind.endCol).merged(true).style(ST_SUBHEADER);
       sheet.cell(3, ind.startCol).value(ind.nombre);
       ind.items.forEach((item) => {
-        sheet.cell(4, item.col).value(item.code).style(ST_HEADER);
+        sheet.cell(4, item.col).value(item.inverse ? `${item.code} (R)` : item.code).style(ST_HEADER);
       });
     });
   });
   sheet.row(2).height(28);
   sheet.row(3).height(28);
 
-  // Base de datos: IDs 1..N; con datos simulados o vacia para ingreso manual.
+  // Base de datos: IDs 1..N; con filas generadas o vacia para ingreso manual.
   // Total y Valoracion por encuestado (baremo de la variable completa).
   const flatItems = dims.flatMap((d) => d.indicadores.flatMap((ind) => ind.items));
   const firstItemL = colLetter(2);
@@ -128,8 +133,14 @@ const addVariableSheet = (sheet, cfg, variable, varIndex, firstItemNumber, base)
         sheet.cell(r, item.col).value(base[`V${varIndex + 1}_${item.indexInVar}`][i]);
       });
     }
+    const totalExpression = flatItems.some((item) => item.inverse)
+      ? `SUM(${flatItems.map((item) => {
+        const ref = `${colLetter(item.col)}${r}`;
+        return item.inverse ? `(${escalaMin + escalaMax}-${ref})` : ref;
+      }).join(",")})`
+      : `SUM(${firstItemL}${r}:${lastItemL}${r})`;
     sheet.cell(r, totalCol).style({ ...ST_CELL, ...alt, bold: true })
-      .formula(`IF(COUNT(${firstItemL}${r}:${lastItemL}${r})=0,"",SUM(${firstItemL}${r}:${lastItemL}${r}))`);
+      .formula(`IF(COUNT(${firstItemL}${r}:${lastItemL}${r})=0,"",${totalExpression})`);
     sheet.cell(r, valCol).style({ ...ST_CELL, ...alt })
       .formula(valoracionFormula(nivelesVar, `${totalL}${r}`));
   }
@@ -408,12 +419,17 @@ const buildBaremoBlock = (sheet, ctx) => {
   return { endRow: r3 + 2, chart };
 };
 
-const classifyCounts = (base, varIndex, items, niveles, N) => {
+const classifyCounts = (base, varIndex, items, niveles, N, variable, escalaMin, escalaMax) => {
   if (!base) return null;
   const counts = niveles.map(() => 0);
   for (let i = 0; i < N; i += 1) {
     let sum = 0;
-    items.forEach((item) => { sum += base[`V${varIndex + 1}_${item.indexInVar}`][i]; });
+    items.forEach((item) => {
+      const raw = base[`V${varIndex + 1}_${item.indexInVar}`][i];
+      sum += (variable.itemsInversos ?? []).includes(item.indexInVar)
+        ? escalaMin + escalaMax - raw
+        : raw;
+    });
     let idx = niveles.length - 1;
     for (let k = 0; k < niveles.length; k += 1) {
       if (sum <= niveles[k].max) { idx = k; break; }
@@ -478,10 +494,17 @@ const addDimensionesSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base
     sheet.cell(r, C0).value(i + 1).style({ ...ST_CELL, ...alt });
     groupsAll.forEach((g) => {
       const sumaRef = `${g.sumaL}${r}`;
+      const range = `${baseRef}!${colLetter(g.startCol)}${baseRow}:${colLetter(g.endCol)}${baseRow}`;
+      const hasInverse = g.items?.some((item) => item.inverse);
+      const groupExpression = hasInverse
+        ? `SUM(${g.items.map((item) => {
+          const ref = `${baseRef}!${colLetter(item.col)}${baseRow}`;
+          return item.inverse ? `(${escalaMin + escalaMax}-${ref})` : ref;
+        }).join(",")})`
+        : `SUM(${range})`;
       const f = g.total
         ? `IF(${baseRef}!${totalL}${baseRow}="","",${baseRef}!${totalL}${baseRow})`
-        : `IF(COUNT(${baseRef}!${colLetter(g.startCol)}${baseRow}:${colLetter(g.endCol)}${baseRow})=0,"",`
-          + `SUM(${baseRef}!${colLetter(g.startCol)}${baseRow}:${colLetter(g.endCol)}${baseRow}))`;
+        : `IF(COUNT(${range})=0,"",${groupExpression})`;
       sheet.cell(r, g.sumaCol).style({ ...ST_CELL, ...alt, bold: true }).formula(f);
       sheet.cell(r, g.sumaCol + 1).style({ ...ST_CELL, ...alt })
         .formula(valoracionFormula(g.niveles, sumaRef));
@@ -507,7 +530,7 @@ const addDimensionesSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base
       nivelRange: `${g.nivelL}$${dStart}:${g.nivelL}$${dEnd}`,
       startRow: row,
       tablaN: tabla,
-      nivelCounts: classifyCounts(base, varIndex, g.items, g.niveles, N),
+      nivelCounts: classifyCounts(base, varIndex, g.items, g.niveles, N, variable, escalaMin, escalaMax),
     });
     charts.push(block.chart);
     dimSumaRefs.push({ nombre: g.nombre, sheetName: sheet.name(), col: g.sumaL, start: dStart, end: dEnd });
@@ -525,7 +548,7 @@ const addDimensionesSheet = (sheet, cfg, variable, baseInfo, baseSheetName, base
     nivelRange: `${gVar.nivelL}$${dStart}:${gVar.nivelL}$${dEnd}`,
     startRow: row,
     tablaN: tabla,
-    nivelCounts: classifyCounts(base, varIndex, allItems, nivelesVar, N),
+    nivelCounts: classifyCounts(base, varIndex, allItems, nivelesVar, N, variable, escalaMin, escalaMax),
   });
   charts.push({ ...block.chart, title: variable.nombre });
   row = block.endRow;
@@ -582,18 +605,18 @@ const addRelacionesSheet = (sheet, cfg, refsV1, refsV2, base) => {
   const totalV2 = series[series.length - 1];
 
   // Normalidad solo sobre el total de V1, el total de V2 y las dimensiones de
-  // V1 (las dimensiones de V2 no participan). Con base simulada los valores se
+  // V1 (las dimensiones de V2 no participan). Con base generada los valores se
   // calculan aqui; sin base la tabla queda en blanco para llenarla desde SPSS.
   const targets = [totalV1, totalV2, ...dimsV1];
   if (base) {
     let from = 1;
     dimsV1.forEach((s, i) => {
       const count = v1.dimensiones[i].indicadores.reduce((acc, ind) => acc + ind.items, 0);
-      s.values = sumRangePerRow(base, 1, from, from + count - 1, N);
+      s.values = sumRangePerRow(base, 1, from, from + count - 1, N, cfg);
       from += count;
     });
-    totalV1.values = sumPerRow(base, 1, v1.totalItems, N);
-    totalV2.values = sumPerRow(base, 2, v2.totalItems, N);
+    totalV1.values = sumPerRow(base, 1, v1.totalItems, N, cfg);
+    totalV2.values = sumPerRow(base, 2, v2.totalItems, N, cfg);
     targets.forEach((s) => {
       s.ks = lillieforsTest(s.values);
       s.sw = shapiroWilkTest(s.values);
@@ -866,12 +889,12 @@ const addInfoSheet = (sheet, cfg, baseSheetNames, correlationControl = null) => 
     row += 1;
   });
 
-  // Resumen del control opcional de correlacion de la simulacion.
+  // Resumen del control opcional de correlación.
   if (correlationControl) {
     const cc = correlationControl;
     row += 1;
     sheet.range(row, 1, row, 4).merged(true).style(ST_HEADER);
-    sheet.cell(row, 1).value("Simulación de datos — control de correlación");
+    sheet.cell(row, 1).value("Control de correlación");
     row += 1;
     const filas = [
       ["Control de correlación", cc.activo ? "Activado" : "Desactivado (correlación natural)"],
@@ -891,22 +914,6 @@ const addInfoSheet = (sheet, cfg, baseSheetNames, correlationControl = null) => 
       sheet.cell(row, 2).value(v);
       row += 1;
     });
-  }
-
-  // Aviso de datos simulados.
-  //
-  // Vivía dentro del bloque anterior, que solo existe si hay control de
-  // correlación — y con una sola variable `correlationControl` es null. Es
-  // decir: justo el archivo de una variable salía con cientos de respuestas
-  // Likert inventadas y ninguna marca de que lo fueran. Depende de si hay
-  // datos, que es lo que de verdad lo determina.
-  if (cfg.conDatos) {
-    row += 1;
-    sheet.range(row, 1, row, 4).merged(true).style({ ...FONT, fontSize: 9, italic: true, horizontalAlignment: "left" });
-    sheet.cell(row, 1).value(
-      "• Los datos de este archivo son SIMULADOS: esta función está pensada para pruebas del sistema, ensayos estadísticos y demostraciones académicas; no reemplaza datos reales recolectados en una investigación.",
-    );
-    row += 1;
   }
 
   sheet.column("A").width(28);

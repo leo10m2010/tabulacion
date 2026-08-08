@@ -11,6 +11,7 @@
 // (el prompt le permite pocas busquedas adicionales si le falta algo).
 
 import { normalizeUrlForMatch, findBannedSourceUrls, findNonDocumentUrls } from "./verify.js";
+import { errorLogFields, metrics, structuredLog } from "../observability.js";
 
 const BRAVE_URL = "https://api.search.brave.com/res/v1/web/search";
 const FIRECRAWL_URL = "https://api.firecrawl.dev/v1/search";
@@ -125,8 +126,10 @@ export const searchWithFallback = async (query, options = {}) => {
         return results;
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn(`[titulos] Brave fallo para "${query}": ${err.message}; se intenta Firecrawl.`);
+      metrics.increment("external_requests_total", 1, { provider: "brave", outcome: "failed" });
+      structuredLog("warn", "search.provider_failed", {
+        provider: "brave", fallback: "firecrawl", ...errorLogFields(err),
+      });
     }
   }
 
@@ -141,8 +144,10 @@ export const searchWithFallback = async (query, options = {}) => {
         return results;
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn(`[titulos] Firecrawl fallo para "${query}": ${err.message}.`);
+      metrics.increment("external_requests_total", 1, { provider: "firecrawl", outcome: "failed" });
+      structuredLog("warn", "search.provider_failed", {
+        provider: "firecrawl", fallback: "none", ...errorLogFields(err),
+      });
     }
   }
 
@@ -173,8 +178,10 @@ export const braveUrlCheck = async (url, options = {}) => {
     cacheSet(cacheKey, { found });
     return found;
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(`[titulos] braveUrlCheck fallo para "${url}": ${err.message}.`);
+    metrics.increment("external_requests_total", 1, { provider: "brave", outcome: "failed" });
+    structuredLog("warn", "search.url_check_failed", {
+      provider: "brave", ...errorLogFields(err),
+    });
     return null;
   }
 };
@@ -219,7 +226,6 @@ const runQueries = async (queries, sectionLabel, logLabel, options = {}) => {
 
   for (let i = 0; i < queries.length; i += 1) {
     const query = queries[i];
-    // eslint-disable-next-line no-await-in-loop
     const results = await searchWithFallback(query, options);
     if (results.length > 0) {
       totalResults += results.length;
@@ -228,13 +234,16 @@ const runQueries = async (queries, sectionLabel, logLabel, options = {}) => {
       sections.push(`### ${sectionLabel}: ${query}\n${lines.join("\n")}`);
     }
     if (i < queries.length - 1 && delayMs > 0) {
-      // eslint-disable-next-line no-await-in-loop
       await sleep(delayMs);
     }
   }
 
-  // eslint-disable-next-line no-console
-  console.log(`[titulos] ${logLabel}: ${queries.length} consultas, ${totalResults} resultados.`);
+  structuredLog("info", "search.batch_completed", {
+    tool: "titulos",
+    phase: String(logLabel).replace(/[^a-zA-Z0-9_.:-]/g, "_").slice(0, 32),
+    queryCount: queries.length,
+    resultCount: totalResults,
+  });
   if (sections.length === 0) return null;
   return sections.join("\n\n");
 };

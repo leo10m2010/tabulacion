@@ -10,7 +10,7 @@ import type { DimensionDef, TabConfig, WizardStep } from "./types";
 //
 // Solo se guarda lo que el usuario escribió (configuración, estructura y en qué
 // paso iba). El resultado, los enlaces de descarga y los mensajes de estado son
-// de una corrida concreta y no tienen sentido restaurados.
+// de un proceso concreto y no tienen sentido restaurados.
 
 export interface WizardDraft {
   version: number;

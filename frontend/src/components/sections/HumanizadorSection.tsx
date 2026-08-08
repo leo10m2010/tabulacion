@@ -142,10 +142,13 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser, onPasoHech
   // pero una petición de polling ya en vuelo resuelve igual.
   const aliveRef = useRef(true);
 
-  useEffect(() => () => {
-    aliveRef.current = false;
-    if (pollRef.current) window.clearTimeout(pollRef.current);
-    if (docxUrlRef.current) URL.revokeObjectURL(docxUrlRef.current);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      if (pollRef.current) window.clearTimeout(pollRef.current);
+      if (docxUrlRef.current) URL.revokeObjectURL(docxUrlRef.current);
+    };
   }, []);
 
   // Cronómetro de la espera (solo mientras el job corre).
@@ -162,7 +165,7 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser, onPasoHech
     issues.push(`El texto es demasiado corto (${palabras} palabras); el mínimo es ${MIN_PALABRAS}.`);
   }
   if (!docxFile && palabras > MAX_PALABRAS) {
-    issues.push(`El texto supera el límite de ${MAX_PALABRAS.toLocaleString()} palabras por corrida; divídelo en partes.`);
+    issues.push(`El texto supera el límite de ${MAX_PALABRAS.toLocaleString()} palabras por proceso; divídelo en partes.`);
   }
   const canGenerate = (docxFile !== null || (palabras >= MIN_PALABRAS && palabras <= MAX_PALABRAS))
     && issues.length === 0;
@@ -363,7 +366,14 @@ export function HumanizadorSection({ apiBaseUrl, authToken, authUser, onPasoHech
                   </span>
                   <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtElapsed(elapsed)}</span>
                 </div>
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-primary/15">
+                <div
+                  role="progressbar"
+                  aria-label="Progreso de la humanización"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progreso}
+                  className="mt-3 h-1.5 overflow-hidden rounded-full bg-primary/15"
+                >
                   <motion.div
                     className="h-full rounded-full bg-primary"
                     animate={{ width: `${progreso}%` }}

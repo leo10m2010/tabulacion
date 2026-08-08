@@ -8,11 +8,75 @@ import {
   MAX_ITEMS_POR_VARIABLE,
   MAX_MUESTRA,
   generateArtifacts,
+  generateBaseData,
   lillieforsTest,
+  normalizeConfig,
   shapiroWilkTest,
 } from "../generator.js";
+import { sumPerRow } from "../lib/stats.js";
 
 const baseConfig = JSON.parse(fs.readFileSync(DEFAULT_CONFIG_PATH, "utf-8"));
+
+test("una semilla reproduce exactamente la misma base", () => {
+  const cfg = normalizeConfig({ ...baseConfig, muestra: "40", seed: "caso-reproducible" });
+  const first = generateBaseData(cfg);
+  const second = generateBaseData(cfg);
+  assert.deepEqual(second, first);
+
+  const different = generateBaseData(
+    normalizeConfig({ ...baseConfig, muestra: "40", seed: "otra-semilla" }),
+  );
+  assert.notDeepEqual(different.base, first.base);
+});
+
+test("sin semilla genera una criptograficamente aleatoria y la devuelve", async () => {
+  const first = await generateArtifacts({ ...baseConfig, muestra: "12", seed: undefined });
+  const second = await generateArtifacts({ ...baseConfig, muestra: "12", seed: undefined });
+  assert.match(first.seed, /^[0-9a-f]{32}$/);
+  assert.match(second.seed, /^[0-9a-f]{32}$/);
+  assert.notEqual(second.seed, first.seed);
+});
+
+test("items inversos se guardan como respuestas crudas y se puntuan al reves", async () => {
+  const raw = {
+    ...baseConfig,
+    muestra: "40",
+    seed: "items-inversos",
+    items_inversos_v1: [2],
+  };
+  const cfg = normalizeConfig(raw);
+  assert.deepEqual(cfg.variables[0].itemsInversos, [2]);
+
+  const { base } = generateBaseData(cfg);
+  const totals = sumPerRow(base, 1, cfg.variables[0].totalItems, cfg.encuestados, cfg);
+  for (let row = 0; row < cfg.encuestados; row += 1) {
+    let manual = 0;
+    for (let item = 1; item <= cfg.variables[0].totalItems; item += 1) {
+      const value = base[`V1_${item}`][row];
+      manual += item === 2 ? 6 - value : value;
+    }
+    assert.equal(totals[row], manual);
+  }
+
+  const result = await generateArtifacts(raw);
+  const workbook = await XlsxPopulate.fromDataAsync(result.excelBuffer);
+  const baseSheet = workbook.sheet("Gestion de abastecimiento");
+  const dimsSheet = workbook.sheet("Dimensiones Gestion de abasteci");
+  assert.equal(baseSheet.cell("C4").value(), "P2 (R)");
+  assert.match(String(baseSheet.cell("T5").formula()), /\(6-C5\)/);
+  assert.match(String(dimsSheet.cell("C5").formula()), /\(6-'Gestion de abastecimiento'!C5\)/);
+});
+
+test("items inversos rechaza posiciones fuera del instrumento o duplicadas", () => {
+  assert.throws(
+    () => normalizeConfig({ ...baseConfig, items_inversos_v1: [0] }),
+    /posiciones enteras entre 1 y 18/,
+  );
+  assert.throws(
+    () => normalizeConfig({ ...baseConfig, items_inversos_v1: [2, 2] }),
+    /no pueden repetirse/,
+  );
+});
 
 test("config clasica genera con correlacion alta, csv y graficos", async () => {
   const result = await generateArtifacts(baseConfig);

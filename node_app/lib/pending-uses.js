@@ -1,10 +1,8 @@
 // Usos consumidos por un job de IA que todavia no termino.
 //
-// El problema que resuelve: los jobs viven solo en memoria. El uso se
-// descuenta al crear el job y se devuelve en el `.catch` si la generacion
-// falla — pero si el proceso se reinicia a mitad del job (deploy, suspension
-// del hosting, OOM), ese `.catch` nunca corre: el usuario perdio el uso y no
-// recibio nada.
+// Los jobs ya tienen estado durable, pero la ejecucion inline puede morir
+// entre el descuento y la finalizacion (deploy, suspension u OOM). Esta marca
+// enlaza el movimiento de saldo con el job para reconciliarlo al arrancar.
 //
 // Aqui se anota cada uso descontado por un job en curso. Al arrancar, el
 // servidor devuelve los que quedaron huerfanos.
@@ -13,9 +11,8 @@
 // disco efimero del plan gratis se borraba junto con los usuarios y esta red
 // de seguridad no llegaba a servir de nada.
 //
-// Los archivos de resultado NO se persisten (son megas de Excel en memoria):
-// tras un reinicio el trabajo se pierde igual, pero el usuario recupera su uso
-// y puede volver a intentarlo.
+// Los archivos terminados viven en R2. Un trabajo interrumpido se marca como
+// fallido, libera el gate global y devuelve su uso de forma idempotente.
 import { persistPending } from "./store/index.js";
 
 let entries = [];

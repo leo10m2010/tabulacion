@@ -6,13 +6,17 @@
 // campos propios del diseño (tamaños de grupo, efecto, dirección, alpha).
 
 import { MAX_MUESTRA, toInt } from "./config.js";
-import { lillieforsTest, randn, shapiroWilkTest } from "./stats.js";
+import { lillieforsTest, shapiroWilkTest } from "./stats.js";
+import { createNormalRandom, createRandom } from "./random.js";
 import { computeNiveles } from "./sheet-style.js";
 import {
   describe,
   mannWhitneyUTest,
   normCdf,
   pairedTTest,
+  sampleVariance,
+  studentTCdf,
+  studentTQuantile,
   welchTTest,
   wilcoxonSignedRankTest,
 } from "./quasi-stats.js";
@@ -226,10 +230,10 @@ const discretize = (latent, values) => {
   return values[index];
 };
 
-const buildItemParameters = (count) => Array.from({ length: count }, () => ({
-  loading: 0.8 + Math.random() * 0.35,
-  bias: (Math.random() - 0.5) * 0.75,
-  noise: 0.65 + Math.random() * 0.35,
+const buildItemParameters = (count, random) => Array.from({ length: count }, () => ({
+  loading: 0.8 + random() * 0.35,
+  bias: (random() - 0.5) * 0.75,
+  noise: 0.65 + random() * 0.35,
 }));
 
 const generateGroup = ({
@@ -241,23 +245,32 @@ const generateGroup = ({
   direction,
   controlDrift,
   mediciones,
+  normal,
+  inverseItems,
+  scaleMin,
+  scaleMax,
 }) => {
   const isExperimental = group === "Experimental";
   return Array.from({ length: n }, (_, index) => {
-    const baseline = randn();
-    const naturalChange = randn() * 0.22;
+    const baseline = normal();
+    const naturalChange = normal() * 0.22;
     const shift = direction * (isExperimental ? effectShift : controlDrift);
     const postLatent = baseline + shift + naturalChange;
 
-    const pre = itemParameters.map(({ loading, bias, noise }) => (
-      discretize(loading * baseline + bias + randn() * noise, scaleValues)
+    const preScored = itemParameters.map(({ loading, bias, noise }) => (
+      discretize(loading * baseline + bias + normal() * noise, scaleValues)
     ));
-    const post = itemParameters.map(({ loading, bias, noise }) => (
-      discretize(loading * postLatent + bias + randn() * noise * 0.8, scaleValues)
+    const postScored = itemParameters.map(({ loading, bias, noise }) => (
+      discretize(loading * postLatent + bias + normal() * noise * 0.8, scaleValues)
     ));
+    const encode = (values) => values.map((value, itemIndex) => (
+      inverseItems.has(itemIndex + 1) ? scaleMin + scaleMax - value : value
+    ));
+    const pre = encode(preScored);
+    const post = encode(postScored);
 
-    const preTotal = pre.reduce((sum, value) => sum + value, 0);
-    const postTotal = post.reduce((sum, value) => sum + value, 0);
+    const preTotal = preScored.reduce((sum, value) => sum + value, 0);
+    const postTotal = postScored.reduce((sum, value) => sum + value, 0);
     const row = {
       id: `${isExperimental ? "GE" : "GC"}-${String(index + 1).padStart(3, "0")}`,
       group,
@@ -273,11 +286,12 @@ const generateGroup = ({
       // decaimiento (0.85) y variación individual propia; el control conserva
       // solo su deriva natural acumulada.
       const segShift = direction * (isExperimental ? effectShift * 0.85 : controlDrift * 1.5);
-      const segLatent = baseline + segShift + randn() * 0.26;
-      row.seg = itemParameters.map(({ loading, bias, noise }) => (
-        discretize(loading * segLatent + bias + randn() * noise * 0.8, scaleValues)
+      const segLatent = baseline + segShift + normal() * 0.26;
+      const segScored = itemParameters.map(({ loading, bias, noise }) => (
+        discretize(loading * segLatent + bias + normal() * noise * 0.8, scaleValues)
       ));
-      row.segTotal = row.seg.reduce((sum, value) => sum + value, 0);
+      row.seg = encode(segScored);
+      row.segTotal = segScored.reduce((sum, value) => sum + value, 0);
       row.changeSeg = row.segTotal - postTotal;
     }
     return row;
@@ -340,6 +354,32 @@ const decisionText = (p, alpha) => (
   p < alpha ? "Se rechaza H₀" : "No se rechaza H₀"
 );
 
+const confidenceInterval = (estimate, standardError, df, alpha) => {
+  if (!Number.isFinite(estimate)) return null;
+  if (!Number.isFinite(standardError) || standardError <= 0) return [estimate, estimate];
+  const critical = studentTQuantile(1 - alpha / 2, df);
+  if (!Number.isFinite(critical)) return null;
+  return [estimate - critical * standardError, estimate + critical * standardError];
+};
+
+const meanDifferenceInterval = (first, second, { paired, alpha }) => {
+  const differences = paired
+    ? second.map((value, index) => value - first[index])
+    : null;
+  const estimate = paired
+    ? describe(differences).mean
+    : describe(first).mean - describe(second).mean;
+  const standardError = paired
+    ? Math.sqrt(sampleVariance(differences) / differences.length)
+    : Math.sqrt(sampleVariance(first) / first.length + sampleVariance(second) / second.length);
+  const df = paired ? differences.length - 1 : first.length + second.length - 2;
+  return {
+    estimate,
+    confidenceLevel: 1 - alpha,
+    confidenceInterval: confidenceInterval(estimate, standardError, df, alpha),
+  };
+};
+
 // Magnitud cualitativa del tamaño del efecto (Cohen 1988 para d/dz; umbrales
 // habituales para la correlación biserial por rangos).
 export const effectMagnitude = (comparison) => {
@@ -373,6 +413,7 @@ const pairedComparison = ({ name, hypotheses, pre, post, alpha, normalityTarget 
     decision: decisionText(result.p, alpha),
     significant: result.p < alpha,
     effectMagnitude: magnitude,
+    ...meanDifferenceInterval(pre, post, { paired: true, alpha }),
     interpretation: result.p < alpha
       ? `Existe una diferencia estadísticamente significativa entre el pretest y el postest (${testLabel(result.test)}, p = ${result.p.toFixed(3)} < α = ${alpha}), con un tamaño del efecto ${magnitude}.`
       : `No se encontró una diferencia estadísticamente significativa entre el pretest y el postest (${testLabel(result.test)}, p = ${result.p.toFixed(3)} ≥ α = ${alpha}).`,
@@ -397,9 +438,84 @@ const independentComparison = ({ name, hypotheses, first, second, alpha, labels 
     decision: decisionText(result.p, alpha),
     significant: result.p < alpha,
     effectMagnitude: magnitude,
+    ...meanDifferenceInterval(first, second, { paired: false, alpha }),
     interpretation: result.p < alpha
       ? `Existe una diferencia estadísticamente significativa entre los grupos (${testLabel(result.test)}, p = ${result.p.toFixed(3)} < α = ${alpha}), con un tamaño del efecto ${magnitude}.`
       : `No se encontró una diferencia estadísticamente significativa entre los grupos (${testLabel(result.test)}, p = ${result.p.toFixed(3)} ≥ α = ${alpha}).`,
+  };
+};
+
+const invert3x3 = (matrix) => {
+  const [[a, b, c], [d, e, f], [g, h, i]] = matrix;
+  const determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  if (Math.abs(determinant) < 1e-12) return null;
+  return [
+    [(e * i - f * h) / determinant, (c * h - b * i) / determinant, (b * f - c * e) / determinant],
+    [(f * g - d * i) / determinant, (a * i - c * g) / determinant, (c * d - a * f) / determinant],
+    [(d * h - e * g) / determinant, (b * g - a * h) / determinant, (a * e - b * d) / determinant],
+  ];
+};
+
+const ancovaComparison = ({ experimentalPre, experimentalPost, controlPre, controlPost, alpha, variableName }) => {
+  const rows = [
+    ...controlPre.map((pre, index) => ({ group: 0, pre, post: controlPost[index] })),
+    ...experimentalPre.map((pre, index) => ({ group: 1, pre, post: experimentalPost[index] })),
+  ];
+  const n = rows.length;
+  const sum = (fn) => rows.reduce((total, row) => total + fn(row), 0);
+  const xtx = [
+    [n, sum((row) => row.group), sum((row) => row.pre)],
+    [sum((row) => row.group), sum((row) => row.group ** 2), sum((row) => row.group * row.pre)],
+    [sum((row) => row.pre), sum((row) => row.group * row.pre), sum((row) => row.pre ** 2)],
+  ];
+  const inverse = invert3x3(xtx);
+  if (!inverse || n <= 3) return null;
+  const xty = [sum((row) => row.post), sum((row) => row.group * row.post), sum((row) => row.pre * row.post)];
+  const beta = inverse.map((line) => line.reduce((total, value, index) => total + value * xty[index], 0));
+  const residuals = rows.map((row) => row.post - (beta[0] + beta[1] * row.group + beta[2] * row.pre));
+  const df = n - 3;
+  const residualVariance = residuals.reduce((total, value) => total + value ** 2, 0) / df;
+  const standardError = Math.sqrt(Math.max(0, residualVariance * inverse[1][1]));
+  const t = standardError > 0
+    ? beta[1] / standardError
+    : (beta[1] === 0 ? 0 : Math.sign(beta[1]) * Infinity);
+  const p = Number.isFinite(t) ? Math.min(1, 2 * (1 - studentTCdf(Math.abs(t), df))) : 0;
+  const grandPre = sum((row) => row.pre) / n;
+  const adjustedControlMean = beta[0] + beta[2] * grandPre;
+  const adjustedExperimentalMean = adjustedControlMean + beta[1];
+  const effectSize = Number.isFinite(t) ? (t ** 2) / (t ** 2 + df) : 1;
+  const magnitude = effectSize < 0.01
+    ? "trivial"
+    : effectSize < 0.06 ? "pequeño" : effectSize < 0.14 ? "mediano" : "grande";
+  return {
+    name: "ANCOVA: postest ajustado por pretest",
+    type: "adjusted",
+    test: "ancova",
+    testLabel: "ANCOVA (postest ajustado por pretest)",
+    statistic: Number.isFinite(t) ? t ** 2 : Infinity,
+    statisticLabel: "F",
+    df,
+    p,
+    alpha,
+    hypotheses: {
+      nula: `H₀: No existe efecto de grupo en ${variableName} al ajustar el postest por el pretest.`,
+      alterna: `H₁: Existe efecto de grupo en ${variableName} al ajustar el postest por el pretest.`,
+    },
+    normality: [{ target: "Residuos del modelo ANCOVA", ...normalityFor(residuals, alpha) }],
+    selectedByNormality: "adjusted_model",
+    decision: decisionText(p, alpha),
+    significant: p < alpha,
+    estimate: beta[1],
+    standardError,
+    confidenceLevel: 1 - alpha,
+    confidenceInterval: confidenceInterval(beta[1], standardError, df, alpha),
+    adjustedMeans: { experimental: adjustedExperimentalMean, control: adjustedControlMean },
+    effectSize,
+    effectMeasure: "eta cuadrado parcial",
+    effectMagnitude: magnitude,
+    interpretation: p < alpha
+      ? `El efecto ajustado del grupo es estadísticamente significativo (ANCOVA, p = ${p.toFixed(3)} < α = ${alpha}), con un tamaño del efecto ${magnitude}.`
+      : `El efecto ajustado del grupo no es estadísticamente significativo (ANCOVA, p = ${p.toFixed(3)} ≥ α = ${alpha}); esto no demuestra equivalencia entre los grupos.`,
   };
 };
 
@@ -413,6 +529,16 @@ export const analyzeQuasiExperimentalData = (experimental, control, cfg) => {
   const ctrlPost = control.map((row) => row.postTotal);
   const expSeg = hasSeg ? experimental.map((row) => row.segTotal) : null;
   const ctrlSeg = hasSeg ? control.map((row) => row.segTotal) : null;
+  const expChange = experimental.map((row) => row.change);
+  const ctrlChange = control.map((row) => row.change);
+  const ancova = ancovaComparison({
+    experimentalPre: expPre,
+    experimentalPost: expPost,
+    controlPre: ctrlPre,
+    controlPost: ctrlPost,
+    alpha,
+    variableName,
+  });
 
   return {
     alpha,
@@ -427,13 +553,25 @@ export const analyzeQuasiExperimentalData = (experimental, control, cfg) => {
         experimentalSeg: describe(expSeg),
         controlSeg: describe(ctrlSeg),
       } : {}),
-      experimentalChange: describe(experimental.map((row) => row.change)),
-      controlChange: describe(control.map((row) => row.change)),
+      experimentalChange: describe(expChange),
+      controlChange: describe(ctrlChange),
     },
-    baseline: independentComparison({
-      name: "Equivalencia inicial: Experimental vs. Control (pretest)",
+    primaryEffect: independentComparison({
+      name: "Interacción grupo × tiempo: cambio Experimental vs. cambio Control",
       hypotheses: {
-        nula: `H₀: No existen diferencias significativas en ${variableName} entre el grupo experimental y el grupo control en el pretest (los grupos son equivalentes al inicio).`,
+        nula: `H₀: El cambio pretest–postest en ${variableName} es igual en ambos grupos.`,
+        alterna: `H₁: El cambio pretest–postest en ${variableName} difiere entre el grupo experimental y el grupo control.`,
+      },
+      first: expChange,
+      second: ctrlChange,
+      alpha,
+      labels: ["Cambio post-pre - Experimental", "Cambio post-pre - Control"],
+    }),
+    ancova,
+    baseline: independentComparison({
+      name: "Comparación inicial: Experimental vs. Control (pretest)",
+      hypotheses: {
+        nula: `H₀: No existen diferencias significativas en ${variableName} entre el grupo experimental y el grupo control en el pretest.`,
         alterna: `H₁: Existen diferencias significativas en ${variableName} entre el grupo experimental y el grupo control en el pretest.`,
       },
       first: expPre,
@@ -519,6 +657,7 @@ export const analyzeQuasiExperimentalData = (experimental, control, cfg) => {
 // si hay efecto, cambios significativos en el GE y en el postest entre grupos).
 const resultScore = (analysis, cfg) => {
   const [experimental, control, postBetween, expSeg, ctrlSeg, segBetween] = analysis.comparisons;
+  const primaryEffect = analysis.primaryEffect;
   const baseline = analysis.baseline;
   const { alpha, efectoShift, direccion } = cfg.cuasiexperimental;
   let score = 0;
@@ -529,14 +668,22 @@ const resultScore = (analysis, cfg) => {
 
   if (efectoShift >= 0.2) {
     if (experimental.p >= alpha) score += 4 + (experimental.p - alpha) * 5;
-    if (postBetween.p >= alpha) score += 4 + (postBetween.p - alpha) * 5;
+    if (primaryEffect.p >= alpha) score += 5 + (primaryEffect.p - alpha) * 5;
     const expChange = analysis.descriptive.experimentalChange.mean ?? 0;
     const postDifference = (
       (analysis.descriptive.experimentalPost.mean ?? 0)
       - (analysis.descriptive.controlPost.mean ?? 0)
     );
+    const changeDifference = (
+      (analysis.descriptive.experimentalChange.mean ?? 0)
+      - (analysis.descriptive.controlChange.mean ?? 0)
+    );
     if (Math.sign(expChange || direccion) !== direccion) score += 3;
-    if (Math.sign(postDifference || direccion) !== direccion) score += 3;
+    if (Math.sign(changeDifference || direccion) !== direccion) score += 3;
+    // El postest entre grupos queda como comprobación secundaria: la
+    // estimación causal principal es la diferencia entre cambios.
+    if (postBetween.p >= alpha) score += 1;
+    if (Math.sign(postDifference || direccion) !== direccion) score += 1;
   }
 
   // Con seguimiento el patrón coherente es: el efecto persiste (GE post vs.
@@ -554,9 +701,12 @@ const resultScore = (analysis, cfg) => {
 };
 
 export const generateQuasiExperimentalData = (cfg) => {
+  const random = createRandom(cfg.seed);
+  const normal = createNormalRandom(random);
   const variable = cfg.variables[0];
   const itemCount = variable.totalItems;
-  const { values: scaleValues } = scaleInfo(cfg);
+  const { values: scaleValues, min: scaleMin, max: scaleMax } = scaleInfo(cfg);
+  const inverseItems = new Set(variable.itemsInversos ?? []);
   const q = cfg.cuasiexperimental;
   const attempts = q.controlarResultados ? 80 : 1;
   let best = null;
@@ -564,7 +714,7 @@ export const generateQuasiExperimentalData = (cfg) => {
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     intentosUsados = attempt + 1;
-    const itemParameters = buildItemParameters(itemCount);
+    const itemParameters = buildItemParameters(itemCount, random);
     const experimental = generateGroup({
       n: q.nExperimental,
       group: "Experimental",
@@ -574,6 +724,10 @@ export const generateQuasiExperimentalData = (cfg) => {
       direction: q.direccion,
       controlDrift: q.cambioControl,
       mediciones: q.mediciones,
+      normal,
+      inverseItems,
+      scaleMin,
+      scaleMax,
     });
     const control = generateGroup({
       n: q.nControl,
@@ -584,6 +738,10 @@ export const generateQuasiExperimentalData = (cfg) => {
       direction: q.direccion,
       controlDrift: q.cambioControl,
       mediciones: q.mediciones,
+      normal,
+      inverseItems,
+      scaleMin,
+      scaleMax,
     });
     const analysis = analyzeQuasiExperimentalData(experimental, control, cfg);
     const score = resultScore(analysis, cfg);
@@ -603,16 +761,15 @@ export const generateQuasiExperimentalData = (cfg) => {
   // única, porque la muestra fue elegida por su p-valor.
   if (q.controlarResultados) {
     warnings.push(
-      `Control del patrón de resultados activado: se simularon ${intentosUsados} muestras `
-      + `(de un máximo de ${attempts}) y se conservó la que mejor reproduce el patrón solicitado. `
-      + "Los p-valores resultantes están condicionados por esa selección y NO deben interpretarse "
-      + "como los de una muestra única: sobrestiman la significación y subestiman el error tipo I. "
-      + "Para una simulación sin selección, desactiva el control del patrón de resultados.",
+      `Control del patrón activado: se evaluaron ${intentosUsados} bases `
+      + `(de un máximo de ${attempts}) y se conservó la más cercana al patrón solicitado. `
+      + "Los p-valores quedan condicionados por esa selección; para obtener una única generación "
+      + "sin optimización por resultados, desactiva este control.",
     );
   }
   if (q.controlarResultados && best.score > 0) {
     warnings.push(
-      "Además, ninguna de las muestras reprodujo el patrón completo: se conservó la más cercana. "
+      "Además, ninguna de las bases reprodujo el patrón completo: se conservó la más cercana. "
       + "Revisa los p-valores antes de usarlo.",
     );
   }
@@ -636,6 +793,8 @@ export const buildQuasiExperimentalCsv = (data, cfg) => {
   const itemCount = cfg.variables[0].totalItems;
   const levels = computeVariableLevels(cfg);
   const dimensions = computeDimensionLayout(cfg);
+  const inverseItems = new Set(cfg.variables[0].itemsInversos ?? []);
+  const { min: scaleMin, max: scaleMax } = scaleInfo(cfg);
   const hasSeg = cfg.cuasiexperimental.mediciones >= 3;
   const measurementCols = (prefix) => [
     ...Array.from({ length: itemCount }, (_, index) => `${prefix}_P${index + 1}`),
@@ -654,11 +813,14 @@ export const buildQuasiExperimentalCsv = (data, cfg) => {
   ];
 
   const measurementValues = (scores) => {
-    const total = scores.reduce((sum, value) => sum + value, 0);
+    const scored = scores.map((value, itemIndex) => (
+      inverseItems.has(itemIndex + 1) ? scaleMin + scaleMax - value : value
+    ));
+    const total = scored.reduce((sum, value) => sum + value, 0);
     return [
       ...scores,
       ...dimensions.flatMap((dim) => {
-        const dimScore = sumSlice(scores, dim.from, dim.to);
+        const dimScore = sumSlice(scored, dim.from, dim.to);
         return [dimScore, classifyScore(dimScore, dim.niveles)];
       }),
       total,

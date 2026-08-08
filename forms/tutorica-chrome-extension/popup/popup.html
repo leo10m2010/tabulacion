@@ -23,6 +23,16 @@
         <p class="hero-sub">Usa tu cuenta de TesisHub para conectar la extensi&oacute;n.</p>
       </div>
 
+      <button id="pairDeviceBtn" class="big-btn" type="button">Vincular con TesisHub</button>
+      <div id="pairingPanel" class="pairing-panel" hidden>
+        <p class="hint tiny no-margin">Ingresa este c&oacute;digo en TesisHub:</p>
+        <strong id="pairingCode" class="pairing-code">-</strong>
+        <button id="openPairingBtn" class="big-btn secondary" type="button">Abrir TesisHub</button>
+        <button id="cancelPairingBtn" class="link-btn" type="button">Cancelar vinculaci&oacute;n</button>
+      </div>
+
+      <div class="divider-o"><span>o cuenta manual</span></div>
+
       <label for="loginEmail">Correo</label>
       <input id="loginEmail" type="email" placeholder="tu@correo.com" autocomplete="username" />
 
@@ -118,7 +128,7 @@
       <details class="diag-box">
         <summary class="with-icon" data-icon="diagnostics">Diagnostico tecnico</summary>
         <div class="diag-content">
-          <p id="backendMax" class="diag-line">Max por corrida: -</p>
+          <p id="backendMax" class="diag-line">Saldo de respuestas: -</p>
           <p id="backendGender" class="diag-line">Genero (rango): -</p>
           <p id="backendAge" class="diag-line">Edad (pesos): -</p>
           <p id="backendFreq" class="diag-line">Frecuencia (pesos): -</p>

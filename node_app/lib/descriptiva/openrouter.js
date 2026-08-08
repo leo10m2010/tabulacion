@@ -5,6 +5,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { metrics, providerUsageFields, structuredLog } from "../observability.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROMPT_PATH = path.join(SCRIPT_DIR, "..", "..", "prompts", "prompt_maestro_datos.md");
@@ -155,12 +156,14 @@ export const requestSimulationJson = async ({ questionnaire, configLine, validat
       return { data, attempts };
     }
 
-    // Log tecnico completo en servidor (nunca llega al usuario final).
-    // eslint-disable-next-line no-console
-    console.error(
-      `[descriptiva] intento ${attempt} fallido (${failure}). `
-      + `usage=${JSON.stringify(usage)}. Respuesta cruda:\n${content.slice(0, 4000)}`,
-    );
+    metrics.increment("openrouter_invalid_responses_total", 1, {
+      tool: "descriptiva", stage: "data",
+    });
+    structuredLog("warn", "openrouter.invalid_response", {
+      tool: "descriptiva", stage: "data", attempt,
+      responseLength: String(content ?? "").length,
+      ...providerUsageFields(usage),
+    });
     userMessage = `${userContent}\n\n---\nAVISO: tu respuesta anterior no fue un JSON valido o completo `
       + `(${failure}). Responde UNICAMENTE con el JSON descrito en el Paso 7, sin texto adicional, `
       + "sin backticks, con todas las preguntas y las N filas completas.";

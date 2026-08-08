@@ -28,6 +28,7 @@ let child;
 
 const storePath = () => path.join(tmpDir, "users.json");
 const pendingPath = () => path.join(tmpDir, "pending-uses.json");
+const jobsPath = () => path.join(tmpDir, "jobs.json");
 
 const waitForHealth = () => esperarSalud(BASE, child);
 
@@ -109,6 +110,16 @@ test("un uso que quedo a medias en un reinicio se devuelve al arrancar", async (
   fs.writeFileSync(pendingPath(), JSON.stringify([
     { jobId: "job-interrumpido", userId: creado.id, tool: "descriptiva", at: new Date().toISOString() },
   ]), "utf-8");
+  fs.writeFileSync(jobsPath(), JSON.stringify([{
+    id: "job-interrumpido",
+    userId: creado.id,
+    type: "descriptiva",
+    status: "processing",
+    parameters: { input: { texto: "contenido que no debe quedar retenido" } },
+    progress: { stage: "generating" },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }]), "utf-8");
 
   await stopServer();
   await startServer();
@@ -119,6 +130,10 @@ test("un uso que quedo a medias en un reinicio se devuelve al arrancar", async (
   assert.equal(recuperado.usesConsumed.descriptiva, 0, "y deja de contar como consumido");
 
   assert.deepEqual(JSON.parse(fs.readFileSync(pendingPath(), "utf-8")), [], "el registro queda vacio");
+  const durable = JSON.parse(fs.readFileSync(jobsPath(), "utf-8"))[0];
+  assert.equal(durable.status, "failed", "el job durable no queda bloqueando la cola");
+  assert.equal(durable.parameters.input, undefined, "el input sensible se retira al reconciliar");
+  assert.match(durable.progress.error, /reinici/i);
 });
 
 test("un segundo reinicio no vuelve a devolver el mismo uso", async () => {

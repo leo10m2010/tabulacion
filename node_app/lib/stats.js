@@ -1,15 +1,10 @@
 // Estadistica del generador: simulacion de la base de datos, correlaciones
 // (Pearson y Spearman) y pruebas de normalidad (Lilliefors y Shapiro-Wilk).
 import { NIVELES_CORRELACION } from "./config.js";
+import { createNormalRandom, createRandom } from "./random.js";
 
 // ── Simulacion de base de datos ──────────────────────────────────────────────
-export const randn = () => {
-  let u = 0;
-  let v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
-  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
-};
+export const randn = (random = Math.random) => createNormalRandom(random)();
 
 const pearson = (x, y) => {
   const n = x.length;
@@ -30,15 +25,23 @@ const pearson = (x, y) => {
   return num / den;
 };
 
-export const sumPerRow = (base, varNum, count, rows) => Array.from({ length: rows }, (_, i) => {
+const scoredValue = (base, varNum, item, row, cfg) => {
+  const raw = base[`V${varNum}_${item}`][row];
+  const inversos = cfg?.variables?.[varNum - 1]?.itemsInversos ?? [];
+  if (!inversos.includes(item)) return raw;
+  const valores = cfg.escala.map((option) => option.valor);
+  return Math.min(...valores) + Math.max(...valores) - raw;
+};
+
+export const sumPerRow = (base, varNum, count, rows, cfg) => Array.from({ length: rows }, (_, i) => {
   let sum = 0;
-  for (let c = 1; c <= count; c += 1) sum += base[`V${varNum}_${c}`][i];
+  for (let c = 1; c <= count; c += 1) sum += scoredValue(base, varNum, c, i, cfg);
   return sum;
 });
 
-export const sumRangePerRow = (base, varNum, from, to, rows) => Array.from({ length: rows }, (_, i) => {
+export const sumRangePerRow = (base, varNum, from, to, rows, cfg) => Array.from({ length: rows }, (_, i) => {
   let sum = 0;
-  for (let c = from; c <= to; c += 1) sum += base[`V${varNum}_${c}`][i];
+  for (let c = from; c <= to; c += 1) sum += scoredValue(base, varNum, c, i, cfg);
   return sum;
 });
 
@@ -173,8 +176,8 @@ export const shapiroWilkTest = (values) => {
 export const computeCorrelation = (base, cfg) => {
   const rows = cfg.encuestados;
   if (cfg.variables.length < 2) return null;
-  const v1 = sumPerRow(base, 1, cfg.variables[0].totalItems, rows);
-  const v2 = sumPerRow(base, 2, cfg.variables[1].totalItems, rows);
+  const v1 = sumPerRow(base, 1, cfg.variables[0].totalItems, rows, cfg);
+  const v2 = sumPerRow(base, 2, cfg.variables[1].totalItems, rows, cfg);
   const r = pearson(v1, v2);
   if (!Number.isFinite(r)) {
     throw new Error("No se pudo calcular una correlacion valida con la base generada.");
@@ -201,8 +204,8 @@ const rankAvg = (values) => {
 export const spearmanCorrelation = (base, cfg) => {
   const rows = cfg.encuestados;
   if (cfg.variables.length < 2) return null;
-  const v1 = sumPerRow(base, 1, cfg.variables[0].totalItems, rows);
-  const v2 = sumPerRow(base, 2, cfg.variables[1].totalItems, rows);
+  const v1 = sumPerRow(base, 1, cfg.variables[0].totalItems, rows, cfg);
+  const v2 = sumPerRow(base, 2, cfg.variables[1].totalItems, rows, cfg);
   const r = pearson(rankAvg(v1), rankAvg(v2));
   if (!Number.isFinite(r)) {
     throw new Error("No se pudo calcular una correlacion valida con la base generada.");
@@ -219,8 +222,8 @@ const ITEM_PROFILES = [
   { // campana: concentrado alrededor del centro, sin exagerar
     peso: 3,
     ruido: 1,
-    warp: () => {
-      const k = 1.5 + Math.random() * 1.1;
+    warp: (random) => {
+      const k = 1.5 + random() * 1.1;
       return (u) => {
         const t = 2 * u - 1;
         return 0.5 * (1 + Math.sign(t) * Math.abs(t) ** k);
@@ -230,8 +233,8 @@ const ITEM_PROFILES = [
   { // extremo: respuestas cargadas hacia los polos de la escala
     peso: 1.5,
     ruido: 0.9,
-    warp: () => {
-      const k = 0.35 + Math.random() * 0.3;
+    warp: (random) => {
+      const k = 0.35 + random() * 0.3;
       return (u) => {
         const t = 2 * u - 1;
         return 0.5 * (1 + Math.sign(t) * Math.abs(t) ** k);
@@ -241,16 +244,16 @@ const ITEM_PROFILES = [
   { // sesgado alto: la mayoria responde en la parte superior de la escala
     peso: 2,
     ruido: 1,
-    warp: () => {
-      const p = 0.4 + Math.random() * 0.3;
+    warp: (random) => {
+      const p = 0.4 + random() * 0.3;
       return (u) => u ** p;
     },
   },
   { // sesgado bajo: la mayoria responde en la parte inferior de la escala
     peso: 2,
     ruido: 1,
-    warp: () => {
-      const p = 0.4 + Math.random() * 0.3;
+    warp: (random) => {
+      const p = 0.4 + random() * 0.3;
       return (u) => 1 - (1 - u) ** p;
     },
   },
@@ -261,9 +264,9 @@ const ITEM_PROFILES = [
   },
 ];
 
-const pickProfile = () => {
+const pickProfile = (random) => {
   const total = ITEM_PROFILES.reduce((acc, p) => acc + p.peso, 0);
-  let r = Math.random() * total;
+  let r = random() * total;
   for (const p of ITEM_PROFILES) {
     r -= p.peso;
     if (r <= 0) return p;
@@ -280,10 +283,9 @@ const pickProfile = () => {
 // forzar correlacion extra. Los items agregan su propio ruido y perfil de
 // distribucion, siempre dentro del rango exacto de la escala.
 // ── Ajuste al baremo pedido ─────────────────────────────────────────────────
-// La interfaz pregunta "que porcentaje de personas cae en cada nivel" y obliga
-// a que sume 100, pero la simulacion no lo usaba: el reparto real salia de la
-// forma de los datos y podia desviarse muchisimo (pedir 19% en "Alto" y obtener
-// 35%). Aqui se fuerza.
+// La interfaz pregunta que porcentaje de personas se espera en cada nivel.
+// Se trata como objetivo muestral, no como una cuota exacta: las cantidades
+// fluctuan dentro de la tolerancia binomial para evitar repartos mecanicos.
 //
 // Como se hace sin romper la correlacion: Spearman depende SOLO del orden de
 // los totales. Se ordenan los encuestados por su total actual y se les asigna
@@ -291,17 +293,38 @@ const pickProfile = () => {
 // transformacion monotona, el orden —y con el la correlacion de rangos— se
 // conserva salvo por los empates que obligue una banda estrecha.
 
-// Reparte `total` unidades segun proporciones, sin perder ni inventar ninguna
-// (metodo del resto mayor).
-const repartirEnteros = (proporciones, total) => {
-  const exactos = proporciones.map((p) => p * total);
-  const base = exactos.map(Math.floor);
-  let faltan = total - base.reduce((a, b) => a + b, 0);
-  const orden = exactos
-    .map((v, i) => [v - Math.floor(v), i])
-    .sort((a, b) => b[0] - a[0]);
-  for (let k = 0; faltan > 0; k += 1, faltan -= 1) base[orden[k % orden.length][1]] += 1;
-  return base;
+const repartirConTolerancia = (proporciones, total, random) => {
+  const esperados = proporciones.map((p) => p * total);
+  const tolerancias = proporciones.map((p) => Math.max(
+    1,
+    Math.ceil(1.96 * Math.sqrt(Math.max(0, total * p * (1 - p)))),
+  ));
+  const acumuladas = [];
+  proporciones.reduce((acc, p, i) => {
+    acumuladas[i] = acc + p;
+    return acumuladas[i];
+  }, 0);
+
+  let mejor = null;
+  for (let intento = 0; intento < 80; intento += 1) {
+    const cuentas = proporciones.map(() => 0);
+    for (let i = 0; i < total; i += 1) {
+      const u = random();
+      const nivel = acumuladas.findIndex((limite) => u <= limite);
+      cuentas[nivel >= 0 ? nivel : cuentas.length - 1] += 1;
+    }
+    const exceso = cuentas.reduce((acc, value, i) => (
+      acc + Math.max(0, Math.abs(value - esperados[i]) - tolerancias[i])
+    ), 0);
+    const distancia = cuentas.reduce(
+      (acc, value, i) => acc + Math.abs(value - esperados[i]), 0,
+    );
+    if (!mejor || exceso < mejor.exceso || (exceso === mejor.exceso && distancia < mejor.distancia)) {
+      mejor = { cuentas, exceso, distancia };
+    }
+    if (exceso === 0 && (total < 20 || distancia > 0.5)) break;
+  }
+  return { cuentas: mejor.cuentas, esperados, tolerancias };
 };
 
 // Reparte una diferencia entre los items de una persona, respetando el minimo
@@ -320,20 +343,30 @@ const ajustarFila = (valores, objetivo, minResp, maxResp) => {
 };
 
 // Devuelve { cumple, obtenido } y modifica `data` en el sitio.
-export const ajustarABaremo = (data, varNum, count, bandas, objetivo, rows, minResp, maxResp) => {
+export const ajustarABaremo = (
+  data, varNum, count, bandas, objetivo, rows, minResp, maxResp, random = Math.random,
+  inverseItems = [],
+) => {
   if (!bandas || !objetivo || bandas.length !== objetivo.length) return null;
 
   const cols = [];
   for (let c = 1; c <= count; c += 1) cols.push(data[`V${varNum}_${c}`]);
+  const inverseSet = new Set(inverseItems);
+  const score = (value, columnIndex) => (
+    inverseSet.has(columnIndex + 1) ? minResp + maxResp - value : value
+  );
+  const encode = (value, columnIndex) => (
+    inverseSet.has(columnIndex + 1) ? minResp + maxResp - value : value
+  );
   const totales = [];
   for (let r = 0; r < rows; r += 1) {
     let t = 0;
-    for (const col of cols) t += col[r];
+    cols.forEach((col, ci) => { t += score(col[r], ci); });
     totales.push(t);
   }
 
   const orden = totales.map((t, i) => [t, i]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const cuentas = repartirEnteros(objetivo, rows);
+  const { cuentas, esperados, tolerancias } = repartirConTolerancia(objetivo, rows, random);
 
   let k = 0;
   for (let b = 0; b < bandas.length; b += 1) {
@@ -346,9 +379,9 @@ export const ajustarABaremo = (data, varNum, count, bandas, objetivo, rows, minR
       const objetivoFila = n <= 1
         ? min
         : Math.min(max, Math.max(min, min + Math.round((p * (max - min)) / (n - 1))));
-      const valores = cols.map((col) => col[fila]);
+      const valores = cols.map((col, ci) => score(col[fila], ci));
       ajustarFila(valores, objetivoFila, minResp, maxResp);
-      valores.forEach((v, ci) => { cols[ci][fila] = v; });
+      valores.forEach((v, ci) => { cols[ci][fila] = encode(v, ci); });
     }
   }
 
@@ -356,18 +389,21 @@ export const ajustarABaremo = (data, varNum, count, bandas, objetivo, rows, minR
   const obtenido = bandas.map(() => 0);
   for (let r = 0; r < rows; r += 1) {
     let t = 0;
-    for (const col of cols) t += col[r];
+    cols.forEach((col, ci) => { t += score(col[r], ci); });
     const idx = bandas.findIndex((bn) => t >= bn.min && t <= bn.max);
     if (idx >= 0) obtenido[idx] += 1;
   }
   return {
-    cumple: obtenido.every((v, i) => v === cuentas[i]),
-    objetivo: cuentas,
+    cumple: obtenido.every((v, i) => Math.abs(v - esperados[i]) <= tolerancias[i]),
+    objetivo: esperados,
+    tolerancias,
     obtenido,
   };
 };
 
 export const generateBaseData = (cfg) => {
+  const random = createRandom(cfg.seed);
+  const normal = createNormalRandom(random);
   const rows = cfg.encuestados;
   const v1Count = cfg.variables[0].totalItems;
   const v2Count = cfg.variables[1]?.totalItems ?? 0;
@@ -393,7 +429,7 @@ export const generateBaseData = (cfg) => {
   // optimistas) + grupos latentes con medias distintas, normalizada a sd~1.
   const groupOffsets = [-0.55, 0, 0.55];
   const heterog = () => (
-    randn() + 0.35 * randn() + groupOffsets[Math.floor(Math.random() * groupOffsets.length)]
+    normal() + 0.35 * normal() + groupOffsets[Math.floor(random() * groupOffsets.length)]
   ) / 1.15;
 
   // Con Pearson como metodo elegido, los items se discretizan con umbrales
@@ -417,28 +453,50 @@ export const generateBaseData = (cfg) => {
   const buildOnce = (w) => {
     const a = Math.sqrt(Math.max(0, Math.min(1, w)));
     const b = Math.sqrt(1 - a * a);
-    const shared = Array.from({ length: rows }, () => randn());
+    // Cuando el objetivo exige una relación muy alta, el rasgo compartido debe
+    // pesar también dentro de cada dimensión e ítem. Reducir suavemente el
+    // ruido a medida que crece `w` evita un techo aleatorio justo por debajo
+    // del rango solicitado, sin hacer idénticos los perfiles de respuesta.
+    const dimensionLoading = 0.94 + 0.04 * w;
+    const itemStd = ITEM_STD * (1 - 0.2 * w);
+    const shared = Array.from({ length: rows }, () => normal());
     const latent1 = shared.map((z) => a * z + b * heterog());
     const latent2 = v2Count > 0 ? shared.map((z) => sign * a * z + b * heterog()) : null;
 
     const data = {};
-    const addColumns = (varNum, count, latent) => {
-      for (let i = 1; i <= count; i += 1) {
-        const carga = 0.75 + Math.random() * 0.4; // discriminacion del item
+    const addColumns = (varNum, variable, latent) => {
+      let item = 1;
+      for (const dimension of variable.dimensiones) {
+        const dimensionFactor = latent.map((value) => (
+          dimensionLoading * value + Math.sqrt(1 - dimensionLoading ** 2) * normal()
+        ));
+        const dimensionItems = dimension.indicadores.reduce(
+          (total, indicador) => total + indicador.items, 0,
+        );
+        for (let localItem = 0; localItem < dimensionItems; localItem += 1, item += 1) {
+        const carga = 0.7 + random() * 0.55; // discriminacion del item
+        const dificultad = (random() - 0.5) * 0.9;
+        let column;
         if (modoNormal) {
-          const bias = (Math.random() - 0.5) * 0.5; // corrimiento leve por item
-          const apertura = 1.8 + Math.random() * 0.6; // que tanto abren los umbrales
-          const s = latent.map((v) => carga * v + randn() * ITEM_STD);
-          data[`V${varNum}_${i}`] = discretizeLinear(s, bias, apertura);
+          const bias = (random() - 0.5) * 0.35; // corrimiento leve por item
+          const apertura = 1.8 + random() * 0.6; // que tanto abren los umbrales
+          const s = dimensionFactor.map((v) => carga * v - dificultad + normal() * itemStd);
+          column = discretizeLinear(s, bias, apertura);
         } else {
-          const perfil = pickProfile();
-          const s = latent.map((v) => carga * v + randn() * ITEM_STD * perfil.ruido);
-          data[`V${varNum}_${i}`] = discretize(s, perfil.warp());
+          const perfil = pickProfile(random);
+          const s = dimensionFactor.map(
+            (v) => carga * v - dificultad + normal() * itemStd * perfil.ruido,
+          );
+          column = discretize(s, perfil.warp(random));
+        }
+        data[`V${varNum}_${item}`] = (variable.itemsInversos ?? []).includes(item)
+          ? column.map((value) => minResponse + maxResponse - value)
+          : column;
         }
       }
     };
-    addColumns(1, v1Count, latent1);
-    if (v2Count > 0) addColumns(2, v2Count, latent2);
+    addColumns(1, cfg.variables[0], latent1);
+    if (v2Count > 0) addColumns(2, cfg.variables[1], latent2);
     // El ajuste va DENTRO de buildOnce para que el control de correlacion mida
     // los datos definitivos, no unos que luego cambian.
     baremoInfo = [];
@@ -447,7 +505,7 @@ export const generateBaseData = (cfg) => {
       if (count === 0) return;
       const r = ajustarABaremo(
         data, vi + 1, count, variable.baremoVariable, variable.baremoObjetivo,
-        rows, minResponse, maxResponse,
+        rows, minResponse, maxResponse, random, variable.itemsInversos,
       );
       if (r) baremoInfo.push({ variable: variable.nombre, ...r });
     });
@@ -462,11 +520,11 @@ export const generateBaseData = (cfg) => {
     let from = 1;
     cfg.variables[0].dimensiones.forEach((d) => {
       const count = d.indicadores.reduce((acc, ind) => acc + ind.items, 0);
-      targets.push(sumRangePerRow(base, 1, from, from + count - 1, rows));
+      targets.push(sumRangePerRow(base, 1, from, from + count - 1, rows, cfg));
       from += count;
     });
-    targets.push(sumPerRow(base, 1, v1Count, rows));
-    targets.push(sumPerRow(base, 2, v2Count, rows));
+    targets.push(sumPerRow(base, 1, v1Count, rows, cfg));
+    targets.push(sumPerRow(base, 2, v2Count, rows, cfg));
     const useSW = rows <= 50;
     return targets.every((values) => {
       const test = useSW ? shapiroWilkTest(values) : lillieforsTest(values);
@@ -485,7 +543,7 @@ export const generateBaseData = (cfg) => {
   // Control desactivado: una sola generacion con fuerza de relacion
   // aleatoria; la correlacion obtenida es el resultado natural de los datos.
   if (!cfg.controlCorrelacion) {
-    const base = buildOnce(0.15 + Math.random() * 0.7);
+    const base = buildOnce(0.15 + random() * 0.7);
     return {
       base,
       control: { activo: false, direccion, metodo, obtenido: measure(base, cfg) },

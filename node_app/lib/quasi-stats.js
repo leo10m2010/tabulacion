@@ -141,6 +141,23 @@ export const studentTCdf = (t, df) => {
   return t > 0 ? 1 - 0.5 * ib : 0.5 * ib;
 };
 
+export const studentTQuantile = (probability, df) => {
+  if (!(probability > 0 && probability < 1) || !Number.isFinite(df) || df <= 0) {
+    return Number.NaN;
+  }
+  if (probability === 0.5) return 0;
+  if (probability < 0.5) return -studentTQuantile(1 - probability, df);
+  let low = 0;
+  let high = 1;
+  while (studentTCdf(high, df) < probability && high < 1e6) high *= 2;
+  for (let iteration = 0; iteration < 100; iteration += 1) {
+    const middle = (low + high) / 2;
+    if (studentTCdf(middle, df) < probability) low = middle;
+    else high = middle;
+  }
+  return (low + high) / 2;
+};
+
 const twoSidedTP = (t, df) => clamp01(2 * (1 - studentTCdf(Math.abs(t), df)));
 
 const validateNumericArray = (values, label) => {
@@ -171,6 +188,7 @@ export const pairedTTest = (pre, post) => {
       df,
       p: equal ? 1 : 0,
       meanDifference: avg,
+      standardError: 0,
       effectSize: equal ? 0 : Math.sign(avg) * Number.POSITIVE_INFINITY,
       n: differences.length,
     };
@@ -183,6 +201,7 @@ export const pairedTTest = (pre, post) => {
     df,
     p: twoSidedTP(statistic, df),
     meanDifference: avg,
+    standardError: sd / Math.sqrt(differences.length),
     effectSize: avg / sd,
     n: differences.length,
   };
@@ -212,6 +231,7 @@ export const welchTTest = (first, second) => {
       df: first.length + second.length - 2,
       p: equal ? 1 : 0,
       meanDifference: difference,
+      standardError: 0,
       effectSize: equal ? 0 : Math.sign(difference) * Number.POSITIVE_INFINITY,
       n1: first.length,
       n2: second.length,
@@ -235,6 +255,7 @@ export const welchTTest = (first, second) => {
     df,
     p: twoSidedTP(statistic, df),
     meanDifference: mean1 - mean2,
+    standardError,
     effectSize: pooledSd > EPS ? (mean1 - mean2) / pooledSd : 0,
     n1: first.length,
     n2: second.length,

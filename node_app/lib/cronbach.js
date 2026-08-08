@@ -9,8 +9,9 @@
 // (poca variacion intra-sujeto, variacion normal entre sujetos) para que el
 // alfa caiga en el nivel elegido.
 import XlsxPopulate from "xlsx-populate";
+import crypto from "node:crypto";
 import { MAX_ITEMS_POR_VARIABLE, MAX_MUESTRA, toInt } from "./config.js";
-import { randn } from "./stats.js";
+import { createNormalRandom, createRandom, normalizeSeed } from "./random.js";
 import { colLetter } from "./sheet-style.js";
 import { postProcessWorkbook } from "./ooxml.js";
 
@@ -86,6 +87,7 @@ export const normalizeCronbachConfig = (raw) => {
     dimensiones,
     totalItems,
     nivelAlfa: NIVELES_ALFA[nivelRaw] ? nivelRaw : "excelente",
+    seed: normalizeSeed(raw.seed ?? raw.semilla),
   };
 };
 
@@ -110,6 +112,8 @@ export const computeCronbachAlpha = (matrix) => {
 // sujetos) + sesgo leve por item + ruido intra-sujeto. El ruido se ajusta
 // hasta que el alfa cae en el rango del nivel pedido.
 export const generateCronbachData = (cfg) => {
+  const random = createRandom(cfg.seed);
+  const normal = createNormalRandom(random);
   const nivel = NIVELES_ALFA[cfg.nivelAlfa];
   const escalaMin = 1;
   const escalaMax = cfg.escala.length;
@@ -118,10 +122,10 @@ export const generateCronbachData = (cfg) => {
   const clampRound = (v) => Math.min(escalaMax, Math.max(escalaMin, Math.round(v)));
 
   const buildMatrix = (noise) => {
-    const biases = Array.from({ length: cfg.totalItems }, () => (Math.random() - 0.5) * 0.5);
+    const biases = Array.from({ length: cfg.totalItems }, () => (random() - 0.5) * 0.5);
     return Array.from({ length: cfg.encuestados }, () => {
-      const trait = centro + randn() * spread * 1.1;
-      return biases.map((b) => clampRound(trait + b + randn() * noise));
+      const trait = centro + normal() * spread * 1.1;
+      return biases.map((b) => clampRound(trait + b + normal() * noise));
     });
   };
 
@@ -209,7 +213,7 @@ export const buildCronbachWorkbook = async (cfg, matrix) => {
   sheet.row(1).height(26);
   sheet.range(2, 1, 2, sumaCol).merged(true).style(ST_SUBTITLE);
   sheet.cell(2, 1).value(
-    `Variable: ${cfg.variable}  ·  ${N} encuestados  ·  ${K} ítems  ·  Escala Likert 1–${cfg.escala.length}  ·  Datos simulados`,
+    `Variable: ${cfg.variable}  ·  ${N} encuestados  ·  ${K} ítems  ·  Escala Likert 1–${cfg.escala.length}`,
   );
   sheet.row(2).height(18);
 
@@ -318,10 +322,6 @@ export const buildCronbachWorkbook = async (cfg, matrix) => {
   });
   const notaRow = escTop + 2 + ESCALA_INTERPRETACION.length;
   sheet.cell(notaRow, 2).value("Fuente: George y Mallery (2003).").style(ST_NOTE_C);
-  sheet.cell(notaRow + 1, 2).style(ST_NOTE_C).value(
-    "Datos simulados con fines de prueba y demostración académica; no reemplazan datos reales de una investigación.",
-  );
-
   // Anchos de columna: N° ancho para "VARIANZA (Si²)", items compactos.
   sheet.column("A").width(16);
   for (let c = firstItemCol; c <= lastItemCol; c += 1) sheet.column(colLetter(c)).width(6.5);
@@ -336,6 +336,7 @@ export const buildCronbachWorkbook = async (cfg, matrix) => {
 // los estilos deduplicados (mismo post-procesado que el generador principal).
 export const generateCronbach = async (rawConfig) => {
   const cfg = normalizeCronbachConfig(rawConfig);
+  if (!cfg.seed) cfg.seed = crypto.randomBytes(16).toString("hex");
   const warnings = [...cfg.warnings];
   const { matrix, alpha, cumple } = generateCronbachData(cfg);
   if (!cumple) {
@@ -359,6 +360,7 @@ export const generateCronbach = async (rawConfig) => {
     K: cfg.totalItems,
     encuestados: cfg.encuestados,
     variable: cfg.variable,
+    seed: cfg.seed,
     warnings,
     excelBuffer,
   };

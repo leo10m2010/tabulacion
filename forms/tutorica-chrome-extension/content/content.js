@@ -1,13 +1,16 @@
 const SETTINGS_KEY = 'tesistabSettings';
 const CSV_ROWS_KEY = 'tesistabCsvRows';
 const DIAGNOSTICS_KEY = 'tesistabDiagnostics';
+const ACTIVE_JOB_KEY = 'tesistabActiveJob';
+const MULTIPAGE_CAPTURE_KEY = 'tesistabMultiPageCapture';
 const DEFAULT_SETTINGS = {
   enabled: true,
   backendBaseUrl: 'https://tabulacion-api.onrender.com',
   apiKey: '',
   accountEmail: '',
-  sessionLockMinutes: 1440,
+  sessionLockMinutes: 0,
   sessionExpiresAt: 0,
+  authMode: '',
   themeMode: 'system',
   panelViewMode: 'simple',
   submissionCount: 5,
@@ -31,10 +34,9 @@ const DEFAULT_SETTINGS = {
   requireConfirmation: true,
   randomizeBeforeSubmit: false,
   compatApiMode: false,
+  installationId: '',
   hasSeenPanelTutorial: false,
 };
-// LIMITE: ajusta este valor para limitar maximo desde la extension.
-const MAX_UI_SUBMISSIONS = 250;
 
 let settings = { ...DEFAULT_SETTINGS };
 let csvRows = [];
@@ -48,7 +50,11 @@ let backendHealthTimer = null;
 let activeJobId = '';
 let activeJobStatus = '';
 let isCancellingJob = false;
+let isChangingPauseState = false;
 let activeJobProgressLabel = '';
+let backendResponseCapacity = null;
+let backendOperationalMax = null;
+let formsApiMode = 'unknown';
 
 const TESISTAB_TRIGGER_DEBOUNCE_MS = 1200;
 const FORM_REBIND_INTERVAL_MS = 1200;
@@ -87,6 +93,7 @@ async function init() {
   document.addEventListener('click', onDocumentClick, true);
   document.addEventListener('keydown', onDocumentKeyDown, true);
   startFormRebindWatcher();
+  await restoreActiveJobState();
 }
 
 function bindFormHandlers(form) {
@@ -141,6 +148,9 @@ async function waitForFormElement(timeoutMs = 10000) {
   }
 
   return new Promise((resolve) => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     const observer = new MutationObserver(() => {
       const form = document.querySelector('form');
       if (form) {
@@ -180,6 +190,12 @@ async function loadCsvRows() {
 }
 
 async function onFormSubmit(event) {
+  const submitter = resolveEventElementTarget({ target: event.submitter });
+  if (submitter && isGoogleFormsNextTrigger(submitter)) {
+    const form = event.currentTarget || currentForm || document.querySelector('form');
+    if (form) void persistMultiPageSnapshot(createFormPageSnapshot(form));
+    return;
+  }
   await startTesistabRun(event.currentTarget || currentForm || document.querySelector('form'), event);
 }
 
@@ -189,20 +205,39 @@ async function onDocumentClick(event) {
     return;
   }
 
+  settings = await loadSettings();
+  const isNextPage = isGoogleFormsNextTrigger(target);
+  const isPreviousPage = isGoogleFormsPreviousTrigger(target);
+  if (settings.multiPageMode && (isNextPage || isPreviousPage)) {
+    const form = target.closest('form') || currentForm || document.querySelector('form');
+    if (form) {
+      // La captura se construye de forma sincrona antes de que Google sustituya
+      // el DOM de la pagina. La escritura puede terminar despues sin perderla.
+      const snapshot = createFormPageSnapshot(form);
+      void persistMultiPageSnapshot(snapshot).then((capture) => {
+        const completed = getCompleteCapturedRoutes(capture).length;
+        if (isPreviousPage && snapshot.terminal) {
+          showStatus(
+            `Recorrido ${Math.max(1, completed)} guardado. Vuelve al punto de decision y captura otra alternativa.`,
+            false
+          );
+        }
+      });
+    }
+    const now = Date.now();
+    if (now - lastMultiPageHintAt > 2500) {
+      lastMultiPageHintAt = now;
+      showStatus(isPreviousPage
+        ? 'Recorrido conservado. Puedes elegir otra rama sin mezclar sus paginas.'
+        : 'Pagina capturada. Continua hasta el ultimo paso para iniciar el trabajo.', false);
+    }
+    return;
+  }
+
   const isSubmit = isGoogleFormsSubmitTrigger(target);
   if (isSubmit) {
     const form = target.closest('form') || currentForm || document.querySelector('form');
     await startTesistabRun(form, event);
-    return;
-  }
-
-  settings = await loadSettings();
-  if (settings.multiPageMode && isGoogleFormsNextTrigger(target)) {
-      const now = Date.now();
-      if (now - lastMultiPageHintAt > 2500) {
-        lastMultiPageHintAt = now;
-        showStatus('Pagina siguiente detectada. TesisHub se ejecuta en el ultimo paso.', false);
-      }
   }
 }
 
@@ -252,7 +287,7 @@ async function startTesistabRun(form, event) {
   }
 
   if (isSessionLocked(settings)) {
-    showStatus('Sesion bloqueada: abre la extension y desbloqueala con tu contrasena.', true);
+    showStatus('Sesion bloqueada: abre la extension para volver a autorizarla.', true);
     return;
   }
 
@@ -280,32 +315,30 @@ async function startTesistabRun(form, event) {
   syncJobActionButtons();
 
   try {
-    // TesisHub NUNCA avanza solo entre paginas de un formulario de varias
-    // secciones: solo captura y rellena lo que esta en la pagina ACTUAL. Si
-    // esta pagina todavia tiene un boton "Siguiente" visible, quiere decir
-    // que hay mas preguntas mas adelante que esta corrida no va a ver —
-    // mandar de aca es mandar una base incompleta (o vacia, si esta pagina
-    // es solo la portada). Reproducido en vivo: un formulario cuya primera
-    // pagina es puro titulo/descripcion sin ninguna pregunta; "Iniciar" ahi
-    // mandaba una respuesta vacia y Google la rechazaba con HTTP 400 sin
-    // ninguna pista, porque fillUnansweredFormInputs no tenia nada que
-    // reportar (no habia ninguna pregunta que rellenar EN ESA PAGINA).
+    // Captura guiada: cada clic en "Siguiente" guarda la estructura y los
+    // valores de esa pagina. El trabajo se crea en el ultimo paso, cuando la
+    // ruta condicional recorrida ya esta completa.
     const nextButton = findNextPageButton(form);
     if (nextButton) {
+      void persistMultiPageSnapshot(createFormPageSnapshot(form));
       showStatus(
-        'Este formulario tiene mas paginas. Avanza con "Siguiente" hasta la ultima antes de darle Iniciar.',
+        'Esta pagina quedo capturada. Pulsa "Siguiente" y repite hasta llegar al ultimo paso.',
         true
       );
       scrollToAndHighlight(nextButton);
       recordDiagnostics({
-        lastError: 'Boton "Siguiente" detectado: hay mas paginas antes de la ultima.',
+        lastError: 'Captura multipagina en curso: falta llegar al ultimo paso.',
         updatedAt: new Date().toISOString(),
       });
       return;
     }
 
-    const rawCount = Number(settings.submissionCount) || 1;
-    const count = clamp(rawCount, 1, MAX_UI_SUBMISSIONS);
+    const countValidation = validateRequestedSubmissionCount(settings.submissionCount);
+    if (!countValidation.ok) {
+      showStatus(countValidation.message, true);
+      return;
+    }
+    const count = countValidation.value;
     const delayMs = clamp(Number(settings.delayMs) || 1000, 300, 60_000);
     const jitterMs = clamp(Number(settings.jitterMs) || 0, 0, 5_000);
 
@@ -338,11 +371,19 @@ async function startTesistabRun(form, event) {
       return;
     }
 
+    // La ultima pagina se guarda antes de confirmar. Si el usuario vuelve y
+    // recorre otra rama, la anterior ya queda completa e independiente.
+    const currentSnapshot = createFormPageSnapshot(form);
+    const multiPageCapture = await persistMultiPageSnapshot(currentSnapshot);
+    const capturedRouteCount = getCompleteCapturedRoutes(multiPageCapture).length;
+
     if (settings.requireConfirmation) {
       const accepted = await showTesistabConfirmDialog({
         count,
         delayMs,
         csvRowsCount: csvRows.length,
+        capturedRouteCount,
+        requireAuthorization: true,
       });
       if (!accepted) {
       showStatus('Ejecucion cancelada por el usuario.', true);
@@ -352,18 +393,44 @@ async function startTesistabRun(form, event) {
       });
       return;
     }
-  }
+    } else {
+      const authorized = await showTesistabConfirmDialog({
+        count,
+        delayMs,
+        csvRowsCount: csvRows.length,
+        capturedRouteCount,
+        requireAuthorization: true,
+        authorizationOnly: true,
+      });
+      if (!authorized) {
+        showStatus('Debes confirmar que el formulario es propio o autorizado.', true);
+        return;
+      }
+    }
 
-    showStatus('Envio detectado. Creando job de TesisHub...');
-    let payload = formDataToPayload(new FormData(form));
+    showStatus('Envio detectado. Creando trabajo de TesisHub...');
+    const activeRoute = getActiveCapturedRoute(multiPageCapture);
+    const capturedPages = activeRoute?.pages || [currentSnapshot];
+    const allCapturedPages = getAllCapturedPages(multiPageCapture);
+    let payload = mergeCapturedPayload(capturedPages);
     payload = applyCsvRowIfAvailable(payload);
-    payload = applySmartProfilePayload(payload, form, settings);
-    const specialEntryKey = resolveSpecialEntryKey(form, settings.specialQuestionKeyword);
+    const capturedMaps = mapsFromCapturedPages(allCapturedPages);
+    payload = applySmartProfilePayload(
+      payload,
+      form,
+      settings,
+      capturedMaps.optionsByEntry,
+      capturedMaps.questionByEntry
+    );
+    const specialEntryKey = resolveSpecialEntryKeyFromMap(
+      capturedMaps.questionByEntry,
+      settings.specialQuestionKeyword
+    ) || resolveSpecialEntryKey(form, settings.specialQuestionKeyword);
     const smartProfile = buildSmartProfileConfig(
       settings,
       specialEntryKey,
-      collectEntryOptions(form),
-      collectQuestionTextByEntry(form)
+      capturedMaps.optionsByEntry,
+      capturedMaps.questionByEntry
     );
     const formUrl = form.action;
 
@@ -381,32 +448,63 @@ async function startTesistabRun(form, event) {
       return;
     }
 
-    const response = await backendRequest('/api/tesistab/submit', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        formUrl,
+    const multiPageConfig = buildCapturedMultiPageConfig(multiPageCapture);
+    const structure = buildCapturedStructure(multiPageCapture);
+    const structureHash = await hashStableValue(structure);
+    const idempotencyKey = createIdempotencyKey(formUrl);
+    const response = await createFormsJob({
+      formUrl,
+      requestedResponses: count,
+      config: {
         payload,
-        count,
         delayMs,
         jitterMs,
         autoRandomizeText: Boolean(settings.autoRandomizeText),
         smartProfile,
         label: document.title,
-      }),
+        multiPage: multiPageConfig,
+      },
+      structureHash,
+      ownOrAuthorized: true,
+      idempotencyKey,
+    }, {
+      formUrl,
+      payload,
+      count,
+      delayMs,
+      jitterMs,
+      autoRandomizeText: Boolean(settings.autoRandomizeText),
+      smartProfile,
+      label: document.title,
+      ownOrAuthorized: true,
+      idempotencyKey,
+      requestedResponses: count,
+      structureHash,
     });
 
-    const result = response.data;
+    const result = response.data?.job || response.data;
     if (!response.ok) {
       throw new Error(extractErrorMessage(response));
     }
 
     const warning = result.warning ? ` (${result.warning})` : '';
+    if (Number.isFinite(Number(result.responsesLeft))) {
+      backendResponseCapacity = Math.max(0, Math.floor(Number(result.responsesLeft)));
+      syncVisibleCountInputCapacity();
+    }
     activeJobId = result.id;
     activeJobStatus = result.status || 'queued';
     activeJobProgressLabel = `0/${count}`;
+    const expectedDurationMs = count * (delayMs + jitterMs + 2_000);
+    await persistActiveJobState({
+      id: result.id,
+      status: activeJobStatus,
+      progressLabel: activeJobProgressLabel,
+      requestedResponses: count,
+      backendBaseUrl: normalizeBackendUrl(settings.backendBaseUrl),
+      expectedDurationMs,
+    });
+    await clearMultiPageCapture(currentSnapshot.formId);
     syncJobActionButtons();
     showStatus(`Job ${result.id.slice(0, 8)} creado${warning}.`);
     recordDiagnostics({
@@ -418,7 +516,7 @@ async function startTesistabRun(form, event) {
     monitorJob(
       result.id,
       normalizeBackendUrl(settings.backendBaseUrl),
-      count * (delayMs + jitterMs + 2_000)
+      expectedDurationMs
     );
   } catch (error) {
     showStatus(error.message || 'Error desconocido al crear el job.', true);
@@ -544,6 +642,17 @@ function isGoogleFormsNextTrigger(target) {
   return /(next|siguiente|continuar|continue)/.test(marker);
 }
 
+function isGoogleFormsPreviousTrigger(target) {
+  const trigger = target.closest('button, input[type="button"], div[role="button"]');
+  if (!trigger || trigger.closest('#tesistab-qa-actions')) return false;
+  const marker = [
+    trigger.textContent,
+    trigger.getAttribute('aria-label'),
+    trigger.getAttribute('data-tooltip'),
+  ].map((value) => String(value || '').toLowerCase()).join(' ');
+  return /(back|previous|anterior|atr[aá]s|volver)/.test(marker);
+}
+
 async function monitorJob(jobId, backendBaseUrl, expectedDurationMs = 0) {
   const pollEveryMs = 1200;
   // El presupuesto de espera escala con la corrida (count * delay) mas un
@@ -556,7 +665,7 @@ async function monitorJob(jobId, backendBaseUrl, expectedDurationMs = 0) {
     await sleep(pollEveryMs);
 
     try {
-      const response = await backendRequest(`/api/tesistab/jobs/${jobId}`, {
+      const response = await backendRequest(`/api/forms/jobs/${jobId}`, {
         baseUrl: backendBaseUrl,
       });
 
@@ -585,14 +694,35 @@ async function monitorJob(jobId, backendBaseUrl, expectedDurationMs = 0) {
 
       transientErrors = 0;
       const job = response.data?.job || response.data;
-      const progress = `${job.sent + job.failed}/${job.count}`;
+      const requested = Number(job.progress?.requested ?? job.requested ?? job.count) || 0;
+      const accepted = Number(job.progress?.accepted ?? job.accepted ?? job.sent) || 0;
+      const failed = Number(job.progress?.failed ?? job.failed) || 0;
+      const pending = Number(job.progress?.pending ?? Math.max(0, requested - accepted - failed)) || 0;
+      const reserved = Number(job.reserved ?? job.reservedBalance ?? pending) || 0;
+      const processed = Number(job.progress?.processed ?? (accepted + failed)) || 0;
+      const progress = `Aceptadas ${accepted} · Fallidas ${failed} · Pendientes ${pending} · Reservadas ${reserved}`;
       activeJobProgressLabel = progress;
 
-      if (job.status === 'running' || job.status === 'queued') {
+      if (['pending', 'queued', 'processing', 'running', 'paused', 'blocked', 'cancelling'].includes(job.status)) {
         activeJobId = job.id;
         activeJobStatus = job.status;
+        await persistActiveJobState({
+          id: job.id,
+          status: job.status,
+          progressLabel: progress,
+          requestedResponses: requested,
+          backendBaseUrl,
+          expectedDurationMs,
+        });
         syncJobActionButtons();
-        showStatus(`Job ${job.id.slice(0, 8)} en progreso ${progress}...`);
+        const statusLabel = job.status === 'paused'
+          ? 'en pausa'
+          : job.status === 'blocked'
+            ? 'bloqueado; revisa el formulario'
+          : job.status === 'cancelling'
+            ? 'cancelando'
+            : 'en progreso';
+        showStatus(`Job ${job.id.slice(0, 8)} ${statusLabel} ${progress}...`);
         recordDiagnostics({
           lastJobId: job.id,
           lastJobStatus: job.status,
@@ -602,7 +732,7 @@ async function monitorJob(jobId, backendBaseUrl, expectedDurationMs = 0) {
       }
 
       const uncertainty = job.uncertain > 0 ? `, inciertos: ${job.uncertain}` : '';
-      if (job.status === 'completed' || job.status === 'completed_with_errors') {
+      if (job.status === 'completed' || job.status === 'completed_with_errors' || job.status === 'failed') {
         const withErrors = job.failed > 0;
         const latestMessage = String(job.latestResult?.message || '').trim();
         const firstError = String(job.errors?.[0]?.message || '').trim();
@@ -633,7 +763,7 @@ async function monitorJob(jobId, backendBaseUrl, expectedDurationMs = 0) {
         }
         clearActiveJobState(job.id);
         showStatus(
-          `Terminado. Enviados: ${job.sent}/${job.count}, fallidos: ${job.failed}${uncertainty}${detail && withErrors ? `. ${detail}` : ''}.`,
+          `Terminado. Aceptadas: ${job.accepted ?? job.sent}/${job.count}, fallidas: ${job.failed}, devueltas: ${job.refunded ?? 0}${uncertainty}${detail && withErrors ? `. ${detail}` : ''}.`,
           withErrors
         );
         recordDiagnostics({
@@ -728,6 +858,355 @@ function formDataToPayload(formData) {
   return payload;
 }
 
+function currentGoogleFormId(form = currentForm) {
+  const candidates = [form?.action, window.location.href];
+  for (const value of candidates) {
+    try {
+      const match = new URL(value, window.location.href).pathname
+        .match(/\/forms\/d\/(?:e\/)?([^/]+)/);
+      if (match?.[1]) return match[1];
+    } catch {
+      // Se prueba la siguiente fuente.
+    }
+  }
+  return '';
+}
+
+function fieldType(element) {
+  if (element instanceof HTMLSelectElement) return 'select';
+  if (element instanceof HTMLTextAreaElement) return 'textarea';
+  if (element instanceof HTMLInputElement) return element.type || 'text';
+  return element.getAttribute('role') || element.tagName.toLowerCase();
+}
+
+function createFormPageSnapshot(form) {
+  const payload = formDataToPayload(new FormData(form));
+  const optionsByEntry = collectEntryOptions(form);
+  const questionByEntry = collectQuestionTextByEntry(form);
+  const fields = [];
+  const seen = new Set();
+
+  form.querySelectorAll('[name^="entry."]').forEach((element) => {
+    const entry = element.getAttribute('name') || '';
+    if (!/^entry\.\d+/.test(entry) || seen.has(entry)) return;
+    seen.add(entry);
+    const container = element.closest('[role="listitem"], .Qr7Oae, .geS5n');
+    fields.push({
+      entry,
+      question: questionByEntry.get(entry) || '',
+      type: fieldType(element),
+      required: Boolean(
+        element.required
+        || element.getAttribute('aria-required') === 'true'
+        || container?.querySelector('[aria-required="true"], [data-required="true"]')
+      ),
+      options: (optionsByEntry.get(entry) || []).map((option) => option.value),
+    });
+  });
+
+  const formId = currentGoogleFormId(form);
+  const pageMarker = fields.map((field) => field.entry).sort().join(',')
+    || String(payload.pageHistory || window.location.pathname);
+  return {
+    formId,
+    pageKey: `${formId}:${pageMarker}`,
+    action: form.action || '',
+    payload,
+    fields,
+    terminal: !findNextPageButton(form),
+    capturedAt: new Date().toISOString(),
+  };
+}
+
+async function persistMultiPageSnapshot(snapshot) {
+  if (!snapshot?.formId) return { formId: '', pages: [snapshot].filter(Boolean) };
+  const stored = await chrome.storage.local.get([MULTIPAGE_CAPTURE_KEY]);
+  const current = stored[MULTIPAGE_CAPTURE_KEY];
+  const sameForm = current?.formId === snapshot.formId;
+  const sameAccount = !current?.accountEmail
+    || String(current.accountEmail).toLowerCase() === String(settings.accountEmail || '').toLowerCase();
+  let routes = sameForm && sameAccount && Array.isArray(current?.routes)
+    ? current.routes.map((route) => ({ ...route, pages: [...(route.pages || [])] }))
+    : [];
+  let nextRouteSequence = Math.max(1, Number(current?.nextRouteSequence || 1));
+
+  // Migracion transparente del formato 1.5, que almacenaba una sola lista.
+  if (!routes.length && sameForm && sameAccount && Array.isArray(current?.pages)) {
+    routes = [{
+      id: `route-${nextRouteSequence}`,
+      pages: [...current.pages],
+      createdAt: current.updatedAt || new Date().toISOString(),
+    }];
+    nextRouteSequence += 1;
+  }
+  if (!routes.length) {
+    routes.push({ id: `route-${nextRouteSequence}`, pages: [], createdAt: new Date().toISOString() });
+    nextRouteSequence += 1;
+  }
+
+  let activeRoute = routes.find((route) => route.id === current?.activeRouteId) || routes[routes.length - 1];
+  const existingIndex = activeRoute.pages.findIndex((page) => page?.pageKey === snapshot.pageKey);
+  if (existingIndex >= 0 && existingIndex === activeRoute.pages.length - 1) {
+    activeRoute.pages[existingIndex] = snapshot;
+  } else if (existingIndex >= 0) {
+    const wasComplete = Boolean(activeRoute.pages[activeRoute.pages.length - 1]?.terminal);
+    if (wasComplete) {
+      // Al volver desde una pagina final se conserva el recorrido terminado y
+      // se abre un fork desde el punto visitado. Sus paginas nunca se aplanan.
+      activeRoute = {
+        id: `route-${nextRouteSequence}`,
+        pages: activeRoute.pages.slice(0, existingIndex + 1),
+        createdAt: new Date().toISOString(),
+      };
+      nextRouteSequence += 1;
+      activeRoute.pages[existingIndex] = snapshot;
+      routes.push(activeRoute);
+    } else {
+      activeRoute.pages = activeRoute.pages.slice(0, existingIndex + 1);
+      activeRoute.pages[existingIndex] = snapshot;
+    }
+  } else {
+    activeRoute.pages.push(snapshot);
+  }
+  activeRoute.updatedAt = new Date().toISOString();
+  routes = routes.filter((route) => Array.isArray(route.pages) && route.pages.length).slice(-20);
+  const capture = {
+    formId: snapshot.formId,
+    accountEmail: String(settings.accountEmail || '').toLowerCase(),
+    routes,
+    activeRouteId: activeRoute.id,
+    // Alias de lectura para instalaciones que aun esperan capture.pages.
+    pages: activeRoute.pages.slice(-50),
+    nextRouteSequence,
+    updatedAt: new Date().toISOString(),
+  };
+  await chrome.storage.local.set({ [MULTIPAGE_CAPTURE_KEY]: capture });
+  return capture;
+}
+
+async function clearMultiPageCapture(formId) {
+  const stored = await chrome.storage.local.get([MULTIPAGE_CAPTURE_KEY]);
+  if (!stored[MULTIPAGE_CAPTURE_KEY]
+    || !formId
+    || stored[MULTIPAGE_CAPTURE_KEY].formId === formId) {
+    await chrome.storage.local.remove([MULTIPAGE_CAPTURE_KEY]);
+  }
+}
+
+function mergeCapturedPayload(pages) {
+  const merged = {};
+  for (const page of pages || []) {
+    for (const [key, value] of Object.entries(page?.payload || {})) {
+      // Los campos de navegacion deben reflejar el ultimo paso realmente
+      // recorrido. Las respuestas entry.* son unicas por pagina y se unen.
+      if (!key.startsWith('entry.')) {
+        merged[key] = value;
+        continue;
+      }
+      merged[key] = Array.isArray(value) ? [...value] : value;
+    }
+  }
+  return merged;
+}
+
+function getActiveCapturedRoute(capture) {
+  if (Array.isArray(capture?.routes)) {
+    return capture.routes.find((route) => route.id === capture.activeRouteId)
+      || capture.routes[capture.routes.length - 1]
+      || null;
+  }
+  return Array.isArray(capture?.pages)
+    ? { id: 'route-1', pages: capture.pages }
+    : null;
+}
+
+function getAllCapturedPages(capture) {
+  const routes = Array.isArray(capture?.routes)
+    ? capture.routes
+    : [{ pages: capture?.pages || [] }];
+  return routes.flatMap((route) => route.pages || []);
+}
+
+function getCompleteCapturedRoutes(capture) {
+  const routes = Array.isArray(capture?.routes)
+    ? capture.routes
+    : [{ id: 'route-1', pages: capture?.pages || [] }];
+  const active = getActiveCapturedRoute(capture);
+  const byPath = new Map();
+  for (const route of routes) {
+    const pages = route.pages || [];
+    const isComplete = Boolean(pages[pages.length - 1]?.terminal);
+    if (!isComplete && route.id !== active?.id) continue;
+    const signature = pages.map((page) => page.pageKey).join('>');
+    if (!signature) continue;
+    byPath.set(signature, { ...route, pages });
+  }
+  return [...byPath.values()].filter((route) => route.pages[route.pages.length - 1]?.terminal);
+}
+
+function buildCapturedMultiPageConfig(capture) {
+  let routes = getCompleteCapturedRoutes(capture);
+  const active = getActiveCapturedRoute(capture);
+  if (!routes.length && active?.pages?.length) routes = [active];
+  const selectorEntries = inferRouteSelectorEntries(routes);
+
+  return {
+    version: 1,
+    guidedCapture: routes.length > 1 || routes.some((route) => route.pages.length > 1),
+    routes: routes.map((route, index) => {
+      const payload = mergeCapturedPayload(route.pages);
+      const conditions = [];
+      for (const entry of selectorEntries) {
+        if (!(entry in payload)) continue;
+        const value = payload[entry];
+        if (Array.isArray(value)) {
+          conditions.push({ field: entry, operator: 'in', values: value.map(String) });
+        } else {
+          conditions.push({ field: entry, operator: 'equals', value: String(value) });
+        }
+      }
+      return {
+        id: String(route.id || `route-${index + 1}`).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64),
+        fallback: index === 0,
+        when: { all: conditions.slice(0, 16) },
+        payload,
+        pages: route.pages.map((page, pageIndex) => ({
+          index: pageIndex,
+          pageKey: page.pageKey,
+          entries: (page.fields || []).map((field) => field.entry),
+        })),
+      };
+    }),
+  };
+}
+
+function inferRouteSelectorEntries(routes) {
+  const entries = new Set();
+  for (let leftIndex = 0; leftIndex < routes.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < routes.length; rightIndex += 1) {
+      const left = routes[leftIndex];
+      const right = routes[rightIndex];
+      let commonPages = 0;
+      while (
+        commonPages < left.pages.length
+        && commonPages < right.pages.length
+        && left.pages[commonPages].pageKey === right.pages[commonPages].pageKey
+      ) commonPages += 1;
+      if (!commonPages || commonPages === Math.min(left.pages.length, right.pages.length)) continue;
+
+      const branchPage = left.pages[commonPages - 1];
+      const leftPayload = mergeCapturedPayload(left.pages);
+      const rightPayload = mergeCapturedPayload(right.pages);
+      for (const field of branchPage.fields || []) {
+        const entry = field.entry;
+        if (!(entry in leftPayload) || !(entry in rightPayload)) continue;
+        if (stableJson(leftPayload[entry]) !== stableJson(rightPayload[entry])) entries.add(entry);
+      }
+    }
+  }
+  return [...entries].slice(0, 16);
+}
+
+function mapsFromCapturedPages(pages) {
+  const optionsByEntry = new Map();
+  const questionByEntry = new Map();
+  for (const page of pages || []) {
+    for (const field of page?.fields || []) {
+      if (!field?.entry) continue;
+      questionByEntry.set(field.entry, field.question || '');
+      optionsByEntry.set(
+        field.entry,
+        (field.options || []).map((value) => ({ value })),
+      );
+    }
+  }
+  return { optionsByEntry, questionByEntry };
+}
+
+function capturedPageStructure(page, index) {
+  return {
+    index,
+    pageKey: page?.pageKey || `page-${index + 1}`,
+    terminal: Boolean(page?.terminal),
+    fields: (page?.fields || []).map((field) => ({
+      entry: field.entry,
+      question: field.question,
+      type: field.type,
+      required: Boolean(field.required),
+      options: [...(field.options || [])],
+    })),
+  };
+}
+
+function buildCapturedStructure(captureOrPages) {
+  if (Array.isArray(captureOrPages)) {
+    return {
+      formId: captureOrPages?.[0]?.formId || currentGoogleFormId(),
+      pages: captureOrPages.map(capturedPageStructure),
+    };
+  }
+  const routes = getCompleteCapturedRoutes(captureOrPages);
+  return {
+    version: 2,
+    formId: captureOrPages?.formId || currentGoogleFormId(),
+    routes: routes.map((route) => ({
+      id: route.id,
+      pages: route.pages.map(capturedPageStructure),
+    })),
+  };
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${stableJson(value[key])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+async function hashStableValue(value) {
+  const bytes = new TextEncoder().encode(stableJson(value));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function persistActiveJobState(state) {
+  await chrome.storage.local.set({
+    [ACTIVE_JOB_KEY]: {
+      ...state,
+      formId: state.formId || currentGoogleFormId(),
+      accountEmail: String(settings.accountEmail || '').toLowerCase(),
+      updatedAt: new Date().toISOString(),
+    },
+  });
+}
+
+async function restoreActiveJobState() {
+  const stored = await chrome.storage.local.get([ACTIVE_JOB_KEY]);
+  const state = stored[ACTIVE_JOB_KEY];
+  if (!state?.id) return;
+  const sameAccount = String(state.accountEmail || '').toLowerCase()
+    === String(settings.accountEmail || '').toLowerCase();
+  const sameForm = !state.formId || state.formId === currentGoogleFormId();
+  const activeStatuses = ['pending', 'queued', 'processing', 'running', 'paused', 'blocked', 'cancelling'];
+  if (!sameAccount || !sameForm || !activeStatuses.includes(state.status)) {
+    await chrome.storage.local.remove([ACTIVE_JOB_KEY]);
+    return;
+  }
+  activeJobId = state.id;
+  activeJobStatus = state.status;
+  activeJobProgressLabel = state.progressLabel || '';
+  syncJobActionButtons();
+  showStatus(`Recuperando trabajo ${state.id.slice(0, 8)}...`);
+  void monitorJob(
+    state.id,
+    normalizeBackendUrl(state.backendBaseUrl || settings.backendBaseUrl),
+    Number(state.expectedDurationMs) || 0,
+  );
+}
+
 function injectStatusPill(enabled) {
   const existing = document.getElementById('tesistab-qa-pill');
   if (existing) {
@@ -750,7 +1229,8 @@ function injectActionsPanel() {
   if (existing) {
     const existingCount = existing.querySelector('#tesistab-qa-count');
     if (existingCount instanceof HTMLInputElement && document.activeElement !== existingCount) {
-      existingCount.value = String(clamp(Number(settings.submissionCount) || 1, 1, MAX_UI_SUBMISSIONS));
+      existingCount.value = String(normalizePositiveInteger(settings.submissionCount, 1));
+      syncCountInputCapacity(existingCount);
     }
     const existingProfile = existing.querySelector('#tesistab-qa-profile');
     if (existingProfile instanceof HTMLSelectElement) {
@@ -838,15 +1318,15 @@ function injectActionsPanel() {
   countRow.className = 'tesistab-qa-count-row';
 
   const countLabel = document.createElement('span');
-  countLabel.replaceChildren(createHelpLabel('Cantidad', 'Numero de respuestas que se enviaran en esta corrida.'));
+  countLabel.replaceChildren(createHelpLabel('Respuestas', 'Cantidad de respuestas que se reservaran y procesaran.'));
 
   const countInput = document.createElement('input');
   countInput.id = 'tesistab-qa-count';
   countInput.type = 'number';
   countInput.min = '1';
-  countInput.max = String(MAX_UI_SUBMISSIONS);
   countInput.step = '1';
-  countInput.value = String(clamp(Number(settings.submissionCount) || 1, 1, MAX_UI_SUBMISSIONS));
+  countInput.value = String(normalizePositiveInteger(settings.submissionCount, 1));
+  syncCountInputCapacity(countInput);
   countInput.addEventListener('change', () => saveInlineSubmissionCount(countInput));
   countInput.addEventListener('blur', () => saveInlineSubmissionCount(countInput));
 
@@ -958,9 +1438,8 @@ function injectActionsPanel() {
   runHoverLabel.textContent = 'Detener';
   runTesistabBtn.append(runMainLabel, runHoverLabel);
   runTesistabBtn.onclick = async () => {
-    const running = Boolean(activeJobId && (activeJobStatus === 'queued' || activeJobStatus === 'running'));
-    if (running) {
-      await stopActiveTesistabJob();
+    const active = Boolean(activeJobId && !['completed', 'completed_with_errors', 'cancelled', 'failed'].includes(activeJobStatus));
+    if (active) {
       return;
     }
 
@@ -972,6 +1451,27 @@ function injectActionsPanel() {
 
     await startTesistabRun(form, null);
   };
+
+  const jobControls = document.createElement('div');
+  jobControls.id = 'tesistab-qa-job-controls';
+  jobControls.className = 'tesistab-qa-job-controls';
+  jobControls.hidden = true;
+
+  const pauseJobBtn = document.createElement('button');
+  pauseJobBtn.type = 'button';
+  pauseJobBtn.id = 'tesistab-qa-pause-btn';
+  pauseJobBtn.className = 'secondary';
+  pauseJobBtn.textContent = 'Pausar';
+  pauseJobBtn.onclick = togglePauseActiveJob;
+
+  const cancelJobBtn = document.createElement('button');
+  cancelJobBtn.type = 'button';
+  cancelJobBtn.id = 'tesistab-qa-cancel-btn';
+  cancelJobBtn.className = 'secondary danger';
+  cancelJobBtn.textContent = 'Cancelar';
+  cancelJobBtn.onclick = stopActiveTesistabJob;
+
+  jobControls.append(pauseJobBtn, cancelJobBtn);
 
   const randomizeBtn = document.createElement('button');
   randomizeBtn.type = 'button';
@@ -1053,7 +1553,8 @@ function injectActionsPanel() {
     csvPanel,
     advancedPanel,
     randomizeBtn,
-    runTesistabBtn
+    runTesistabBtn,
+    jobControls
   );
   document.documentElement.appendChild(panel);
   syncInlineDistributionControls(panel);
@@ -1106,7 +1607,14 @@ async function saveInlineSubmissionCount(input) {
   }
 
   const raw = String(input.value || '').trim();
-  const value = clamp(Number(raw) || 1, 1, MAX_UI_SUBMISSIONS);
+  const value = normalizePositiveInteger(raw, 1);
+  const validation = validateRequestedSubmissionCount(value);
+  if (!validation.ok) {
+    input.setCustomValidity(validation.message);
+    input.reportValidity();
+    return;
+  }
+  input.setCustomValidity('');
   input.value = String(value);
 
   settings = {
@@ -1315,8 +1823,8 @@ async function stopActiveTesistabJob() {
   syncJobActionButtons();
   showStatus('Deteniendo envios...', true);
 
-  const response = await backendRequest(`/api/tesistab/jobs/${activeJobId}`, {
-    method: 'DELETE',
+  const response = await backendRequest(`/api/forms/jobs/${activeJobId}/cancel`, {
+    method: 'POST',
   });
 
   if (!response.ok) {
@@ -1326,10 +1834,35 @@ async function stopActiveTesistabJob() {
     return;
   }
 
-  activeJobStatus = 'cancelled';
+  activeJobStatus = response.data?.status || 'cancelling';
   isCancellingJob = false;
   syncJobActionButtons();
   showStatus('Solicitud de cancelacion enviada.', true);
+}
+
+async function togglePauseActiveJob() {
+  if (!activeJobId || isChangingPauseState || isCancellingJob) {
+    return;
+  }
+  const shouldResume = ['paused', 'blocked'].includes(activeJobStatus);
+  isChangingPauseState = true;
+  syncJobActionButtons();
+
+  const response = await backendRequest(
+    `/api/forms/jobs/${activeJobId}/${shouldResume ? 'resume' : 'pause'}`,
+    { method: 'POST' }
+  );
+
+  isChangingPauseState = false;
+  if (!response.ok) {
+    syncJobActionButtons();
+    showStatus(extractErrorMessage(response) || 'No se pudo cambiar el estado del job.', true);
+    return;
+  }
+
+  activeJobStatus = response.data?.status || (shouldResume ? 'running' : 'paused');
+  syncJobActionButtons();
+  showStatus(shouldResume ? 'Envio reanudado.' : 'Envio pausado.');
 }
 
 function createInlineAdvancedToggle(key, label, checked) {
@@ -1477,6 +2010,7 @@ async function checkBackendHealth() {
   });
 
   if (response.ok) {
+    applyBackendCapacity(response.data);
     updateBackendHealthIndicator('online', 'Backend conectado');
     return;
   }
@@ -1565,21 +2099,38 @@ function showTesistabConfirmDialog(details) {
 
     const subtitle = document.createElement('p');
     subtitle.className = 'tesistab-qa-confirm-subtitle';
-    subtitle.textContent = 'Revisa los datos antes de iniciar la corrida.';
+  subtitle.textContent = details?.authorizationOnly
+    ? 'Confirma la autorizacion antes de continuar.'
+    : 'Revisa los datos antes de iniciar el envio.';
 
     const detailsBox = document.createElement('div');
     detailsBox.className = 'tesistab-qa-confirm-details';
     detailsBox.append(
-      createTesistabConfirmRow('Cantidad', String(details?.count || 1)),
+      createTesistabConfirmRow('Respuestas', String(details?.count || 1)),
       createTesistabConfirmRow('Espera', `${Number(details?.delayMs || 0)} ms`)
     );
 
     if (Number(details?.csvRowsCount || 0) > 0) {
       detailsBox.append(createTesistabConfirmRow('CSV', `${details.csvRowsCount} filas cargadas`));
     }
+    if (Number(details?.capturedRouteCount || 0) > 1) {
+      detailsBox.append(createTesistabConfirmRow(
+        'Recorridos',
+        `${details.capturedRouteCount} rutas condicionales separadas`
+      ));
+    }
 
     const actions = document.createElement('div');
     actions.className = 'tesistab-qa-confirm-actions';
+
+    const authorization = document.createElement('label');
+    authorization.className = 'tesistab-qa-authorization';
+    const authorizationCheck = document.createElement('input');
+    authorizationCheck.type = 'checkbox';
+    authorizationCheck.required = true;
+    const authorizationText = document.createElement('span');
+    authorizationText.textContent = 'Confirmo que este formulario es mio o que tengo autorizacion para usarlo.';
+    authorization.append(authorizationCheck, authorizationText);
 
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
@@ -1593,6 +2144,7 @@ function showTesistabConfirmDialog(details) {
     const cleanup = (accepted) => {
       document.removeEventListener('keydown', onKeyDown, true);
       overlay.remove();
+      previouslyFocused?.focus();
       resolve(Boolean(accepted));
     };
 
@@ -1600,6 +2152,22 @@ function showTesistabConfirmDialog(details) {
       if (event.key === 'Escape') {
         event.preventDefault();
         cleanup(false);
+        return;
+      }
+      if (event.key === 'Tab') {
+        const focusable = Array.from(dialog.querySelectorAll(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )).filter((element) => element instanceof HTMLElement && !element.hidden);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     };
 
@@ -1609,11 +2177,21 @@ function showTesistabConfirmDialog(details) {
       }
     });
     cancelBtn.onclick = () => cleanup(false);
-    acceptBtn.onclick = () => cleanup(true);
+    acceptBtn.onclick = () => {
+      if (details?.requireAuthorization && !authorizationCheck.checked) {
+        authorizationCheck.focus();
+        authorization.classList.add('is-required');
+        return;
+      }
+      cleanup(true);
+    };
+    authorizationCheck.addEventListener('change', () => {
+      authorization.classList.toggle('is-required', !authorizationCheck.checked);
+    });
     document.addEventListener('keydown', onKeyDown, true);
 
     actions.append(cancelBtn, acceptBtn);
-    dialog.append(title, subtitle, detailsBox, actions);
+    dialog.append(title, subtitle, detailsBox, authorization, actions);
     overlay.appendChild(dialog);
     document.documentElement.appendChild(overlay);
     acceptBtn.focus();
@@ -1638,11 +2216,18 @@ function createTesistabConfirmRow(label, value) {
 
 function syncJobActionButtons() {
   const runBtn = document.getElementById('tesistab-qa-run-btn');
-  const running = Boolean(activeJobId && (activeJobStatus === 'queued' || activeJobStatus === 'running'));
+  const controls = document.getElementById('tesistab-qa-job-controls');
+  const pauseBtn = document.getElementById('tesistab-qa-pause-btn');
+  const cancelBtn = document.getElementById('tesistab-qa-cancel-btn');
+  const active = Boolean(
+    activeJobId &&
+    ['pending', 'queued', 'processing', 'running', 'paused', 'blocked', 'cancelling']
+      .includes(activeJobStatus)
+  );
 
   if (runBtn instanceof HTMLButtonElement) {
-    runBtn.disabled = isTesistabRunStarting || isCancellingJob;
-    runBtn.classList.toggle('is-running', running);
+    runBtn.disabled = isTesistabRunStarting || active;
+    runBtn.classList.toggle('is-running', active);
     runBtn.classList.toggle('is-stopping', isCancellingJob);
     const mainLabel = runBtn.querySelector('.main-label');
     const hoverLabel = runBtn.querySelector('.hover-label');
@@ -1651,15 +2236,35 @@ function syncJobActionButtons() {
         mainLabel.textContent = 'Deteniendo...';
       } else if (isTesistabRunStarting) {
         mainLabel.textContent = 'Iniciando...';
-      } else if (running) {
+      } else if (['paused', 'blocked'].includes(activeJobStatus)) {
+        mainLabel.textContent = `En pausa ${activeJobProgressLabel}`.trim();
+      } else if (active) {
         mainLabel.textContent = activeJobProgressLabel || 'En progreso';
       } else {
         mainLabel.textContent = 'Iniciar';
       }
     }
     if (hoverLabel instanceof HTMLElement) {
-      hoverLabel.textContent = running ? 'Detener' : 'Iniciar';
+      hoverLabel.textContent = active ? 'Trabajo activo' : 'Iniciar';
     }
+  }
+
+  if (controls instanceof HTMLElement) {
+    controls.hidden = !active;
+  }
+  if (pauseBtn instanceof HTMLButtonElement) {
+    pauseBtn.disabled = isChangingPauseState || isCancellingJob || activeJobStatus === 'cancelling';
+    pauseBtn.textContent = isChangingPauseState
+      ? 'Actualizando...'
+      : ['paused', 'blocked'].includes(activeJobStatus)
+        ? 'Reanudar'
+        : 'Pausar';
+  }
+  if (cancelBtn instanceof HTMLButtonElement) {
+    cancelBtn.disabled = isCancellingJob || activeJobStatus === 'cancelling';
+    cancelBtn.textContent = isCancellingJob || activeJobStatus === 'cancelling'
+      ? 'Cancelando...'
+      : 'Cancelar';
   }
 }
 
@@ -1671,7 +2276,9 @@ function clearActiveJobState(jobId) {
   activeJobId = '';
   activeJobStatus = '';
   isCancellingJob = false;
+  isChangingPauseState = false;
   activeJobProgressLabel = '';
+  void chrome.storage.local.remove([ACTIVE_JOB_KEY]);
   syncJobActionButtons();
 }
 
@@ -1685,6 +2292,8 @@ function showStatus(message, isError) {
   status.id = 'tesistab-qa-status';
   status.className = isError ? 'is-error' : 'is-ok';
   status.textContent = message;
+  status.setAttribute('role', isError ? 'alert' : 'status');
+  status.setAttribute('aria-live', isError ? 'assertive' : 'polite');
   status.setAttribute('data-theme', resolveEffectiveThemeMode(settings.themeMode));
   document.documentElement.appendChild(status);
 
@@ -1711,6 +2320,7 @@ async function submitWithCompatApi(formUrl, payload, count) {
   params.append('counter', String(count));
   params.append('fromExtensionBackground', 'true');
   params.append('formId', formId);
+  params.append('ownOrAuthorized', 'true');
 
   for (const [name, value] of Object.entries(payload)) {
     if (Array.isArray(value)) {
@@ -1762,14 +2372,24 @@ function applyCsvRowIfAvailable(payload) {
   return merged;
 }
 
-function applySmartProfilePayload(payload, form, runtimeSettings) {
+function applySmartProfilePayload(
+  payload,
+  form,
+  runtimeSettings,
+  capturedOptionsByEntry,
+  capturedQuestionByEntry,
+) {
   if (!runtimeSettings?.smartProfileMode || !form) {
     return payload;
   }
 
   const output = { ...payload };
-  const optionsByEntry = collectEntryOptions(form);
-  const questionByEntry = collectQuestionTextByEntry(form);
+  const optionsByEntry = capturedOptionsByEntry instanceof Map
+    ? capturedOptionsByEntry
+    : collectEntryOptions(form);
+  const questionByEntry = capturedQuestionByEntry instanceof Map
+    ? capturedQuestionByEntry
+    : collectQuestionTextByEntry(form);
   const distributionEnabled = Boolean(runtimeSettings?.profileDistributionEnabled);
   const profile = resolveSmartProfile(runtimeSettings.smartProfileType);
   const specialKeyword = normalizeText(runtimeSettings.specialQuestionKeyword || '');
@@ -2782,6 +3402,112 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function resolveSpecialEntryKeyFromMap(questionByEntry, keyword) {
+  const normalizedKeyword = normalizeText(keyword || '');
+  if (!normalizedKeyword || !(questionByEntry instanceof Map)) return '';
+  for (const [entry, questionText] of questionByEntry.entries()) {
+    if (normalizeText(questionText).includes(normalizedKeyword)) return entry;
+  }
+  return '';
+}
+
+async function createFormsJob(canonicalPayload, legacyPayload) {
+  const backend = normalizeBackendUrl(settings.backendBaseUrl);
+  const response = await backendRequest('/api/forms/jobs', {
+    baseUrl: backend,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(canonicalPayload),
+  });
+
+  // Adaptador temporal para servidores anteriores al contrato /api/forms/jobs.
+  // Solo se usa cuando la ruta realmente no existe; errores de validacion,
+  // saldo o proveedor se devuelven sin repetir ni reservar dos veces.
+  if (![404, 405].includes(response.status)) {
+    return response;
+  }
+  return backendRequest('/api/tesistab/submit', {
+    baseUrl: backend,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...legacyPayload,
+      count: legacyPayload.requestedResponses,
+    }),
+  });
+}
+
+function normalizePositiveInteger(value, fallback = 1) {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : fallback;
+}
+
+function effectiveResponseLimit() {
+  const limits = [backendResponseCapacity, backendOperationalMax]
+    .filter((value) => Number.isSafeInteger(value) && value >= 0);
+  return limits.length ? Math.min(...limits) : null;
+}
+
+function validateRequestedSubmissionCount(value) {
+  const numeric = Number(value);
+  if (!Number.isSafeInteger(numeric) || numeric < 1) {
+    return { ok: false, message: 'Escribe una cantidad entera mayor que cero.' };
+  }
+  const limit = effectiveResponseLimit();
+  if (limit !== null && numeric > limit) {
+    return {
+      ok: false,
+      message: `Solicitaste ${numeric} respuestas, pero tienes capacidad para ${limit}.`,
+    };
+  }
+  return { ok: true, value: numeric };
+}
+
+function applyBackendCapacity(config) {
+  const quotaValue =
+    config?.quota?.responsesLeft ??
+    config?.user?.formsResponses ??
+    config?.user?.responsesLeft;
+  backendResponseCapacity = quotaValue !== null &&
+    quotaValue !== undefined &&
+    Number.isSafeInteger(Number(quotaValue)) &&
+    Number(quotaValue) >= 0
+    ? Math.floor(Number(quotaValue))
+    : null;
+
+  const operational = Number(config?.limits?.maxSubmissionsPerJob);
+  backendOperationalMax = Number.isSafeInteger(operational) && operational > 0
+    ? operational
+    : null;
+  syncVisibleCountInputCapacity();
+}
+
+function syncVisibleCountInputCapacity() {
+  const input = document.getElementById('tesistab-qa-count');
+  if (input instanceof HTMLInputElement) {
+    syncCountInputCapacity(input);
+  }
+}
+
+function syncCountInputCapacity(input) {
+  const limit = effectiveResponseLimit();
+  if (limit === null) {
+    input.removeAttribute('max');
+    input.title = 'El limite efectivo depende de tu saldo de respuestas.';
+    return;
+  }
+  input.max = String(Math.max(1, limit));
+  input.title = limit > 0
+    ? `Saldo/capacidad disponible: ${limit} respuestas.`
+    : 'No tienes respuestas disponibles.';
+}
+
+function createIdempotencyKey(formUrl) {
+  const installationId = String(settings.installationId || 'browser').replace(/[^a-zA-Z0-9_.:-]/g, '');
+  const formMarker = String(formUrl || '').match(/\/forms\/d\/(?:e\/)?([^/]+)/)?.[1] || 'form';
+  return `${installationId || 'browser'}:${formMarker}:${crypto.randomUUID()}`.slice(0, 160);
+}
+
 function clampPercent(value, fallback) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -2876,13 +3602,14 @@ async function sendBackgroundHttpRequest(payload) {
 
 function getAuthHeaders() {
   const apiKey = String(settings.apiKey || '').trim();
-  if (!apiKey) {
-    return {};
+  const headers = {};
+  if (apiKey) {
+    headers['X-API-Key'] = apiKey;
   }
-
-  return {
-    'X-API-Key': apiKey,
-  };
+  if (settings.installationId) {
+    headers['X-Device-Id'] = String(settings.installationId);
+  }
+  return headers;
 }
 
 function extractErrorMessage(response) {

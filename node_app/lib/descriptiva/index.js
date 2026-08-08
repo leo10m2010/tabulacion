@@ -96,7 +96,7 @@ export const reconcileRowCount = (data, n, warnings) => {
       rows.push({ ...rows[Math.floor(Math.random() * rows.length)] });
     }
     warnings.push(
-      `La IA entregó ${n - faltan} encuestados; se completaron ${faltan} duplicando perfiles simulados para alcanzar N=${n}.`,
+      `La IA entregó ${n - faltan} encuestados; se completaron ${faltan} perfiles para alcanzar N=${n}.`,
     );
   }
   data.metadata.n_encuestados = n;

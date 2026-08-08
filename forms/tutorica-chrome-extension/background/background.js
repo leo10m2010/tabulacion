@@ -45,6 +45,8 @@ chrome.runtime.onInstalled.addListener(async () => {
     requireConfirmation: true,
     randomizeBeforeSubmit: false,
     compatApiMode: false,
+    installationId: '',
+    pendingPairing: null,
   };
 
   const stored = await chrome.storage.local.get([SETTINGS_KEY, ...Object.keys(LEGACY_KEY_MAP)]);
@@ -60,6 +62,9 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
 
   const existing = { ...(stored[SETTINGS_KEY] || stored.tesistabTesistabSettings || {}) };
+  if (!existing.installationId) {
+    existing.installationId = crypto.randomUUID();
+  }
   if (LEGACY_BACKEND_URLS.has(String(existing.backendBaseUrl || '').trim().replace(/\/$/, ''))) {
     existing.backendBaseUrl = PRODUCTION_BACKEND_URL;
   }

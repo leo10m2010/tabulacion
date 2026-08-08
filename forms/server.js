@@ -8,12 +8,18 @@ const compression = require('compression');
 const app = express();
 app.disable('x-powered-by');
 
-const tesistabStorageFilePath = path.resolve(__dirname, 'temp', 'tesistab-jobs.json');
+const tesistabStorageFilePath = path.resolve(
+  process.env.TESISTAB_JOBS_FILE || path.join(__dirname, 'temp', 'tesistab-jobs.json')
+);
+const IS_NODE_TEST = Boolean(process.env.NODE_TEST_CONTEXT);
 
 const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || '*')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
+if (process.env.NODE_ENV === 'production' && CORS_ALLOWED_ORIGINS.includes('*')) {
+  throw new Error('CORS_ALLOWED_ORIGINS cannot contain * in production');
+}
 const TESISTAB_API_KEY = String(process.env.TESISTAB_API_KEY || '').trim();
 
 // Integracion con TesisTab: las claves de usuario (ttab_...) se validan
@@ -29,25 +35,61 @@ const TESISTAB_KEY_CACHE_TTL_MS = Number(process.env.TESISTAB_KEY_CACHE_TTL_MS |
 const tesistabKeyCache = new Map(); // clave -> { valid, reason, email, plan, expiresAt }
 const TESISTAB_RATE_LIMIT_WINDOW_MS = Number(process.env.TESISTAB_RATE_LIMIT_WINDOW_MS || 60_000);
 const TESISTAB_RATE_LIMIT_MAX_REQUESTS = Number(process.env.TESISTAB_RATE_LIMIT_MAX_REQUESTS || 120);
-const TESISTAB_PERSIST_JOBS = String(process.env.TESISTAB_PERSIST_JOBS || 'true').toLowerCase() !== 'false';
+const TESISTAB_PERSIST_JOBS =
+  String(process.env.TESISTAB_PERSIST_JOBS || (IS_NODE_TEST ? 'false' : 'true')).toLowerCase() !== 'false';
 const TESISTAB_MAX_STORED_JOBS = Number(process.env.TESISTAB_MAX_STORED_JOBS || 200);
 const TESISTAB_STALE_JOB_AFTER_MS = Number(process.env.TESISTAB_STALE_JOB_AFTER_MS || 30_000);
-const TESISTAB_FINISHED_JOB_TTL_MS = Number(process.env.TESISTAB_FINISHED_JOB_TTL_MS || 0);
+const TESISTAB_FINISHED_JOB_TTL_MS = Number(
+  process.env.TESISTAB_FINISHED_JOB_TTL_MS || 30 * 24 * 60 * 60_000
+);
+// Node convierte cualquier setTimeout mayor a un entero de 32 bits en 1 ms.
+// La retencion de 30 dias supera ese maximo, por lo que debe armarse en tramos.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const TESISTAB_COMPAT_FORM_TTL_MS = Number(process.env.TESISTAB_COMPAT_FORM_TTL_MS || 10 * 60_000);
+const TESISTAB_MAX_COMPAT_FORMS = Number(process.env.TESISTAB_MAX_COMPAT_FORMS || 20);
+const TESISTAB_PROVIDER_RETRIES = Math.max(1, Number(process.env.TESISTAB_PROVIDER_RETRIES || 3));
+const TESISTAB_SETTLEMENT_RETRIES = Math.max(
+  1,
+  Number(process.env.TESISTAB_SETTLEMENT_RETRIES || 3)
+);
+const TESISTAB_SETTLEMENT_RETRY_DELAY_MS = Math.max(
+  0,
+  Number(process.env.TESISTAB_SETTLEMENT_RETRY_DELAY_MS || 250)
+);
+const configuredBatchSize = Number(process.env.TESISTAB_JOB_BATCH_SIZE || 100);
+const TESISTAB_JOB_BATCH_SIZE =
+  Number.isSafeInteger(configuredBatchSize) && configuredBatchSize > 0 ? configuredBatchSize : 100;
 
 const TESISTAB_ALLOWED_HOSTS = (process.env.TESISTAB_ALLOWED_HOSTS || 'docs.google.com')
   .split(',')
   .map((host) => host.trim())
   .filter(Boolean);
-// LIMIT: ajusta este valor para cambiar el maximo por corrida (extension + API TESISTAB)
-const TESISTAB_MAX_SUBMISSIONS_PER_JOB = Number(
-  process.env.TESISTAB_MAX_SUBMISSIONS_PER_JOB || 250
-);
+// Sin limite fijo por defecto: la capacidad efectiva la determina la reserva
+// transaccional de respuestas. La variable se conserva como freno operativo
+// opcional para instalaciones antiguas.
+const configuredSubmissionsLimit = Number(process.env.TESISTAB_MAX_SUBMISSIONS_PER_JOB);
+const TESISTAB_MAX_SUBMISSIONS_PER_JOB =
+  Number.isSafeInteger(configuredSubmissionsLimit) && configuredSubmissionsLimit > 0
+    ? configuredSubmissionsLimit
+    : null;
 const TESISTAB_MIN_DELAY_MS = Number(process.env.TESISTAB_MIN_DELAY_MS || 500);
 const TESISTAB_MAX_DELAY_MS = Number(process.env.TESISTAB_MAX_DELAY_MS || 60_000);
 const TESISTAB_MAX_JITTER_MS = Number(process.env.TESISTAB_MAX_JITTER_MS || 5_000);
 const TESISTAB_REQUEST_TIMEOUT_MS = Number(process.env.TESISTAB_REQUEST_TIMEOUT_MS || 20_000);
 const TESISTAB_JOBS_LIST_DEFAULT_LIMIT = Number(process.env.TESISTAB_JOBS_LIST_DEFAULT_LIMIT || 20);
 const TESISTAB_JOBS_LIST_MAX_LIMIT = Number(process.env.TESISTAB_JOBS_LIST_MAX_LIMIT || 200);
+const TESISTAB_MAX_MULTIPAGE_ROUTES = 20;
+const TESISTAB_MAX_MULTIPAGE_PAGES_PER_ROUTE = 50;
+const TESISTAB_MAX_ROUTE_CONDITIONS = 16;
+const TESISTAB_MAX_ROUTE_PAYLOAD_FIELDS = 400;
+const LEGACY_API_SUNSET_AT = String(
+  process.env.LEGACY_API_SUNSET_AT || '2026-09-07T00:00:00Z'
+).trim();
+const legacyApiSunsetTimestamp = Date.parse(LEGACY_API_SUNSET_AT);
+if (!Number.isFinite(legacyApiSunsetTimestamp)) {
+  throw new Error('LEGACY_API_SUNSET_AT must be a valid RFC 3339 date');
+}
+const LEGACY_API_SUNSET_HEADER = new Date(legacyApiSunsetTimestamp).toUTCString();
 const TESISTAB_GENDER_SHARE_MIN = Number(process.env.TESISTAB_GENDER_SHARE_MIN || 0.4);
 const TESISTAB_GENDER_SHARE_MAX = Number(process.env.TESISTAB_GENDER_SHARE_MAX || 0.6);
 const TESISTAB_AGE_SHARE_18_25 = Number(process.env.TESISTAB_AGE_SHARE_18_25 || 0.35);
@@ -61,28 +103,82 @@ const TESISTAB_FREQ_SHARE_OCCASIONAL = Number(process.env.TESISTAB_FREQ_SHARE_OC
 const TESISTAB_DISTRIBUTION_CONFIG = resolveTesistabDistributionConfig();
 
 const tesistabJobStore = {};
-const compatStoredForms = {};
+const compatStoredForms = new Map();
 const tesistabSmartRuntimeStore = new Map();
+const tesistabQuotaRuntimeStore = new Map();
 const requestLimitStore = new Map();
 const tesistabCleanupTimers = new Map();
+const tesistabSettlementRetrying = new Set();
+const TESISTAB_WORKER_ID = String(process.env.TESISTAB_WORKER_ID || randomUUID());
+const TESISTAB_JOB_LEASE_MS = Number(process.env.TESISTAB_JOB_LEASE_MS || 30_000);
+const TESISTAB_WORKER_MODE = String(process.env.TESISTAB_WORKER_MODE || 'false') === 'true';
+const TESISTAB_RUN_JOBS_INLINE =
+  String(
+    process.env.TESISTAB_RUN_JOBS_INLINE ||
+    (process.env.NODE_ENV === 'production' ? 'false' : 'true')
+  ).toLowerCase() === 'true';
+const TESISTAB_EXECUTE_JOBS = TESISTAB_WORKER_MODE || TESISTAB_RUN_JOBS_INLINE;
 
 let saveTesistabJobsTimer = null;
+let inProcessJobRepository = null;
+let jobRepositoryReady = Promise.resolve();
+let jobClaimTimer = null;
+
+function safeFormsErrorCode(error) {
+  const candidate = String(error?.code || error?.name || 'internal_error');
+  return /^[a-z0-9_.-]{1,64}$/i.test(candidate) ? candidate : 'internal_error';
+}
+
+function formsStructuredLog(level, event, fields = {}) {
+  const writer = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+  writer(JSON.stringify({
+    at: new Date().toISOString(),
+    level,
+    event,
+    ...fields,
+  }));
+}
 
 bootstrapTesistabStore();
 registerShutdownHooks();
 startTesistabWatchdog();
 
 if (TESISTAB_VALIDATION_ENABLED) {
-  console.log(`Validacion de claves TesisTab activa (${TESISTAB_API_URL}) para /api/tesistab y /api/forms`);
+  formsStructuredLog('info', 'forms.key_validation_enabled', { remoteValidation: true });
 } else if (TESISTAB_API_KEY) {
-  console.log('TESISTAB API key protection enabled for /api/tesistab and /api/forms routes');
+  formsStructuredLog('info', 'forms.key_validation_enabled', { staticKey: true });
 } else {
-  console.warn('[AVISO] Sin validacion de claves (TESISTAB_VALIDATION=off y sin TESISTAB_API_KEY): solo para desarrollo.');
+  formsStructuredLog('warn', 'forms.key_validation_disabled', { developmentOnly: true });
 }
 
+// Repositorio durable inyectable (Neon en produccion). Todos los metodos
+// pueden ser sync o async. El archivo JSON queda como fallback standalone.
+app.setJobRepository = (repository) => {
+  const valid = repository &&
+    ['create', 'get', 'list', 'update', 'claim'].every(
+      (method) => typeof repository[method] === 'function'
+    );
+  if (!valid) {
+    inProcessJobRepository = null;
+    jobRepositoryReady = Promise.resolve();
+    return jobRepositoryReady;
+  }
+
+  inProcessJobRepository = repository;
+  // No mezclar el snapshot local con la fuente transaccional.
+  for (const id of Object.keys(tesistabJobStore)) {
+    delete tesistabJobStore[id];
+  }
+  jobRepositoryReady = hydrateJobsFromRepository();
+  if (TESISTAB_EXECUTE_JOBS) {
+    startJobClaimLoop();
+  }
+  return jobRepositoryReady;
+};
+
 // Middlewares
-app.use(express.json({ limit: '4mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: process.env.TESISTAB_JSON_LIMIT || '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: process.env.TESISTAB_JSON_LIMIT || '1mb' }));
 app.use(compression({ level: 9, memLevel: 9 }));
 app.use((req, res, next) => {
   const requestId = randomUUID();
@@ -102,7 +198,7 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, X-API-Key, X-Request-Id'
+    'Content-Type, Authorization, X-API-Key, X-Request-Id, X-Device-Id'
   );
 
   if (req.method === 'OPTIONS') {
@@ -145,6 +241,10 @@ app.get('/api/tesistab/config', (req, res) => {
     // Cuenta asociada a la clave (null en modo legado): la extension muestra
     // los usos de Forms restantes (null = ilimitados, admins).
     user: req.tesistabUser ?? null,
+    quota: {
+      unit: inProcessUsageManager ? 'responses' : inProcessUsageConsumer ? 'legacy_runs' : 'unlimited',
+      responsesLeft: req.tesistabUser?.formsResponses ?? req.tesistabUser?.responsesLeft ?? null,
+    },
     service: {
       name: 'Tutorica Forms Backend',
       staleJobAfterMs: TESISTAB_STALE_JOB_AFTER_MS,
@@ -160,6 +260,7 @@ app.get('/api/tesistab/config', (req, res) => {
     },
     limits: {
       maxSubmissionsPerJob: TESISTAB_MAX_SUBMISSIONS_PER_JOB,
+      jobBatchSize: TESISTAB_JOB_BATCH_SIZE,
       defaultJobsListLimit: clamp(Math.floor(TESISTAB_JOBS_LIST_DEFAULT_LIMIT), 1, TESISTAB_JOBS_LIST_MAX_LIMIT),
       maxJobsListLimit: TESISTAB_JOBS_LIST_MAX_LIMIT,
       minDelayMs: TESISTAB_MIN_DELAY_MS,
@@ -199,8 +300,8 @@ function canAccessJob(req, job) {
   return Boolean(owner) && job.ownerEmail === owner;
 }
 
-app.get('/api/tesistab/jobs/:id', (req, res) => {
-  const job = tesistabJobStore[req.params.id];
+app.get(['/api/tesistab/jobs/:id', '/api/forms/jobs/:id'], async (req, res) => {
+  const job = await getTesistabJob(req.params.id);
   // Se responde 404 (no 403) a proposito: un 403 confirmaria que el job existe.
   if (!canAccessJob(req, job)) {
     sendApiError(res, 404, 'job_not_found', 'Job not found', req.requestId);
@@ -209,11 +310,11 @@ app.get('/api/tesistab/jobs/:id', (req, res) => {
 
   res.json({
     requestId: req.requestId,
-    ...job,
+    ...publicTesistabJob(job),
   });
 });
 
-app.get('/api/tesistab/jobs', (req, res) => {
+app.get(['/api/tesistab/jobs', '/api/forms/jobs'], async (req, res) => {
   const requestedLimit = Number(req.query.limit);
   const safeLimit = Number.isFinite(requestedLimit)
     ? clamp(Math.floor(requestedLimit), 1, TESISTAB_JOBS_LIST_MAX_LIMIT)
@@ -225,7 +326,13 @@ app.get('/api/tesistab/jobs', (req, res) => {
   const sinceTimestamp =
     typeof req.query.since === 'string' ? Date.parse(req.query.since) : Number.NaN;
 
-  const visibles = Object.values(tesistabJobStore).filter((job) => canAccessJob(req, job));
+  const storedJobs = await listTesistabJobs({
+    ownerEmail: req.tesistabPrivileged ? null : jobOwnerEmail(req),
+    limit: TESISTAB_JOBS_LIST_MAX_LIMIT,
+    status: statusFilter,
+    since: Number.isNaN(sinceTimestamp) ? null : new Date(sinceTimestamp).toISOString(),
+  });
+  const visibles = storedJobs.filter((job) => canAccessJob(req, job));
 
   const jobs = visibles
     .filter((job) => {
@@ -262,25 +369,33 @@ app.get('/api/tesistab/jobs', (req, res) => {
       status: statusFilter,
       since: Number.isNaN(sinceTimestamp) ? null : new Date(sinceTimestamp).toISOString(),
     },
-    jobs,
+    jobs: jobs.map(publicTesistabJob),
   });
 });
 
-app.delete('/api/tesistab/jobs', (req, res) => {
+app.delete('/api/tesistab/jobs', async (req, res) => {
   // Borra solo el historial de quien llama. Antes vaciaba el almacen entero:
   // un cliente cualquiera podia destruir las corridas en curso de todos los
   // demas, con los usos ya cobrados.
-  const propios = Object.keys(tesistabJobStore).filter((id) => canAccessJob(req, tesistabJobStore[id]));
+  const allJobs = await listTesistabJobs({
+    ownerEmail: req.tesistabPrivileged ? null : jobOwnerEmail(req),
+    limit: TESISTAB_JOBS_LIST_MAX_LIMIT,
+  });
+  const propios = allJobs.filter((job) => canAccessJob(req, job)).map((job) => job.id);
 
-  propios.forEach((id) => {
+  for (const id of propios) {
     const timer = tesistabCleanupTimers.get(id);
     if (timer) {
       clearTimeout(timer);
       tesistabCleanupTimers.delete(id);
     }
     tesistabSmartRuntimeStore.delete(id);
+    tesistabQuotaRuntimeStore.delete(id);
     delete tesistabJobStore[id];
-  });
+    if (inProcessJobRepository?.delete) {
+      await Promise.resolve(inProcessJobRepository.delete(id));
+    }
+  }
 
   persistTesistabJobsSoon();
   res.json({
@@ -290,37 +405,184 @@ app.delete('/api/tesistab/jobs', (req, res) => {
   });
 });
 
-app.delete('/api/tesistab/jobs/:id', (req, res) => {
-  const job = tesistabJobStore[req.params.id];
+app.delete('/api/tesistab/jobs/:id', async (req, res) => {
+  await requestTesistabJobCancellation(req, res);
+});
+
+app.post(['/api/tesistab/jobs/:id/cancel', '/api/forms/jobs/:id/cancel'], async (req, res) => {
+  await requestTesistabJobCancellation(req, res);
+});
+
+app.post(['/api/tesistab/jobs/:id/pause', '/api/forms/jobs/:id/pause'], async (req, res) => {
+  const job = await getTesistabJob(req.params.id);
   if (!canAccessJob(req, job)) {
     sendApiError(res, 404, 'job_not_found', 'Job not found', req.requestId);
     return;
   }
 
-  job.status = 'cancelled';
-  job.cancelRequested = true;
+  if (!['queued', 'running', 'paused'].includes(job.status)) {
+    sendApiError(res, 409, 'job_not_active', 'Only an active job can be paused', req.requestId);
+    return;
+  }
+
+  job.pauseRequested = true;
+  job.resumeStatus = job.status === 'queued' ? 'queued' : 'running';
+  job.status = 'paused';
   job.updatedAt = new Date().toISOString();
-  tesistabSmartRuntimeStore.delete(req.params.id);
-  scheduleTesistabJobCleanup(req.params.id);
-  persistTesistabJobsSoon();
+  await persistTesistabJob(job);
   res.json({
     requestId: req.requestId,
-    message: `Cancelled ${req.params.id}`,
+    id: job.id,
+    status: job.status,
+    progress: jobProgress(job),
   });
 });
 
-app.post('/api/tesistab/submit', async (req, res) => {
+app.post(['/api/tesistab/jobs/:id/resume', '/api/forms/jobs/:id/resume'], async (req, res) => {
+  const job = await getTesistabJob(req.params.id);
+  if (!canAccessJob(req, job)) {
+    sendApiError(res, 404, 'job_not_found', 'Job not found', req.requestId);
+    return;
+  }
+
+  if (!['paused', 'blocked'].includes(job.status)) {
+    sendApiError(res, 409, 'job_not_paused', 'Only a paused job can be resumed', req.requestId);
+    return;
+  }
+  if (job.recoverableError?.code === 'delivery_uncertain_after_restart') {
+    sendApiError(
+      res,
+      409,
+      'reconciliation_required',
+      'Confirma primero si la respuesta incierta fue aceptada por el formulario.',
+      req.requestId,
+      { retryable: false }
+    );
+    return;
+  }
+
+  job.pauseRequested = false;
+  job.status = job.resumeStatus === 'running' ? 'running' : 'queued';
+  job.resumeStatus = null;
+  job.updatedAt = new Date().toISOString();
+  await persistTesistabJob(job);
+  res.json({
+    requestId: req.requestId,
+    id: job.id,
+    status: job.status,
+    progress: jobProgress(job),
+  });
+});
+
+app.post(['/api/tesistab/jobs/:id/reconcile', '/api/forms/jobs/:id/reconcile'], async (req, res) => {
+  const job = await getTesistabJob(req.params.id);
+  if (!canAccessJob(req, job)) {
+    sendApiError(res, 404, 'job_not_found', 'Job not found', req.requestId);
+    return;
+  }
+  const accepted = req.body?.accepted;
+  if (typeof accepted !== 'boolean') {
+    sendApiError(res, 422, 'invalid_reconciliation', 'accepted debe ser true o false.', req.requestId);
+    return;
+  }
+  const reconciliation = reconcileTesistabDelivery(job, {
+    accepted,
+    index: req.body?.index,
+  });
+  if (!reconciliation.ok) {
+    sendApiError(
+      res,
+      reconciliation.status || 409,
+      reconciliation.code || 'job_not_reconcilable',
+      reconciliation.message || 'El trabajo no tiene una respuesta incierta.',
+      req.requestId
+    );
+    return;
+  }
+  observeFormsEvent('response', { outcome: accepted ? 'accepted' : 'failed' });
+  job.updatedAt = new Date().toISOString();
+  if (reconciliation.terminal) {
+    // El primer settlement dejo estas respuestas reservadas. Cada decision
+    // vuelve a liquidar los totales acumulados; el ledger consume o devuelve
+    // exactamente una sin tocar las que aun siguen inciertas.
+    await settleTesistabJob(job);
+  }
+  await persistTesistabJob(job);
+  res.json({
+    requestId: req.requestId,
+    id: job.id,
+    status: job.status,
+    settlementStatus: job.settlementStatus,
+    progress: jobProgress(job),
+  });
+});
+
+async function requestTesistabJobCancellation(req, res) {
+  const job = await getTesistabJob(req.params.id);
+  if (!canAccessJob(req, job)) {
+    sendApiError(res, 404, 'job_not_found', 'Job not found', req.requestId);
+    return;
+  }
+
+  if (isTerminalJobStatus(job.status)) {
+    res.json({
+      requestId: req.requestId,
+      id: job.id,
+      status: job.status,
+      progress: jobProgress(job),
+    });
+    return;
+  }
+
+  job.cancelRequested = true;
+  job.pauseRequested = false;
+  const canFinishHere = ['queued', 'pending', 'paused', 'blocked'].includes(job.status);
+  job.status = canFinishHere ? 'cancelled' : 'cancelling';
+  if (canFinishHere) job.finishedAt = new Date().toISOString();
+  job.updatedAt = new Date().toISOString();
+  await persistTesistabJob(job);
+  if (canFinishHere) {
+    await settleTesistabJob(job);
+    // La liquidacion cambia refunded/reserved/settlementStatus despues de la
+    // primera escritura de control. Persistirla evita que un GET inmediato o
+    // un reinicio recupere el snapshot anterior con la cuota aun reservada.
+    await persistTesistabJob(job);
+    scheduleTesistabJobCleanup(job.id);
+  }
+  res.status(202).json({
+    requestId: req.requestId,
+    id: job.id,
+    status: job.status,
+    progress: jobProgress(job),
+  });
+}
+
+app.post(['/api/tesistab/submit', '/api/forms/jobs'], async (req, res) => {
+  let pendingReservation = null;
+  let pendingJobId = null;
   try {
+    await ensureJobRepositoryAvailable();
+    const body = req.body || {};
+    const config = body.config && typeof body.config === 'object' && !Array.isArray(body.config)
+      ? body.config
+      : {};
     const {
       formUrl,
-      payload,
-      count,
-      delayMs,
-      jitterMs,
-      autoRandomizeText,
-      smartProfile,
       label,
-    } = req.body || {};
+      idempotencyKey,
+      ownOrAuthorized,
+      structureHash,
+    } = body;
+    // Contrato publico nuevo: requestedResponses + config. Los campos planos
+    // siguen aceptandose durante la ventana de compatibilidad.
+    const payload = body.payload ?? config.payload;
+    const count = body.requestedResponses ?? body.count;
+    const delayMs = config.delayMs ?? body.delayMs;
+    const jitterMs = config.jitterMs ?? body.jitterMs;
+    const autoRandomizeText = config.autoRandomizeText ?? body.autoRandomizeText;
+    const smartProfile = config.smartProfile ?? body.smartProfile;
+    const multiPage = config.multiPage ?? body.multiPage;
+    const effectiveLabel = config.label ?? label;
 
     if (!formUrl || typeof formUrl !== 'string') {
       sendApiError(res, 400, 'invalid_form_url', 'formUrl is required', req.requestId);
@@ -339,11 +601,27 @@ app.post('/api/tesistab/submit', async (req, res) => {
     }
     const normalizedFormUrl = validation.normalizedUrl || formUrl;
 
-    const requestedCount = Number(count) || 1;
+    if (ownOrAuthorized !== true) {
+      sendApiError(
+        res,
+        422,
+        'authorization_required',
+        'Confirma que el formulario es propio o que tienes autorizacion para usarlo',
+        req.requestId
+      );
+      return;
+    }
+
+    const countValidation = validateSubmissionCount(count);
+    if (!countValidation.ok) {
+      sendApiError(res, 422, 'invalid_response_count', countValidation.message, req.requestId);
+      return;
+    }
+
+    const requestedCount = countValidation.value;
     const requestedDelayMs = Number(delayMs);
     const requestedJitterMs = Number(jitterMs);
-
-    const safeCount = clamp(requestedCount, 1, TESISTAB_MAX_SUBMISSIONS_PER_JOB);
+    const safeCount = requestedCount;
     const safeDelayMs = Number.isFinite(requestedDelayMs)
       ? clamp(requestedDelayMs, TESISTAB_MIN_DELAY_MS, TESISTAB_MAX_DELAY_MS)
       : TESISTAB_MIN_DELAY_MS;
@@ -351,39 +629,99 @@ app.post('/api/tesistab/submit', async (req, res) => {
       ? clamp(requestedJitterMs, 0, TESISTAB_MAX_JITTER_MS)
       : 0;
 
-    // Forms funciona por usos: 1 uso = 1 corrida de llenado. Se descuenta
-    // recien aqui, con todas las validaciones aprobadas.
-    const usage = consumeTesistabUse(req);
-    if (!usage.ok) {
-      const usageMessage = usage.reason === 'sin_usos'
-        ? 'No tienes usos de Forms disponibles: solicita una recarga al administrador en TesisTab.'
-        : 'No se pudo verificar tus usos de Forms; intenta de nuevo.';
-      sendApiError(res, 403, 'sin_usos', usageMessage, req.requestId);
+    const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
+    if (idempotencyKey !== undefined && !normalizedIdempotencyKey) {
+      sendApiError(res, 422, 'invalid_idempotency_key', 'idempotencyKey no es valido', req.requestId);
+      return;
+    }
+    const normalizedStructureHash = String(structureHash ?? '').trim().toLowerCase();
+    if (structureHash !== undefined && !/^[a-f0-9]{64}$/.test(normalizedStructureHash)) {
+      sendApiError(res, 422, 'invalid_structure_hash', 'structureHash debe ser SHA-256 hexadecimal', req.requestId);
+      return;
+    }
+
+    const existingJob = findIdempotentJob(req, normalizedIdempotencyKey);
+    if (existingJob) {
+      res.status(202).json(buildJobCreationResponse(existingJob, req.requestId, true));
       return;
     }
 
     const sanitizedSmartProfile = sanitizeSmartProfile(smartProfile);
+    const multiPageValidation = sanitizeMultiPageConfig(multiPage);
+    if (!multiPageValidation.ok) {
+      sendApiError(
+        res,
+        422,
+        'invalid_multi_page',
+        multiPageValidation.message,
+        req.requestId,
+        { field: multiPageValidation.field || 'config.multiPage' }
+      );
+      return;
+    }
+    const sanitizedMultiPage = multiPageValidation.value;
+    const executionPayload = buildExecutionPayload(payload, sanitizedMultiPage);
     const jobId = randomUUID();
+    pendingJobId = jobId;
+    const quota = await reserveTesistabResponses(req, safeCount, {
+      reservationId: jobId,
+      jobId,
+      idempotencyKey: normalizedIdempotencyKey || jobId,
+      requestId: req.requestId,
+      formId: extractGoogleFormId(normalizedFormUrl),
+    });
+    if (!quota.ok) {
+      const status = quota.reason === 'insufficient_responses' || quota.reason === 'sin_usos' ? 403 : 503;
+      const message = status === 403
+        ? `No tienes ${safeCount} respuestas disponibles para este envio.`
+        : 'No se pudo reservar tu saldo de respuestas; intenta de nuevo.';
+      sendApiError(res, status, quota.reason || 'quota_unavailable', message, req.requestId, {
+        requested: safeCount,
+        responsesLeft: quota.responsesLeft ?? null,
+      });
+      return;
+    }
+    pendingReservation = quota;
+
     tesistabJobStore[jobId] = {
       id: jobId,
       requestId: req.requestId,
       // Dueno del job: es lo que impide que otro cliente lo lea o lo cancele.
       ownerEmail: jobOwnerEmail(req),
-      label: typeof label === 'string' ? label.slice(0, 160) : 'Manual run',
+      label: typeof effectiveLabel === 'string' ? effectiveLabel.slice(0, 160) : 'Manual run',
       formUrl: normalizedFormUrl,
+      formId: extractGoogleFormId(normalizedFormUrl),
+      authorizationConfirmed: true,
+      idempotencyKey: normalizedIdempotencyKey || null,
+      structureHash: normalizedStructureHash || null,
       requestedCount,
       count: safeCount,
+      requested: safeCount,
+      reserved: Number.isFinite(Number(quota.reserved)) ? Number(quota.reserved) : safeCount,
+      responsesLeft: quota.responsesLeft ?? null,
+      accepted: 0,
+      refunded: 0,
+      pending: safeCount,
+      reservationId: quota.reservationId || jobId,
+      quotaMode: quota.mode || (inProcessUsageManager ? 'responses' : 'legacy'),
+      settlementStatus: 'reserved',
       delayMs: safeDelayMs,
       jitterMs: safeJitterMs,
       autoRandomizeText: Boolean(autoRandomizeText),
       smartProfile: sanitizedSmartProfile,
+      multiPage: summarizeMultiPageConfig(sanitizedMultiPage),
       distributionPlan: null,
       recentAppliedRules: [],
       status: 'queued',
       cancelRequested: false,
+      pauseRequested: false,
+      batchSize: TESISTAB_JOB_BATCH_SIZE,
+      totalBatches: Math.ceil(safeCount / TESISTAB_JOB_BATCH_SIZE),
+      currentBatch: 0,
       sent: 0,
       failed: 0,
       uncertain: 0,
+      uncertainDeliveries: [],
       errors: [],
       latestResult: null,
       createdAt: new Date().toISOString(),
@@ -394,53 +732,81 @@ app.post('/api/tesistab/submit', async (req, res) => {
     trimTesistabStoreIfNeeded();
     const smartRuntime = buildSmartProfileRuntime(sanitizedSmartProfile, safeCount);
     tesistabSmartRuntimeStore.set(jobId, smartRuntime);
-    tesistabJobStore[jobId].distributionPlan = summarizeSmartRuntimePlan(smartRuntime);
-    persistTesistabJobsSoon();
-
-    runTesistabJob(jobId, payload);
-
-    res.status(202).json({
-      requestId: req.requestId,
-      id: jobId,
-      status: tesistabJobStore[jobId].status,
-      usesLeft: usage.usesLeft,
-      applied: {
-        count: safeCount,
-        delayMs: safeDelayMs,
-        jitterMs: safeJitterMs,
-        autoRandomizeText: Boolean(autoRandomizeText),
-      },
-      warning:
-        requestedCount !== safeCount
-          ? `count was clamped to ${safeCount}`
-          : null,
+    tesistabQuotaRuntimeStore.set(jobId, {
+      apiKey: req.tesistabApiKey || null,
+      reservationId: quota.reservationId || jobId,
     });
+    tesistabJobStore[jobId].distributionPlan = summarizeSmartRuntimePlan(smartRuntime);
+    const createdJob = await createTesistabJobRecord(tesistabJobStore[jobId], executionPayload);
+
+    pendingReservation = null;
+    if (createdJob?.id && createdJob.id !== jobId) {
+      delete tesistabJobStore[jobId];
+      res.status(202).json(buildJobCreationResponse(createdJob, req.requestId, true));
+      return;
+    }
+    if (TESISTAB_EXECUTE_JOBS) {
+      runTesistabJob(jobId, executionPayload).catch((error) => {
+        failTesistabJob(jobId, error);
+      });
+    }
+
+    res.status(202).json(buildJobCreationResponse(tesistabJobStore[jobId], req.requestId, false));
   } catch (error) {
-    console.error(`[${req.requestId}] Error creating TESISTAB job`, error);
-    sendApiError(res, 500, 'job_create_failed', 'Failed to create job', req.requestId);
+    if (pendingReservation) {
+      await releaseTesistabReservation(req, pendingReservation.reservationId || pendingJobId, {
+        jobId: pendingJobId,
+        reason: 'job_create_failed',
+      }).catch(() => null);
+    }
+    formsStructuredLog('error', 'forms.job_create_failed', {
+      requestId: req.requestId,
+      code: safeFormsErrorCode(error),
+    });
+    sendApiError(
+      res,
+      error?.statusCode || 500,
+      error?.code || 'job_create_failed',
+      error?.statusCode === 503 ? 'Forms service is temporarily unavailable' : 'Failed to create job',
+      req.requestId
+    );
   }
 });
 
 // Compatibility endpoint for old extension contract.
 app.post('/api/forms', (req, res) => {
+  res.set('Deprecation', 'true');
+  res.set('Sunset', LEGACY_API_SUNSET_HEADER);
+  pruneCompatForms();
   const data = req.body || {};
   const formId = data.formId || randomUUID();
-  compatStoredForms[formId] = {
+  const storageKey = compatFormStorageKey(req, formId);
+  compatStoredForms.set(storageKey, {
     ...data,
     updatedAt: new Date().toISOString(),
-  };
+    expiresAt: Date.now() + TESISTAB_COMPAT_FORM_TTL_MS,
+  });
+  pruneCompatForms();
 
   res.type('text/plain').send(formId);
 });
 
 // Compatibility endpoint for old extension contract.
 app.post('/api/forms/submit', async (req, res) => {
+  res.set('Deprecation', 'true');
+  res.set('Sunset', LEGACY_API_SUNSET_HEADER);
   try {
+    await ensureJobRepositoryAvailable();
     const body = req.body || {};
     const formUrl = body.url;
     const formId = body.formId;
-    const requestedCount = Number(body.counter) || 1;
-    const safeCount = clamp(requestedCount, 1, TESISTAB_MAX_SUBMISSIONS_PER_JOB);
+    const countValidation = validateSubmissionCount(body.counter);
+    if (!countValidation.ok) {
+      res.status(422).type('text/plain').send(countValidation.message);
+      return;
+    }
+    const requestedCount = countValidation.value;
+    const safeCount = requestedCount;
 
     if (!formUrl || typeof formUrl !== 'string') {
       res.status(400).type('text/plain').send('Missing form url');
@@ -453,6 +819,11 @@ app.post('/api/forms/submit', async (req, res) => {
       return;
     }
     const normalizedFormUrl = validation.normalizedUrl || formUrl;
+    if (body.ownOrAuthorized !== 'true' && body.ownOrAuthorized !== true) {
+      res.status(422).type('text/plain')
+        .send('Confirma que el formulario es propio o que tienes autorizacion para usarlo');
+      return;
+    }
 
     const payload = { ...body };
     delete payload.url;
@@ -462,31 +833,49 @@ app.post('/api/forms/submit', async (req, res) => {
     delete payload.formId;
     delete payload.isSchedule;
     delete payload.dlut;
+    delete payload.ownOrAuthorized;
 
-    if (formId && compatStoredForms[formId]) {
-      Object.assign(payload, compatStoredForms[formId]);
+    pruneCompatForms();
+    const compatData = formId ? compatStoredForms.get(compatFormStorageKey(req, formId)) : null;
+    if (compatData) {
+      Object.assign(payload, compatData);
       delete payload.formId;
       delete payload.updatedAt;
-    }
-
-    // Forms funciona por usos: tambien la ruta de compatibilidad descuenta
-    // 1 uso por corrida.
-    const usage = consumeTesistabUse(req);
-    if (!usage.ok) {
-      res.status(403).type('text/plain')
-        .send('No tienes usos de Forms disponibles: solicita una recarga al administrador en TesisTab.');
-      return;
+      delete payload.expiresAt;
     }
 
     const jobId = randomUUID();
+    const quota = await reserveTesistabResponses(req, safeCount, {
+      reservationId: jobId,
+      jobId,
+      idempotencyKey: jobId,
+      requestId: req.requestId,
+      formId: extractGoogleFormId(normalizedFormUrl),
+    });
+    if (!quota.ok) {
+      res.status(403).type('text/plain')
+        .send('No tienes respuestas suficientes: solicita una recarga en TesisHub.');
+      return;
+    }
+
     tesistabJobStore[jobId] = {
       id: jobId,
       requestId: req.requestId,
       ownerEmail: jobOwnerEmail(req),
       label: `Compat ${formId || 'manual'}`,
       formUrl: normalizedFormUrl,
+      formId: extractGoogleFormId(normalizedFormUrl),
+      authorizationConfirmed: true,
       requestedCount,
       count: safeCount,
+      requested: safeCount,
+      reserved: Number.isFinite(Number(quota.reserved)) ? Number(quota.reserved) : safeCount,
+      accepted: 0,
+      refunded: 0,
+      pending: safeCount,
+      reservationId: quota.reservationId || jobId,
+      quotaMode: quota.mode || (inProcessUsageManager ? 'responses' : 'legacy'),
+      settlementStatus: 'reserved',
       delayMs: TESISTAB_MIN_DELAY_MS,
       jitterMs: 0,
       autoRandomizeText: false,
@@ -494,9 +883,14 @@ app.post('/api/forms/submit', async (req, res) => {
       recentAppliedRules: [],
       status: 'queued',
       cancelRequested: false,
+      pauseRequested: false,
+      batchSize: TESISTAB_JOB_BATCH_SIZE,
+      totalBatches: Math.ceil(safeCount / TESISTAB_JOB_BATCH_SIZE),
+      currentBatch: 0,
       sent: 0,
       failed: 0,
       uncertain: 0,
+      uncertainDeliveries: [],
       errors: [],
       latestResult: null,
       createdAt: new Date().toISOString(),
@@ -507,14 +901,26 @@ app.post('/api/forms/submit', async (req, res) => {
     trimTesistabStoreIfNeeded();
     const smartRuntime = buildSmartProfileRuntime(null, safeCount);
     tesistabSmartRuntimeStore.set(jobId, smartRuntime);
+    tesistabQuotaRuntimeStore.set(jobId, {
+      apiKey: req.tesistabApiKey || null,
+      reservationId: quota.reservationId || jobId,
+    });
     tesistabJobStore[jobId].distributionPlan = summarizeSmartRuntimePlan(smartRuntime);
-    persistTesistabJobsSoon();
+    await createTesistabJobRecord(tesistabJobStore[jobId], payload);
 
-    runTesistabJob(jobId, payload);
+    if (TESISTAB_EXECUTE_JOBS) {
+      runTesistabJob(jobId, payload).catch((error) => {
+        failTesistabJob(jobId, error);
+      });
+    }
     res.type('text/plain').send(`/_submit?id=${jobId}`);
   } catch (error) {
-    console.error(`[${req.requestId}] Compat submit error`, error);
-    res.status(500).type('text/plain').send('Failed to submit form');
+    formsStructuredLog('error', 'forms.compat_submit_failed', {
+      requestId: req.requestId,
+      code: safeFormsErrorCode(error),
+    });
+    res.status(error?.statusCode || 500).type('text/plain')
+      .send(error?.statusCode === 503 ? 'Forms service is temporarily unavailable' : 'Failed to submit form');
   }
 });
 
@@ -538,13 +944,14 @@ async function postData(formUrl, body) {
     return {
       status: response.status,
       data,
+      retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
     };
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function runTesistabJob(jobId, payload) {
+async function runTesistabJob(jobId, executionPayload) {
   const job = tesistabJobStore[jobId];
   if (!job) {
     return;
@@ -553,12 +960,42 @@ async function runTesistabJob(jobId, payload) {
 
   job.status = 'running';
   job.updatedAt = new Date().toISOString();
-  persistTesistabJobsSoon();
+  await persistTesistabJob(job);
 
-  for (let i = 0; i < job.count; i++) {
+  const alreadyProcessed = Math.max(
+    0,
+    Math.floor(Number(job.currentIndex ?? job.cursor ?? 0) || 0),
+    Math.floor(Number(job.sent || 0) + Number(job.failed || 0)),
+  );
+  if (Number.isSafeInteger(Number(job.inFlightIndex))
+    && Number(job.inFlightIndex) >= alreadyProcessed) {
+    job.status = 'blocked';
+    job.pauseRequested = true;
+    recordUncertainDelivery(job, Number(job.inFlightIndex), 'restart');
+    job.recoverableError = {
+      code: 'delivery_uncertain_after_restart',
+      message: 'El proceso se reinicio durante un envio. Confirma si esa respuesta fue aceptada antes de continuar.',
+      retryable: false,
+    };
+    job.updatedAt = new Date().toISOString();
+    await persistTesistabJob(job);
+    return;
+  }
+  for (let i = alreadyProcessed; i < job.count; i++) {
+    await refreshTesistabJobControl(job);
+    job.currentBatch = Math.floor(i / Math.max(1, job.batchSize || TESISTAB_JOB_BATCH_SIZE)) + 1;
+
+    while (job.pauseRequested && !job.cancelRequested) {
+      job.status = 'paused';
+      job.updatedAt = new Date().toISOString();
+      await persistTesistabJob(job);
+      await wait(250);
+      await refreshTesistabJobControl(job);
+    }
+
     if (job.cancelRequested) {
       job.status = 'cancelled';
-      persistTesistabJobsSoon();
+      await persistTesistabJob(job);
       break;
     }
 
@@ -567,13 +1004,15 @@ async function runTesistabJob(jobId, payload) {
         smartRuntime.currentAttempt = i + 1;
         smartRuntime.currentProfileType = null;
       }
-      const attemptPayload = buildAttemptPayload(
-        payload,
+      const routedAttempt = buildRoutedAttemptPayload(
+        executionPayload,
         i,
         job.autoRandomizeText,
         job.smartProfile,
         smartRuntime
       );
+      const attemptPayload = routedAttempt.payload;
+      job.currentRouteId = routedAttempt.routeId || null;
       if (smartRuntime && Array.isArray(smartRuntime.audit)) {
         job.recentAppliedRules = smartRuntime.audit.slice(-40);
       }
@@ -585,20 +1024,69 @@ async function runTesistabJob(jobId, payload) {
         message: 'Sending request to Google Forms...',
         preview: null,
       };
+      job.inFlightIndex = i;
       job.updatedAt = new Date().toISOString();
-      persistTesistabJobsSoon();
+      await persistTesistabJob(job);
 
-      const response = await withTimeout(
-        postData(job.formUrl, encodedPayload),
-        TESISTAB_REQUEST_TIMEOUT_MS,
-        'Google request timeout'
-      );
-      const inspection = inspectGoogleResponse(response);
+      const { response, inspection } = await submitWithRetry(job, encodedPayload);
+
+      if (inspection.pause) {
+        job.inFlightIndex = null;
+        job.status = 'blocked';
+        job.pauseRequested = true;
+        job.resumeStatus = 'queued';
+        job.recoverableError = {
+          code: inspection.code
+            || (response.status === 429 ? 'provider_rate_limited' : 'provider_verification_required'),
+          message: inspection.message,
+          retryable: true,
+        };
+        job.latestResult = {
+          at: i + 1,
+          status: response.status,
+          code: inspection.code || null,
+          message: inspection.message,
+          preview: inspection.preview,
+        };
+        job.updatedAt = new Date().toISOString();
+        await persistTesistabJob(job);
+        observeFormsEvent('job_blocked', {
+          reason: response.status === 429 ? 'rate_limited' : 'provider_verification',
+        });
+        return;
+      }
+
+      if (inspection.fatal) {
+        job.inFlightIndex = null;
+        job.failed += 1;
+        job.currentIndex = i + 1;
+        job.cursor = i + 1;
+        job.status = 'failed';
+        job.finishedAt = new Date().toISOString();
+        job.errors.push({ at: i + 1, code: inspection.code || 'provider_rejected', message: inspection.message });
+        job.latestResult = {
+          at: i + 1,
+          status: response.status,
+          code: inspection.code || 'provider_rejected',
+          message: inspection.message,
+          preview: inspection.preview,
+        };
+        job.pending = Math.max(0, job.count - job.sent - job.failed);
+        await settleTesistabJob(job);
+        await persistTesistabJob(job);
+        observeFormsEvent('response', { outcome: 'failed' });
+        scheduleTesistabJobCleanup(jobId);
+        return;
+      }
 
       if (inspection.ok) {
         job.sent += 1;
+        observeFormsEvent('response', {
+          outcome: inspection.uncertain ? 'uncertain' : 'accepted',
+        });
       } else {
         job.failed += 1;
+        observeFormsEvent('response', { outcome: 'failed' });
         job.errors.push({
           at: i + 1,
           message: inspection.message,
@@ -609,45 +1097,151 @@ async function runTesistabJob(jobId, payload) {
       }
 
       if (inspection.uncertain) {
-        job.uncertain += 1;
+        recordUncertainDelivery(job, i, 'provider_response');
       }
+      job.inFlightIndex = null;
+      job.accepted = Math.max(0, job.sent - job.uncertain);
 
       job.latestResult = {
         at: i + 1,
         status: response.status,
+        code: inspection.code || null,
         message: inspection.message,
         preview: inspection.preview,
       };
     } catch (error) {
-      job.failed += 1;
-      job.errors.push({
-        at: i + 1,
-        message: error?.message || 'Request failed',
-      });
-      job.latestResult = {
-        at: i + 1,
-        status: null,
-        message: error?.message || 'Request failed',
-        preview: null,
+      // Un timeout o corte puede ocurrir despues de que Google acepto la
+      // respuesta. Avanzar el cursor o reintentar automaticamente arriesgaria
+      // duplicarla; se conserva inFlightIndex y se exige conciliacion.
+      job.status = 'blocked';
+      job.pauseRequested = true;
+      recordUncertainDelivery(job, Number(job.inFlightIndex), 'transport_error');
+      job.recoverableError = {
+        code: 'delivery_uncertain_after_restart',
+        message: error?.message || 'No se pudo confirmar si Google acepto la respuesta.',
+        retryable: false,
       };
-      if (job.errors.length > 15) {
-        job.errors.shift();
-      }
+      job.updatedAt = new Date().toISOString();
+      await persistTesistabJob(job);
+      observeFormsEvent('job_blocked', { reason: 'delivery_uncertain' });
+      return;
     }
 
     job.updatedAt = new Date().toISOString();
-    persistTesistabJobsSoon();
-    await wait(job.delayMs + randomJitter(job.jitterMs));
+    job.currentIndex = i + 1;
+    job.cursor = i + 1;
+    job.pending = Math.max(0, job.count - job.sent - job.failed);
+    await persistTesistabJob(job);
+    if (i + 1 < job.count && !job.cancelRequested) {
+      await wait(job.delayMs + randomJitter(job.jitterMs));
+    }
   }
 
-  if (job.status !== 'cancelled') {
+  if (job.cancelRequested) {
+    job.status = 'cancelled';
+  } else if (job.status !== 'cancelled') {
     job.status = job.failed > 0 ? 'completed_with_errors' : 'completed';
   }
   job.finishedAt = new Date().toISOString();
   job.updatedAt = new Date().toISOString();
+  job.pending = Math.max(0, job.count - job.sent - job.failed);
+  await settleTesistabJob(job);
   scheduleTesistabJobCleanup(jobId);
   tesistabSmartRuntimeStore.delete(jobId);
-  persistTesistabJobsSoon();
+  tesistabQuotaRuntimeStore.delete(jobId);
+  await persistTesistabJob(job);
+}
+
+function parseRetryAfterMs(value) {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
+
+async function submitWithRetry(job, encodedPayload) {
+  return retryProviderSubmission(job, encodedPayload, {
+    send: postData,
+    sleep: wait,
+    persist: persistTesistabJob,
+    retries: TESISTAB_PROVIDER_RETRIES,
+  });
+}
+
+async function retryProviderSubmission(job, encodedPayload, dependencies = {}) {
+  const send = dependencies.send || postData;
+  const sleep = dependencies.sleep || wait;
+  const persist = dependencies.persist || persistTesistabJob;
+  const retries = Math.max(1, Number(dependencies.retries || TESISTAB_PROVIDER_RETRIES));
+  let response;
+  let inspection;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    response = await withTimeout(
+      send(job.formUrl, encodedPayload),
+      TESISTAB_REQUEST_TIMEOUT_MS,
+      'Google request timeout'
+    );
+    inspection = inspectGoogleResponse(response);
+    if (!inspection.retryable || attempt + 1 >= retries) break;
+    const backoffMs = computeProviderBackoffMs(response, attempt);
+    job.retryAttempts = Number(job.retryAttempts || 0) + 1;
+    job.latestResult = {
+      at: Number(job.currentIndex || 0) + 1,
+      status: response.status,
+      message: `${inspection.message}; reintento ${attempt + 2}/${retries}`,
+      preview: null,
+    };
+    await persist(job);
+    await sleep(backoffMs);
+  }
+  return { response, inspection };
+}
+
+function computeProviderBackoffMs(response, attempt) {
+  if (
+    response?.retryAfterMs !== null
+    && response?.retryAfterMs !== undefined
+    && Number.isFinite(Number(response.retryAfterMs))
+    && Number(response.retryAfterMs) >= 0
+  ) {
+    return Number(response.retryAfterMs);
+  }
+  return Math.min(30_000, 750 * (2 ** Math.max(0, Number(attempt) || 0)));
+}
+
+async function failTesistabJob(jobId, error) {
+  const job = tesistabJobStore[jobId];
+  if (!job || isTerminalJobStatus(job.status)) {
+    return;
+  }
+  // La pérdida del lease significa que otra instancia es (o será) la única
+  // autorizada para continuar. El worker anterior no debe marcar el job como
+  // fallido ni liquidar/reembolsar una reserva que ya no le pertenece.
+  if (error?.code === 'lease_lost') {
+    tesistabSmartRuntimeStore.delete(jobId);
+    tesistabQuotaRuntimeStore.delete(jobId);
+    return;
+  }
+  job.status = 'failed';
+  job.finishedAt = new Date().toISOString();
+  job.updatedAt = job.finishedAt;
+  job.latestResult = {
+    at: Number(job.sent || 0) + Number(job.failed || 0),
+    status: null,
+    message: error?.message || 'Job execution failed',
+    preview: null,
+  };
+  job.errors = Array.isArray(job.errors) ? job.errors : [];
+  job.errors.push({
+    at: job.latestResult.at,
+    message: job.latestResult.message,
+  });
+  await settleTesistabJob(job);
+  tesistabSmartRuntimeStore.delete(jobId);
+  tesistabQuotaRuntimeStore.delete(jobId);
+  scheduleTesistabJobCleanup(jobId);
+  await persistTesistabJob(job);
 }
 
 function validateTesistabFormUrl(formUrl) {
@@ -708,6 +1302,24 @@ function toUrlEncodedPayload(payload) {
 }
 
 function buildAttemptPayload(payload, attemptIndex, autoRandomizeText, smartProfile, smartRuntime) {
+  return buildAttemptPayloadWithContext(
+    payload,
+    attemptIndex,
+    autoRandomizeText,
+    smartProfile,
+    smartRuntime,
+    null
+  );
+}
+
+function buildAttemptPayloadWithContext(
+  payload,
+  attemptIndex,
+  autoRandomizeText,
+  smartProfile,
+  smartRuntime,
+  attemptContext,
+) {
   const attemptPayload = {};
   const profileType = resolveAttemptProfileType(smartProfile, smartRuntime);
 
@@ -730,7 +1342,13 @@ function buildAttemptPayload(payload, attemptIndex, autoRandomizeText, smartProf
     let value = applyRandomTokens(String(rawValue), attemptIndex);
 
     if (smartProfile?.enabled && key.startsWith('entry.')) {
-      value = applySmartProfileValue(key, value, smartProfile, smartRuntime, profileType);
+      const cache = attemptContext?.profileValues;
+      if (cache?.has(key)) {
+        value = cache.get(key);
+      } else {
+        value = applySmartProfileValue(key, value, smartProfile, smartRuntime, profileType);
+        cache?.set(key, value);
+      }
     }
 
     if (autoRandomizeText && shouldAutoRandomizeField(key, value)) {
@@ -741,6 +1359,111 @@ function buildAttemptPayload(payload, attemptIndex, autoRandomizeText, smartProf
   }
 
   return attemptPayload;
+}
+
+function buildRoutedAttemptPayload(
+  executionPayload,
+  attemptIndex,
+  autoRandomizeText,
+  smartProfile,
+  smartRuntime,
+) {
+  const isEnvelope = executionPayload?.__tesistabExecutionVersion === 2
+    && executionPayload.basePayload
+    && executionPayload.multiPage?.routes?.length;
+  if (!isEnvelope) {
+    return {
+      payload: buildAttemptPayload(
+        executionPayload,
+        attemptIndex,
+        autoRandomizeText,
+        smartProfile,
+        smartRuntime
+      ),
+      routeId: null,
+    };
+  }
+
+  const { basePayload, multiPage } = executionPayload;
+  const routes = multiPage.routes;
+  const candidate = routes[Math.abs(attemptIndex) % routes.length];
+  const attemptContext = { profileValues: new Map() };
+  const firstPayload = buildAttemptPayloadWithContext(
+    composeMultiPageRoutePayload(basePayload, candidate, routes),
+    attemptIndex,
+    autoRandomizeText,
+    smartProfile,
+    smartRuntime,
+    attemptContext,
+  );
+  const selected = selectMultiPageRoute(routes, firstPayload, candidate.id);
+  if (!selected || selected.id === candidate.id) {
+    alignPayloadWithRouteConditions(firstPayload, selected || candidate);
+    return { payload: firstPayload, routeId: (selected || candidate).id };
+  }
+
+  const selectedPayload = buildAttemptPayloadWithContext(
+    composeMultiPageRoutePayload(basePayload, selected, routes),
+    attemptIndex,
+    autoRandomizeText,
+    smartProfile,
+    smartRuntime,
+    attemptContext,
+  );
+  alignPayloadWithRouteConditions(selectedPayload, selected);
+  return { payload: selectedPayload, routeId: selected.id };
+}
+
+function composeMultiPageRoutePayload(basePayload, route, routes) {
+  const routedEntryKeys = new Set(
+    routes.flatMap((item) => Object.keys(item.payload || {}).filter((key) => key.startsWith('entry.')))
+  );
+  const shared = {};
+  for (const [key, value] of Object.entries(basePayload || {})) {
+    if (!key.startsWith('entry.') || !routedEntryKeys.has(key)) {
+      shared[key] = value;
+    }
+  }
+  // El payload de una ruta es completo para ese recorrido e incluye sus
+  // tokens pageHistory/partialResponse. Nunca se agregan entries de otra ruta.
+  return { ...shared, ...(route?.payload || {}) };
+}
+
+function selectMultiPageRoute(routes, payload, candidateId) {
+  const matches = routes.filter((route) => (
+    route.when?.all?.length > 0 && routeMatchesPayload(route, payload)
+  ));
+  const candidateMatch = matches.find((route) => route.id === candidateId);
+  if (candidateMatch) return candidateMatch;
+  if (matches.length) return matches[0];
+  const candidate = routes.find((route) => route.id === candidateId);
+  if (candidate && !candidate.when?.all?.length) return candidate;
+  return routes.find((route) => route.fallback)
+    || candidate
+    || routes[0]
+    || null;
+}
+
+function routeMatchesPayload(route, payload) {
+  return (route.when?.all || []).every((condition) => {
+    const actual = payload?.[condition.field];
+    const actualValues = (Array.isArray(actual) ? actual : [actual]).map((value) => String(value ?? ''));
+    const expected = condition.operator === 'in'
+      ? condition.values
+      : [condition.value];
+    return actualValues.some((value) => expected.includes(value));
+  });
+}
+
+function alignPayloadWithRouteConditions(payload, route) {
+  // Si el perfil produjo una opcion para la que no se capturo una rama, se
+  // usa la ruta candidata/fallback y se alinea solo su selector. Asi nunca se
+  // envian pageHistory y respuestas de una rama junto a la opcion de otra.
+  for (const condition of route?.when?.all || []) {
+    if (routeMatchesPayload({ when: { all: [condition] } }, payload)) continue;
+    const value = condition.operator === 'in' ? condition.values[0] : condition.value;
+    if (value !== undefined) payload[condition.field] = value;
+  }
 }
 
 function resolveAttemptProfileType(smartProfile, smartRuntime) {
@@ -840,6 +1563,217 @@ function shouldAutoRandomizeField(key, value) {
   }
 
   return value.length >= 8 && /\s/.test(value);
+}
+
+function sanitizeMultiPageConfig(raw) {
+  if (raw === undefined || raw === null || raw === false) {
+    return { ok: true, value: null };
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, field: 'config.multiPage', message: 'multiPage debe ser un objeto' };
+  }
+
+  // Los clientes 1.5 solo enviaban pages como metadato y un payload plano.
+  // Se mantiene ese contrato como una ruta unica durante la compatibilidad.
+  if (!Array.isArray(raw.routes)) {
+    return { ok: true, value: null };
+  }
+  if (!raw.routes.length || raw.routes.length > TESISTAB_MAX_MULTIPAGE_ROUTES) {
+    return {
+      ok: false,
+      field: 'config.multiPage.routes',
+      message: `multiPage.routes debe contener entre 1 y ${TESISTAB_MAX_MULTIPAGE_ROUTES} rutas`,
+    };
+  }
+
+  const ids = new Set();
+  const routes = [];
+  let fallbackCount = 0;
+  for (let index = 0; index < raw.routes.length; index += 1) {
+    const source = raw.routes[index];
+    const prefix = `config.multiPage.routes[${index}]`;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return { ok: false, field: prefix, message: `${prefix} debe ser un objeto` };
+    }
+
+    const id = String(source.id || `route-${index + 1}`).trim();
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id) || ids.has(id)) {
+      return {
+        ok: false,
+        field: `${prefix}.id`,
+        message: `${prefix}.id debe ser unico y usar solo letras, numeros, _ o -`,
+      };
+    }
+    ids.add(id);
+
+    const payloadResult = sanitizeMultiPageRoutePayload(source.payload, `${prefix}.payload`);
+    if (!payloadResult.ok) return payloadResult;
+    const whenResult = sanitizeMultiPageRouteConditions(source.when, `${prefix}.when`);
+    if (!whenResult.ok) return whenResult;
+    const pagesResult = sanitizeMultiPageRoutePages(source.pages, `${prefix}.pages`);
+    if (!pagesResult.ok) return pagesResult;
+
+    const fallback = Boolean(source.fallback);
+    if (fallback) fallbackCount += 1;
+    routes.push({
+      id,
+      fallback,
+      when: whenResult.value,
+      payload: payloadResult.value,
+      pages: pagesResult.value,
+    });
+  }
+
+  if (fallbackCount > 1) {
+    return {
+      ok: false,
+      field: 'config.multiPage.routes',
+      message: 'Solo una ruta puede declararse como fallback',
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      version: 1,
+      guidedCapture: Boolean(raw.guidedCapture),
+      routes,
+    },
+  };
+}
+
+function sanitizeMultiPageRoutePayload(raw, field) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, field, message: `${field} debe ser un objeto` };
+  }
+  const entries = Object.entries(raw);
+  if (!entries.length || entries.length > TESISTAB_MAX_ROUTE_PAYLOAD_FIELDS) {
+    return {
+      ok: false,
+      field,
+      message: `${field} debe contener entre 1 y ${TESISTAB_MAX_ROUTE_PAYLOAD_FIELDS} campos`,
+    };
+  }
+
+  const output = {};
+  for (const [key, value] of entries) {
+    if (!shouldIncludePayloadField(key)) {
+      return { ok: false, field: `${field}.${key}`, message: `Campo de ruta no permitido: ${key}` };
+    }
+    const sanitized = sanitizeRouteFieldValue(value);
+    if (!sanitized.ok) {
+      return { ok: false, field: `${field}.${key}`, message: sanitized.message };
+    }
+    output[key] = sanitized.value;
+  }
+  return { ok: true, value: output };
+}
+
+function sanitizeRouteFieldValue(value) {
+  const values = Array.isArray(value) ? value : [value];
+  if (!values.length || values.length > 50) {
+    return { ok: false, message: 'Un campo de ruta admite entre 1 y 50 valores' };
+  }
+  const normalized = [];
+  for (const item of values) {
+    if (!['string', 'number', 'boolean'].includes(typeof item)) {
+      return { ok: false, message: 'Los valores de ruta deben ser texto, numero o booleano' };
+    }
+    const text = String(item);
+    if (text.length > 20_000) {
+      return { ok: false, message: 'Un valor de ruta no puede superar 20000 caracteres' };
+    }
+    normalized.push(text);
+  }
+  return { ok: true, value: Array.isArray(value) ? normalized : normalized[0] };
+}
+
+function sanitizeMultiPageRouteConditions(raw, field) {
+  if (raw === undefined || raw === null) return { ok: true, value: { all: [] } };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.all)) {
+    return { ok: false, field, message: `${field}.all debe ser un arreglo` };
+  }
+  if (raw.all.length > TESISTAB_MAX_ROUTE_CONDITIONS) {
+    return {
+      ok: false,
+      field: `${field}.all`,
+      message: `Una ruta admite como maximo ${TESISTAB_MAX_ROUTE_CONDITIONS} condiciones`,
+    };
+  }
+
+  const all = [];
+  const fields = new Set();
+  for (let index = 0; index < raw.all.length; index += 1) {
+    const condition = raw.all[index];
+    const conditionField = `${field}.all[${index}]`;
+    const entry = String(condition?.field || '');
+    if (!/^entry\.\d+$/.test(entry) || fields.has(entry)) {
+      return {
+        ok: false,
+        field: `${conditionField}.field`,
+        message: 'Cada condicion debe usar un campo entry.N unico',
+      };
+    }
+    const operator = condition?.operator === 'in' ? 'in' : 'equals';
+    const rawValues = operator === 'in' ? condition.values : [condition?.value];
+    if (!Array.isArray(rawValues) || !rawValues.length || rawValues.length > 24) {
+      return {
+        ok: false,
+        field: conditionField,
+        message: 'La condicion debe incluir entre 1 y 24 valores',
+      };
+    }
+    const values = rawValues.map((value) => String(value ?? '').slice(0, 1000));
+    fields.add(entry);
+    all.push(operator === 'in'
+      ? { field: entry, operator, values }
+      : { field: entry, operator, value: values[0] });
+  }
+  return { ok: true, value: { all } };
+}
+
+function sanitizeMultiPageRoutePages(raw, field) {
+  if (raw === undefined || raw === null) return { ok: true, value: [] };
+  if (!Array.isArray(raw) || raw.length > TESISTAB_MAX_MULTIPAGE_PAGES_PER_ROUTE) {
+    return {
+      ok: false,
+      field,
+      message: `Una ruta admite hasta ${TESISTAB_MAX_MULTIPAGE_PAGES_PER_ROUTE} paginas`,
+    };
+  }
+  return {
+    ok: true,
+    value: raw.map((page, index) => ({
+      index,
+      pageKey: String(page?.pageKey || `page-${index + 1}`).slice(0, 240),
+      entries: Array.from(new Set(
+        Array.isArray(page?.entries)
+          ? page.entries.filter((entry) => /^entry\.\d+$/.test(String(entry))).slice(0, 300)
+          : []
+      )),
+    })),
+  };
+}
+
+function summarizeMultiPageConfig(config) {
+  if (!config?.routes?.length) return null;
+  return {
+    version: config.version,
+    guidedCapture: Boolean(config.guidedCapture),
+    routeCount: config.routes.length,
+    selectorEntries: Array.from(new Set(
+      config.routes.flatMap((route) => route.when.all.map((condition) => condition.field))
+    )),
+  };
+}
+
+function buildExecutionPayload(basePayload, multiPage) {
+  if (!multiPage?.routes?.length) return basePayload;
+  return {
+    __tesistabExecutionVersion: 2,
+    basePayload,
+    multiPage,
+  };
 }
 
 function sanitizeSmartProfile(raw) {
@@ -1672,6 +2606,20 @@ function inspectGoogleResponse(response) {
   const body = normalizeForMatch(bodyRaw);
   const preview = summarizeHtmlBody(bodyRaw);
 
+  if (
+    body.includes('captcha') || body.includes('unusual traffic')
+    || body.includes('trafico inusual') || body.includes('automated queries')
+  ) {
+    return {
+      ok: false,
+      uncertain: false,
+      pause: true,
+      code: 'provider_verification_required',
+      message: 'Google solicito una verificacion manual; el trabajo fue pausado',
+      preview: null,
+    };
+  }
+
   // Los chequeos de texto de mas abajo (restricciones conocidas, o Google
   // devolviendo la pagina del formulario en vez de una confirmacion) son
   // validos sin importar el status HTTP: antes se saltaban por completo
@@ -1698,6 +2646,10 @@ function inspectGoogleResponse(response) {
     return {
       ok: false,
       uncertain: false,
+      fatal: true,
+      code: body.includes('not accepting responses') || body.includes('ya no acepta respuestas')
+        ? 'form_closed'
+        : 'form_restriction',
       message: 'Rejected by Google Form restrictions',
       preview,
     };
@@ -1705,9 +2657,12 @@ function inspectGoogleResponse(response) {
 
   if (body.includes('name="fbzx"') && body.includes('name="fvv"')) {
     const returnedMessage = inferReturnedFormMessage(body, preview);
+    const structureChanged = /missing required answers|instead of confirmation/i.test(returnedMessage);
     return {
       ok: false,
       uncertain: false,
+      fatal: true,
+      code: structureChanged ? 'form_structure_changed' : 'form_restriction',
       message: `${returnedMessage}${status >= 400 ? ` (HTTP ${status})` : ''}`,
       preview,
     };
@@ -1717,6 +2672,10 @@ function inspectGoogleResponse(response) {
     return {
       ok: false,
       uncertain: false,
+      retryable: status === 429 || status >= 500,
+      pause: status === 429,
+      fatal: status !== 429 && status < 500,
+      code: status === 429 ? 'provider_rate_limited' : status >= 500 ? 'provider_unavailable' : 'provider_rejected',
       message: `HTTP ${status}`,
       preview,
     };
@@ -1807,6 +2766,336 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function validateSubmissionCount(value) {
+  const numeric = Number(value);
+  if (!Number.isSafeInteger(numeric) || numeric < 1) {
+    return {
+      ok: false,
+      message: 'La cantidad de respuestas debe ser un entero positivo',
+    };
+  }
+  if (TESISTAB_MAX_SUBMISSIONS_PER_JOB && numeric > TESISTAB_MAX_SUBMISSIONS_PER_JOB) {
+    return {
+      ok: false,
+      message: `La cantidad supera el limite operativo de ${TESISTAB_MAX_SUBMISSIONS_PER_JOB}`,
+    };
+  }
+  return { ok: true, value: numeric };
+}
+
+function normalizeIdempotencyKey(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const normalized = String(value).trim();
+  if (normalized.length < 8 || normalized.length > 160 || !/^[a-zA-Z0-9_.:-]+$/.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function findIdempotentJob(req, idempotencyKey) {
+  if (!idempotencyKey) {
+    return null;
+  }
+  return Object.values(tesistabJobStore).find(
+    (job) => job.idempotencyKey === idempotencyKey && canAccessJob(req, job)
+  ) || null;
+}
+
+function extractGoogleFormId(formUrl) {
+  try {
+    const match = new URL(formUrl).pathname.match(/\/forms\/d\/(?:e\/)?([^/]+)/);
+    return match?.[1] || null;
+  } catch {
+    return null;
+  }
+}
+
+function publicJobCode(value) {
+  const code = String(value || '');
+  return /^[a-z0-9_.-]{1,64}$/i.test(code) ? code : null;
+}
+
+function publicJobMessage(code, status) {
+  const messages = {
+    delivery_uncertain_after_restart: 'Hay una respuesta pendiente de conciliacion.',
+    provider_verification_required: 'Google solicito verificacion manual; el trabajo esta pausado.',
+    provider_rate_limited: 'Google limito temporalmente los envios.',
+    provider_unavailable: 'Google Forms no esta disponible temporalmente.',
+    provider_rejected: 'Google rechazo la respuesta.',
+    form_closed: 'El formulario ya no acepta respuestas.',
+    form_restriction: 'El formulario tiene una restriccion incompatible.',
+    form_structure_changed: 'La estructura del formulario cambio.',
+  };
+  if (code && messages[code]) return messages[code];
+  if (Number(status) >= 400) return `El proveedor respondio HTTP ${Number(status)}.`;
+  return 'Estado de entrega actualizado.';
+}
+
+function publicTesistabJob(job) {
+  const latestCode = publicJobCode(job?.latestResult?.code);
+  const recoverableCode = publicJobCode(job?.recoverableError?.code);
+  const publicErrors = Array.isArray(job?.errors)
+    ? job.errors.slice(-15).map((error) => {
+      const code = publicJobCode(error?.code);
+      return {
+        at: Number.isFinite(Number(error?.at)) ? Number(error.at) : null,
+        code,
+        message: publicJobMessage(code, null),
+      };
+    })
+    : [];
+  return {
+    id: String(job?.id || ''),
+    status: String(job?.status || 'unknown'),
+    label: typeof job?.label === 'string' ? job.label.slice(0, 160) : null,
+    formId: typeof job?.formId === 'string' ? job.formId.slice(0, 180) : null,
+    authorizationConfirmed: Boolean(job?.authorizationConfirmed),
+    structureHash: /^[a-f0-9]{64}$/i.test(String(job?.structureHash || ''))
+      ? String(job.structureHash)
+      : null,
+    multiPage: job?.multiPage && typeof job.multiPage === 'object' ? {
+      version: Math.max(1, Number(job.multiPage.version) || 1),
+      guidedCapture: Boolean(job.multiPage.guidedCapture),
+      routeCount: Math.max(0, Number(job.multiPage.routeCount) || 0),
+      selectorEntries: Array.isArray(job.multiPage.selectorEntries)
+        ? job.multiPage.selectorEntries
+          .map((entry) => String(entry))
+          .filter((entry) => /^entry\.\d+$/.test(entry))
+          .slice(0, TESISTAB_MAX_ROUTE_CONDITIONS)
+        : [],
+    } : null,
+    requestedCount: Math.max(0, Number(job?.requestedCount ?? job?.count) || 0),
+    count: Math.max(0, Number(job?.count) || 0),
+    requested: Math.max(0, Number(job?.requested ?? job?.count) || 0),
+    reserved: Math.max(0, Number(job?.reserved) || 0),
+    responsesLeft: job?.responsesLeft ?? null,
+    accepted: Math.max(0, Number(job?.accepted) || 0),
+    refunded: Math.max(0, Number(job?.refunded) || 0),
+    pending: Math.max(0, Number(job?.pending) || 0),
+    settlementStatus: typeof job?.settlementStatus === 'string' ? job.settlementStatus : null,
+    delayMs: Math.max(0, Number(job?.delayMs) || 0),
+    jitterMs: Math.max(0, Number(job?.jitterMs) || 0),
+    autoRandomizeText: Boolean(job?.autoRandomizeText),
+    pauseRequested: Boolean(job?.pauseRequested),
+    cancelRequested: Boolean(job?.cancelRequested),
+    batchSize: Math.max(1, Number(job?.batchSize) || TESISTAB_JOB_BATCH_SIZE),
+    totalBatches: Math.max(0, Number(job?.totalBatches) || 0),
+    currentBatch: Math.max(0, Number(job?.currentBatch) || 0),
+    sent: Math.max(0, Number(job?.sent) || 0),
+    failed: Math.max(0, Number(job?.failed) || 0),
+    uncertain: Math.max(0, Number(job?.uncertain) || 0),
+    retryAttempts: Math.max(0, Number(job?.retryAttempts) || 0),
+    recoverableError: recoverableCode ? {
+      code: recoverableCode,
+      message: publicJobMessage(recoverableCode, null),
+      retryable: Boolean(job?.recoverableError?.retryable),
+    } : null,
+    latestResult: job?.latestResult ? {
+      at: Number.isFinite(Number(job.latestResult.at)) ? Number(job.latestResult.at) : null,
+      status: Number.isFinite(Number(job.latestResult.status)) ? Number(job.latestResult.status) : null,
+      code: latestCode,
+      message: publicJobMessage(latestCode, job.latestResult.status),
+    } : null,
+    errors: publicErrors,
+    createdAt: job?.createdAt ?? null,
+    updatedAt: job?.updatedAt ?? null,
+    finishedAt: job?.finishedAt ?? null,
+    progress: jobProgress(job),
+  };
+}
+
+function jobProgress(job) {
+  const processed = Math.min(
+    Number(job?.count || 0),
+    Number(job?.sent || 0) + Number(job?.failed || 0)
+  );
+  const requested = Number(job?.count || 0);
+  return {
+    requested,
+    processed,
+    accepted: Math.max(0, Number(job?.accepted ?? (job?.sent - job?.uncertain)) || 0),
+    failed: Math.max(0, Number(job?.failed) || 0),
+    uncertain: Math.max(0, Number(job?.uncertain) || 0),
+    pending: Math.max(0, requested - processed),
+    percent: requested > 0 ? Math.round((processed / requested) * 10_000) / 100 : 0,
+    batch: Number(job?.currentBatch || 0),
+    totalBatches: Number(job?.totalBatches || 0),
+  };
+}
+
+function recordUncertainDelivery(job, index, source) {
+  const normalizedIndex = Number(index);
+  const deliveries = Array.isArray(job.uncertainDeliveries)
+    ? job.uncertainDeliveries.filter((item) => Number.isSafeInteger(Number(item?.index)))
+    : [];
+  const alreadyRecorded = Number.isSafeInteger(normalizedIndex)
+    && deliveries.some((item) => Number(item.index) === normalizedIndex);
+  if (!alreadyRecorded) {
+    deliveries.push({
+      index: Number.isSafeInteger(normalizedIndex) ? normalizedIndex : null,
+      source: ['provider_response', 'transport_error', 'watchdog_timeout', 'restart'].includes(source)
+        ? source
+        : 'unknown',
+    });
+    job.uncertain = Number(job.uncertain || 0) + 1;
+  }
+  job.uncertainDeliveries = deliveries;
+}
+
+function reconcileTesistabDelivery(job, decision = {}) {
+  if (typeof decision.accepted !== 'boolean') {
+    return {
+      ok: false,
+      status: 422,
+      code: 'invalid_reconciliation',
+      message: 'accepted debe ser true o false.',
+    };
+  }
+  const requestedIndex = decision.index === undefined || decision.index === null
+    ? null
+    : Number(decision.index);
+  if (requestedIndex !== null && !Number.isSafeInteger(requestedIndex)) {
+    return {
+      ok: false,
+      status: 422,
+      code: 'invalid_reconciliation_index',
+      message: 'index debe ser un entero valido.',
+    };
+  }
+
+  const blocked = job.status === 'blocked'
+    && job.recoverableError?.code === 'delivery_uncertain_after_restart'
+    && Number.isSafeInteger(Number(job.inFlightIndex));
+  const terminal = isTerminalJobStatus(job.status)
+    && Number(job.uncertain || 0) > 0
+    && job.settlementStatus === 'reconciliation_pending';
+  if (!blocked && !terminal) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'job_not_reconcilable',
+      message: 'El trabajo no tiene una respuesta incierta.',
+    };
+  }
+
+  const deliveries = Array.isArray(job.uncertainDeliveries)
+    ? [...job.uncertainDeliveries]
+    : [];
+  const fallbackIndex = blocked ? Number(job.inFlightIndex) : null;
+  const targetIndex = requestedIndex ?? deliveries[0]?.index ?? fallbackIndex;
+  if (blocked && targetIndex !== Number(job.inFlightIndex)) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'reconciliation_index_mismatch',
+      message: 'El indice no corresponde al envio bloqueado.',
+    };
+  }
+  if (requestedIndex !== null && deliveries.length > 0
+    && !deliveries.some((item) => Number(item?.index) === requestedIndex)) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'uncertain_delivery_not_found',
+      message: 'La respuesta incierta indicada ya fue conciliada o no existe.',
+    };
+  }
+
+  const removeAt = deliveries.findIndex((item) => Number(item?.index) === Number(targetIndex));
+  let reconciledDelivery = null;
+  if (removeAt >= 0) [reconciledDelivery] = deliveries.splice(removeAt, 1);
+  else if (deliveries.length > 0 && requestedIndex === null) reconciledDelivery = deliveries.shift();
+  job.uncertainDeliveries = deliveries;
+  job.uncertain = Math.max(0, Number(job.uncertain || 0) - 1);
+
+  if (blocked) {
+    if (decision.accepted) {
+      job.sent = Number(job.sent || 0) + 1;
+      job.accepted = Number(job.accepted || 0) + 1;
+    } else {
+      job.failed = Number(job.failed || 0) + 1;
+    }
+    job.currentIndex = Number(job.inFlightIndex) + 1;
+    job.cursor = job.currentIndex;
+    job.inFlightIndex = null;
+    job.recoverableError = null;
+    job.pauseRequested = false;
+    job.status = 'queued';
+    return { ok: true, terminal: false, index: targetIndex };
+  }
+
+  // Las entregas `provider_response` ya estaban incluidas en `sent`; las de
+  // restart/watchdog/transport no. La conciliacion conserva sent + failed como
+  // el total procesado en ambos casos, incluso si el job se cancelo bloqueado.
+  const alreadyCountedAsSent = !reconciledDelivery
+    || reconciledDelivery.source === 'provider_response';
+  if (decision.accepted) {
+    job.accepted = Number(job.accepted || 0) + 1;
+    if (!alreadyCountedAsSent) job.sent = Number(job.sent || 0) + 1;
+  } else {
+    if (alreadyCountedAsSent) job.sent = Math.max(0, Number(job.sent || 0) - 1);
+    job.failed = Number(job.failed || 0) + 1;
+  }
+  return { ok: true, terminal: true, index: targetIndex };
+}
+
+function isTerminalJobStatus(status) {
+  return [
+    'completed',
+    'completed_with_errors',
+    'cancelled',
+    'failed',
+  ].includes(status);
+}
+
+function buildJobCreationResponse(job, requestId, idempotentReplay) {
+  return {
+    requestId,
+    id: job.id,
+    status: job.status,
+    idempotentReplay: Boolean(idempotentReplay),
+    requested: job.requested ?? job.count,
+    reserved: job.reserved ?? job.count,
+    accepted: job.accepted ?? 0,
+    refunded: job.refunded ?? 0,
+    responsesLeft: job.responsesLeft ?? null,
+    applied: {
+      count: job.count,
+      delayMs: job.delayMs,
+      jitterMs: job.jitterMs,
+      autoRandomizeText: Boolean(job.autoRandomizeText),
+      batchSize: job.batchSize || TESISTAB_JOB_BATCH_SIZE,
+      multiPageRoutes: Number(job.multiPage?.routeCount || 0),
+    },
+    warning: null,
+  };
+}
+
+function compatFormStorageKey(req, formId) {
+  const owner = jobOwnerEmail(req) || (req.tesistabPrivileged ? 'operator' : 'anonymous');
+  return `${owner}:${String(formId || '')}`;
+}
+
+function pruneCompatForms() {
+  const now = Date.now();
+  for (const [key, value] of compatStoredForms.entries()) {
+    if (!value || Number(value.expiresAt || 0) <= now) {
+      compatStoredForms.delete(key);
+    }
+  }
+
+  if (compatStoredForms.size <= TESISTAB_MAX_COMPAT_FORMS) {
+    return;
+  }
+
+  const oldest = [...compatStoredForms.entries()]
+    .sort((a, b) => Number(a[1]?.expiresAt || 0) - Number(b[1]?.expiresAt || 0))
+    .slice(0, compatStoredForms.size - TESISTAB_MAX_COMPAT_FORMS);
+  oldest.forEach(([key]) => compatStoredForms.delete(key));
+}
+
 function randomJitter(maxJitterMs) {
   if (!maxJitterMs) {
     return 0;
@@ -1837,6 +3126,10 @@ function withTimeout(promise, timeoutMs, message) {
   });
 }
 
+function nextTesistabCleanupDelay(expiresAt, now = Date.now()) {
+  return Math.min(Math.max(0, Number(expiresAt) - Number(now)), MAX_TIMER_DELAY_MS);
+}
+
 function scheduleTesistabJobCleanup(jobId) {
   if (!jobId || TESISTAB_FINISHED_JOB_TTL_MS <= 0) {
     return;
@@ -1847,29 +3140,44 @@ function scheduleTesistabJobCleanup(jobId) {
     clearTimeout(existing);
   }
 
-  const timer = setTimeout(() => {
-    tesistabCleanupTimers.delete(jobId);
+  const current = tesistabJobStore[jobId];
+  const finishedAt = Date.parse(current?.finishedAt || current?.updatedAt || '');
+  const expiresAt = (Number.isFinite(finishedAt) ? finishedAt : Date.now())
+    + TESISTAB_FINISHED_JOB_TTL_MS;
 
-    const job = tesistabJobStore[jobId];
-    if (!job) {
-      return;
-    }
+  const arm = () => {
+    const delay = nextTesistabCleanupDelay(expiresAt);
+    const timer = setTimeout(() => {
+      if (Date.now() < expiresAt) {
+        arm();
+        return;
+      }
+      tesistabCleanupTimers.delete(jobId);
 
-    if (job.status === 'running' || job.status === 'queued') {
-      return;
-    }
+      const job = tesistabJobStore[jobId];
+      if (!job || ['running', 'queued', 'paused', 'cancelling'].includes(job.status)) {
+        return;
+      }
 
-    delete tesistabJobStore[jobId];
-    tesistabSmartRuntimeStore.delete(jobId);
-    persistTesistabJobsSoon();
-  }, TESISTAB_FINISHED_JOB_TTL_MS);
+      delete tesistabJobStore[jobId];
+      tesistabSmartRuntimeStore.delete(jobId);
+      tesistabQuotaRuntimeStore.delete(jobId);
+      persistTesistabJobsSoon();
+    }, delay);
+    timer.unref?.();
+    tesistabCleanupTimers.set(jobId, timer);
+  };
 
-  tesistabCleanupTimers.set(jobId, timer);
+  arm();
 }
 
 function sendApiError(res, status, code, message, requestId, details = null) {
   res.status(status).json({
     requestId,
+    code,
+    message,
+    ...(details?.field ? { field: details.field } : {}),
+    retryable: details?.retryable ?? (status === 429 || status >= 500),
     error: {
       code,
       message,
@@ -1886,19 +3194,181 @@ app.setKeyValidator = (fn) => {
   inProcessKeyValidator = typeof fn === 'function' ? fn : null;
 };
 
-// Consumidor de usos inyectado por el anfitrion: Forms funciona por usos y
-// 1 uso = 1 corrida de llenado (job). Devuelve { ok, usesLeft, reason }.
-// Sin consumidor configurado (modo legado/desarrollo) no se descuenta nada.
+// Contrato de cuota por respuesta. Los callbacks pueden ser sync o async y el
+// anfitrion debe hacerlos idempotentes por reservationId/jobId:
+// reserve(apiKey, requested, meta)
+// settle(apiKey, reservationId, { accepted, failed, uncertain, cancelled, ... })
+// release(apiKey, reservationId, meta)
+let inProcessUsageManager = null;
+app.setUsageManager = (manager) => {
+  if (
+    manager &&
+    typeof manager.reserve === 'function' &&
+    typeof manager.settle === 'function' &&
+    typeof manager.release === 'function'
+  ) {
+    inProcessUsageManager = manager;
+    return;
+  }
+  inProcessUsageManager = null;
+};
+
+// Observabilidad desacoplada: Forms no conoce la implementación de métricas
+// del proceso anfitrión y nunca entrega cuerpos, URLs ni respuestas.
+let inProcessMetricsObserver = null;
+app.setMetricsObserver = (fn) => {
+  inProcessMetricsObserver = typeof fn === 'function' ? fn : null;
+};
+const observeFormsEvent = (event, fields = {}) => {
+  try {
+    inProcessMetricsObserver?.(event, fields);
+  } catch {
+    // Una métrica nunca debe cambiar el resultado ni detener un trabajo.
+  }
+};
+
+// Adaptador temporal del contrato anterior: consume una corrida completa al
+// crear el trabajo. No puede liquidar respuestas individuales ni reembolsar.
 let inProcessUsageConsumer = null;
 app.setUsageConsumer = (fn) => {
   inProcessUsageConsumer = typeof fn === 'function' ? fn : null;
 };
 
-function consumeTesistabUse(req) {
-  if (!inProcessUsageConsumer || !req.tesistabApiKey) {
-    return { ok: true, usesLeft: null };
+async function reserveTesistabResponses(req, requested, meta) {
+  if (inProcessUsageManager && req.tesistabApiKey) {
+    const result = await Promise.resolve(
+      inProcessUsageManager.reserve(req.tesistabApiKey, requested, meta)
+    );
+    return {
+      ...(result || {}),
+      ok: Boolean(result?.ok),
+      reserved: Number.isFinite(Number(result?.reserved)) ? Number(result.reserved) : requested,
+      reservationId: result?.reservationId || meta.reservationId,
+      mode: 'responses',
+    };
   }
-  return inProcessUsageConsumer(req.tesistabApiKey);
+
+  if (inProcessUsageConsumer && req.tesistabApiKey) {
+    const result = await Promise.resolve(inProcessUsageConsumer(req.tesistabApiKey));
+    return {
+      ...(result || {}),
+      ok: Boolean(result?.ok),
+      reserved: requested,
+      reservationId: meta.reservationId,
+      responsesLeft: result?.usesLeft ?? null,
+      mode: 'legacy_run',
+    };
+  }
+
+  return {
+    ok: true,
+    reserved: requested,
+    reservationId: meta.reservationId,
+    responsesLeft: null,
+    mode: 'unlimited',
+  };
+}
+
+async function releaseTesistabReservation(req, reservationId, meta) {
+  if (!inProcessUsageManager || !req.tesistabApiKey || !reservationId) {
+    return { ok: true, refunded: 0, mode: 'legacy_or_unlimited' };
+  }
+
+  return Promise.resolve(
+    inProcessUsageManager.release(req.tesistabApiKey, reservationId, meta)
+  );
+}
+
+async function settleTesistabJob(job, dependencies = {}) {
+  const manager = dependencies.manager || inProcessUsageManager;
+  const sleep = dependencies.sleep || wait;
+  const retries = Math.max(1, Number(dependencies.retries || TESISTAB_SETTLEMENT_RETRIES));
+  const runtime = dependencies.runtime || tesistabQuotaRuntimeStore.get(job.id) || {};
+  const accepted = Math.max(0, Number(job.accepted ?? (job.sent - job.uncertain)) || 0);
+  const uncertain = Math.max(0, Number(job.uncertain) || 0);
+  const failed = Math.max(0, Number(job.failed) || 0);
+  const processed = Math.min(job.count, Number(job.sent || 0) + failed);
+  const cancelled = Math.max(0, Number(job.count || 0) - processed);
+  const expectedRefund = failed + cancelled;
+
+  job.accepted = accepted;
+  job.pending = cancelled;
+  job.settlementStatus = manager ? 'settling' : 'legacy';
+
+  if (!manager
+    || (!runtime.apiKey && !manager.supportsCredentiallessSettlement)) {
+    job.refunded = 0;
+    job.settlementStatus = job.quotaMode === 'unlimited' ? 'not_required' : 'legacy_unavailable';
+    return;
+  }
+
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    job.settlementAttempts = Number(job.settlementAttempts || 0) + 1;
+    try {
+      const result = await Promise.resolve(
+        manager.settle(runtime.apiKey || '', runtime.reservationId || job.reservationId, {
+          jobId: job.id,
+          requested: job.count,
+          accepted,
+          failed,
+          uncertain,
+          cancelled,
+        })
+      );
+      if (!result?.ok) {
+        const settlementError = new Error('quota_settlement_failed');
+        settlementError.code = result?.reason || 'quota_settlement_failed';
+        throw settlementError;
+      }
+      job.refunded = Number.isFinite(Number(result.refunded))
+        ? Number(result.refunded)
+        : expectedRefund;
+      // En el job `reserved` significa lo que queda pendiente de reconciliar,
+      // no el total reservado global de la cuenta.
+      job.reserved = Number.isFinite(Number(result.reservedForJob ?? result.reserved))
+        ? Number(result.reservedForJob ?? result.reserved)
+        : uncertain;
+      job.responsesLeft = result.responsesLeft ?? null;
+      job.settlementStatus = uncertain > 0 ? 'reconciliation_pending' : 'settled';
+      job.settlementError = null;
+      return;
+    } catch (error) {
+      job.settlementError = safeFormsErrorCode(error);
+      if (attempt + 1 < retries) {
+        await sleep(TESISTAB_SETTLEMENT_RETRY_DELAY_MS * (2 ** attempt));
+        continue;
+      }
+      job.refunded = 0;
+      job.settlementStatus = 'pending_retry';
+      formsStructuredLog('warn', 'forms.settlement_pending_retry', {
+        jobId: job.id,
+        code: job.settlementError,
+        attempts: retries,
+      });
+    }
+  }
+}
+
+async function retryPendingTesistabSettlements(dependencies = {}) {
+  const manager = dependencies.manager || inProcessUsageManager;
+  if (!manager) return 0;
+  const jobs = dependencies.jobs || await listTesistabJobs({ limit: TESISTAB_MAX_STORED_JOBS });
+  let settled = 0;
+  for (const job of jobs) {
+    if (!job?.id || job.settlementStatus !== 'pending_retry' || !isTerminalJobStatus(job.status)) {
+      continue;
+    }
+    if (tesistabSettlementRetrying.has(job.id)) continue;
+    tesistabSettlementRetrying.add(job.id);
+    try {
+      await settleTesistabJob(job, dependencies);
+      await (dependencies.persist || persistTesistabJob)(job);
+      if (job.settlementStatus !== 'pending_retry') settled += 1;
+    } finally {
+      tesistabSettlementRetrying.delete(job.id);
+    }
+  }
+  return settled;
 }
 
 async function validateTesistabKey(apiKey) {
@@ -1930,6 +3400,7 @@ async function validateTesistabKey(apiKey) {
         reason: body.reason || null,
         email: body.email || null,
         plan: body.plan || null,
+        formsResponses: body.formsResponses ?? body.responsesLeft ?? null,
       };
     }
   } catch (error) {
@@ -1986,6 +3457,12 @@ function requireTesistabApiKey(req, res, next) {
           email: result.email,
           plan: result.plan,
           usesLeft: result.usesLeft !== undefined ? result.usesLeft : null,
+          formsResponses:
+            result.formsResponses !== undefined
+              ? result.formsResponses
+              : result.responsesLeft !== undefined
+                ? result.responsesLeft
+                : null,
         };
         next();
         return;
@@ -2029,6 +3506,218 @@ function tesistabRateLimiter(req, res, next) {
   next();
 }
 
+async function ensureJobRepositoryAvailable() {
+  await jobRepositoryReady;
+  if (process.env.NODE_ENV === 'production' && !inProcessJobRepository) {
+    const error = new Error('Durable Forms job repository is not configured');
+    error.statusCode = 503;
+    error.code = 'job_repository_unavailable';
+    throw error;
+  }
+}
+
+async function createTesistabJobRecord(job, payload) {
+  if (!inProcessJobRepository) {
+    persistTesistabJobsSoon();
+    return job;
+  }
+  const created = await Promise.resolve(
+    inProcessJobRepository.create({ ...job }, {
+      payload,
+      workerId: TESISTAB_WORKER_ID,
+      leaseMs: TESISTAB_JOB_LEASE_MS,
+    })
+  );
+  const storedJob = created?.job || created;
+  if (storedJob?.id) {
+    if (storedJob.id !== job.id) delete tesistabJobStore[job.id];
+    tesistabJobStore[storedJob.id] = { ...(storedJob.id === job.id ? job : {}), ...storedJob };
+    return tesistabJobStore[storedJob.id];
+  }
+  return tesistabJobStore[job.id];
+}
+
+async function persistTesistabJob(job) {
+  if (!job) return;
+  if (!inProcessJobRepository) {
+    persistTesistabJobsSoon();
+    return;
+  }
+  // Las acciones del API (pausar/cancelar) son control-plane y no poseen el
+  // lease del worker. Unicamente la instancia que reclamo el trabajo puede
+  // renovar y escribir como worker. Esto evita que el API intente usar su
+  // propio TESISTAB_WORKER_ID y deje la accion solo en memoria.
+  const ownsLease = TESISTAB_EXECUTE_JOBS
+    && job.leaseOwner === TESISTAB_WORKER_ID;
+  if (!ownsLease && typeof inProcessJobRepository.control === 'function') {
+    const terminal = isTerminalJobStatus(job.status);
+    await Promise.resolve(inProcessJobRepository.control(job.id, {
+      status: job.status,
+      jobPatch: {
+        pauseRequested: Boolean(job.pauseRequested),
+        cancelRequested: Boolean(job.cancelRequested),
+        resumeStatus: job.resumeStatus ?? null,
+        recoverableError: job.recoverableError ?? null,
+        updatedAt: job.updatedAt,
+        ...(job.status === 'blocked' ? {
+          inFlightIndex: job.inFlightIndex,
+          currentIndex: job.currentIndex,
+          cursor: job.cursor,
+          sent: job.sent,
+          accepted: job.accepted,
+          failed: job.failed,
+          uncertain: job.uncertain,
+          uncertainDeliveries: job.uncertainDeliveries ?? [],
+        } : {}),
+        ...(job.status === 'queued' && job.inFlightIndex == null ? {
+          inFlightIndex: null,
+          currentIndex: job.currentIndex,
+          cursor: job.cursor,
+          sent: job.sent,
+          accepted: job.accepted,
+          failed: job.failed,
+          uncertain: job.uncertain,
+          uncertainDeliveries: job.uncertainDeliveries ?? [],
+          pending: job.pending,
+        } : {}),
+        ...(terminal ? {
+          finishedAt: job.finishedAt,
+          settlementStatus: job.settlementStatus,
+          accepted: job.accepted,
+          sent: job.sent,
+          failed: job.failed,
+          uncertain: job.uncertain,
+          uncertainDeliveries: job.uncertainDeliveries ?? [],
+          refunded: job.refunded,
+          reserved: job.reserved,
+          responsesLeft: job.responsesLeft,
+          pending: job.pending,
+        } : {}),
+      },
+    }));
+    return;
+  }
+  const persisted = await Promise.resolve(
+    inProcessJobRepository.update({ ...job }, {
+      ...(ownsLease ? {
+        workerId: TESISTAB_WORKER_ID,
+        leaseMs: TESISTAB_JOB_LEASE_MS,
+      } : {}),
+    })
+  );
+  if (!persisted && ownsLease) {
+    const error = new Error(`Lease perdido para el trabajo Forms ${job.id}`);
+    error.code = 'lease_lost';
+    error.retryable = true;
+    throw error;
+  }
+}
+
+async function getTesistabJob(id) {
+  if (!inProcessJobRepository && tesistabJobStore[id]) {
+    return tesistabJobStore[id];
+  }
+  if (!inProcessJobRepository) {
+    return null;
+  }
+  await jobRepositoryReady;
+  const result = await Promise.resolve(inProcessJobRepository.get(id));
+  const job = result?.job || result || null;
+  if (job?.id) {
+    tesistabJobStore[job.id] = job;
+  }
+  return job;
+}
+
+async function refreshTesistabJobControl(job) {
+  if (!inProcessJobRepository || !job?.id) return job;
+  const stored = await Promise.resolve(inProcessJobRepository.get(job.id));
+  const current = stored?.job || stored || null;
+  if (!current) return job;
+  job.pauseRequested = Boolean(current.pauseRequested || current.status === 'paused');
+  job.cancelRequested = Boolean(
+    current.cancelRequested || ['cancelling', 'cancelled'].includes(current.status)
+  );
+  return job;
+}
+
+async function listTesistabJobs(filters = {}) {
+  if (!inProcessJobRepository) {
+    return Object.values(tesistabJobStore);
+  }
+  await jobRepositoryReady;
+  const result = await Promise.resolve(inProcessJobRepository.list(filters));
+  const jobs = Array.isArray(result) ? result : Array.isArray(result?.jobs) ? result.jobs : [];
+  jobs.forEach((job) => {
+    if (job?.id) tesistabJobStore[job.id] = job;
+  });
+  return jobs;
+}
+
+async function hydrateJobsFromRepository() {
+  try {
+    const result = await Promise.resolve(
+      inProcessJobRepository.list({ limit: TESISTAB_MAX_STORED_JOBS })
+    );
+    const jobs = Array.isArray(result) ? result : Array.isArray(result?.jobs) ? result.jobs : [];
+    jobs.forEach((job) => {
+      if (job?.id) tesistabJobStore[job.id] = job;
+    });
+  } catch (error) {
+    formsStructuredLog('error', 'forms.jobs_hydration_failed', {
+      code: safeFormsErrorCode(error),
+    });
+    throw error;
+  }
+}
+
+function startJobClaimLoop() {
+  if (jobClaimTimer || !inProcessJobRepository) {
+    return;
+  }
+  const claim = () => claimDurableTesistabJobs().catch((error) => {
+    formsStructuredLog('error', 'forms.job_claim_failed', {
+      code: safeFormsErrorCode(error),
+    });
+  });
+  claim();
+  jobClaimTimer = setInterval(claim, Math.max(1000, Math.floor(TESISTAB_JOB_LEASE_MS / 3)));
+  jobClaimTimer.unref?.();
+}
+
+async function claimDurableTesistabJobs() {
+  if (!inProcessJobRepository) return;
+  for (let claimedCount = 0; claimedCount < 5; claimedCount++) {
+    const claimed = await Promise.resolve(
+      inProcessJobRepository.claim({
+        workerId: TESISTAB_WORKER_ID,
+        leaseMs: TESISTAB_JOB_LEASE_MS,
+      })
+    );
+    const job = claimed?.job || null;
+    if (!job?.id || !claimed?.payload) {
+      return;
+    }
+    tesistabJobStore[job.id] = job;
+    tesistabSmartRuntimeStore.set(
+      job.id,
+      buildSmartProfileRuntime(job.smartProfile || null, job.count)
+    );
+    tesistabQuotaRuntimeStore.set(job.id, {
+      apiKey: claimed.apiKey || null,
+      reservationId: job.reservationId || job.id,
+    });
+    runTesistabJob(job.id, claimed.payload).catch((error) => {
+      failTesistabJob(job.id, error).catch((persistError) => {
+        formsStructuredLog('error', 'forms.claimed_job_persist_failed', {
+          jobId: job.id,
+          code: safeFormsErrorCode(persistError),
+        });
+      });
+    });
+  }
+}
+
 function bootstrapTesistabStore() {
   if (!TESISTAB_PERSIST_JOBS) {
     return;
@@ -2057,8 +3746,8 @@ function bootstrapTesistabStore() {
         return;
       }
 
-      if (job.status === 'running' || job.status === 'queued') {
-        job.status = 'completed_with_errors';
+      if (['running', 'queued', 'paused', 'cancelling'].includes(job.status)) {
+        job.status = 'failed';
         job.failed = Number(job.failed || 0) + 1;
         job.updatedAt = new Date().toISOString();
         job.finishedAt = new Date().toISOString();
@@ -2068,6 +3757,7 @@ function bootstrapTesistabStore() {
           message: 'Recovered stale job after restart',
           preview: null,
         };
+        job.settlementStatus = 'reconciliation_pending';
       }
 
       tesistabJobStore[job.id] = job;
@@ -2077,9 +3767,13 @@ function bootstrapTesistabStore() {
     });
 
     trimTesistabStoreIfNeeded();
-    console.log(`Loaded ${Object.keys(tesistabJobStore).length} persisted TESISTAB jobs`);
+    formsStructuredLog('info', 'forms.local_jobs_loaded', {
+      count: Object.keys(tesistabJobStore).length,
+    });
   } catch (error) {
-    console.warn(`Failed to load persisted TESISTAB jobs: ${error.message}`);
+    formsStructuredLog('warn', 'forms.local_jobs_load_failed', {
+      code: safeFormsErrorCode(error),
+    });
   }
 }
 
@@ -2090,10 +3784,21 @@ function startTesistabWatchdog() {
   // require('./server.js') sin levantar el servidor (como un test unitario
   // de una funcion pura) se queda colgado para siempre esperando que el
   // proceso termine, aunque los tests ya hayan pasado.
-  setInterval(() => {
-    const now = Date.now();
+  const run = () => runTesistabWatchdogCycle().catch((error) => {
+    formsStructuredLog('error', 'forms.watchdog_failed', {
+      code: safeFormsErrorCode(error),
+    });
+  });
+  setInterval(run, 5000).unref();
+}
 
-    Object.values(tesistabJobStore).forEach((job) => {
+async function runTesistabWatchdogCycle(dependencies = {}) {
+    const now = Number(dependencies.now ?? Date.now());
+    const staleJobs = [];
+    const blockedUncertainJobs = [];
+    const jobsToInspect = dependencies.watchdogJobs || Object.values(tesistabJobStore);
+
+    jobsToInspect.forEach((job) => {
       if (!job || job.status !== 'running') {
         return;
       }
@@ -2109,6 +3814,30 @@ function startTesistabWatchdog() {
       const expectedCycleMs =
         Number(job.delayMs || 0) + Number(job.jitterMs || 0) + TESISTAB_REQUEST_TIMEOUT_MS;
       if (now - updatedAtMs < expectedCycleMs + TESISTAB_STALE_JOB_AFTER_MS) {
+        return;
+      }
+
+      if (Number.isSafeInteger(Number(job.inFlightIndex))) {
+        // El timeout puede ocurrir despues de que Google haya aceptado el POST.
+        // Reembolsarlo como failed permitiria gastar de nuevo la misma cuota y
+        // falsearia el conteo. Se conserva reservado hasta decision explicita.
+        recordUncertainDelivery(job, Number(job.inFlightIndex), 'watchdog_timeout');
+        job.status = 'blocked';
+        job.pauseRequested = true;
+        job.recoverableError = {
+          code: 'delivery_uncertain_after_restart',
+          message: 'El envio quedo sin confirmacion. Confirma si fue aceptado antes de continuar.',
+          retryable: false,
+        };
+        job.updatedAt = new Date(now).toISOString();
+        job.latestResult = {
+          at: Number(job.inFlightIndex) + 1,
+          status: null,
+          code: 'delivery_uncertain_after_restart',
+          message: 'Watchdog detected an unconfirmed in-flight delivery',
+          preview: null,
+        };
+        blockedUncertainJobs.push(job);
         return;
       }
 
@@ -2133,22 +3862,37 @@ function startTesistabWatchdog() {
       }
 
       scheduleTesistabJobCleanup(job.id);
-      persistTesistabJobsSoon();
+      staleJobs.push(job);
     });
-  }, 5000).unref();
+
+    for (const job of blockedUncertainJobs) {
+      await (dependencies.persist || persistTesistabJob)(job);
+    }
+    for (const job of staleJobs) {
+      await settleTesistabJob(job, dependencies);
+      await (dependencies.persist || persistTesistabJob)(job);
+    }
+    await retryPendingTesistabSettlements(dependencies);
 }
 
 function registerShutdownHooks() {
-  const flushAndExit = (exitCode) => {
+  const flush = () => {
     persistTesistabJobsNow();
-    process.exit(exitCode);
   };
 
-  process.once('SIGINT', () => flushAndExit(0));
-  process.once('SIGTERM', () => flushAndExit(0));
-  process.once('beforeExit', () => {
-    persistTesistabJobsNow();
-  });
+  // Montado dentro de la API no captura las senales: el proceso anfitrion
+  // coordina el cierre. Standalone conserva un cierre directo y predecible.
+  if (require.main === module) {
+    process.once('SIGINT', () => {
+      flush();
+      process.exit(0);
+    });
+    process.once('SIGTERM', () => {
+      flush();
+      process.exit(0);
+    });
+  }
+  process.once('beforeExit', flush);
 }
 
 function trimTesistabStoreIfNeeded() {
@@ -2165,11 +3909,30 @@ function trimTesistabStoreIfNeeded() {
   keys.forEach((id) => {
     if (!toKeep.has(id)) {
       delete tesistabJobStore[id];
+      tesistabSmartRuntimeStore.delete(id);
+      tesistabQuotaRuntimeStore.delete(id);
     }
   });
 }
 
 function persistTesistabJobsSoon() {
+  if (inProcessJobRepository) {
+    if (saveTesistabJobsTimer) {
+      clearTimeout(saveTesistabJobsTimer);
+    }
+    saveTesistabJobsTimer = setTimeout(() => {
+      saveTesistabJobsTimer = null;
+      Promise.allSettled(
+        Object.values(tesistabJobStore).map((job) => persistTesistabJob(job))
+      ).then((results) => {
+        const failed = results.filter((result) => result.status === 'rejected');
+        if (failed.length) {
+          formsStructuredLog('error', 'forms.jobs_persist_failed', { count: failed.length });
+        }
+      });
+    }, 250);
+    return;
+  }
   if (!TESISTAB_PERSIST_JOBS) {
     return;
   }
@@ -2185,14 +3948,23 @@ function persistTesistabJobsSoon() {
 }
 
 function persistTesistabJobsNow() {
+  if (inProcessJobRepository || !TESISTAB_PERSIST_JOBS) {
+    return;
+  }
   try {
     const jobs = Object.values(tesistabJobStore)
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
       .slice(0, TESISTAB_MAX_STORED_JOBS);
 
-    fs.writeFileSync(tesistabStorageFilePath, JSON.stringify(jobs, null, 2), 'utf8');
+    const parentDir = path.dirname(tesistabStorageFilePath);
+    fs.mkdirSync(parentDir, { recursive: true });
+    const temporaryPath = `${tesistabStorageFilePath}.${process.pid}.tmp`;
+    fs.writeFileSync(temporaryPath, JSON.stringify(jobs, null, 2), 'utf8');
+    fs.renameSync(temporaryPath, tesistabStorageFilePath);
   } catch (error) {
-    console.warn(`Failed to persist TESISTAB jobs: ${error.message}`);
+    formsStructuredLog('warn', 'forms.local_jobs_persist_failed', {
+      code: safeFormsErrorCode(error),
+    });
   }
 }
 
@@ -2253,7 +4025,7 @@ app.get('/_submit', (req, res) => {
               document.getElementById('line').textContent =
                 'Status: ' + job.status + ' | Sent: ' + job.sent + ' | Failed: ' + job.failed + ' | Uncertain: ' + job.uncertain;
               document.getElementById('raw').textContent = JSON.stringify(job.latestResult || {}, null, 2);
-              if (job.status === 'queued' || job.status === 'running') {
+              if (['queued', 'running', 'paused', 'cancelling'].includes(job.status)) {
                 setTimeout(tick, 1000);
               }
             } catch (err) {
@@ -2280,7 +4052,10 @@ app.get('*', (req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error(`[${req.requestId}] Unhandled server error`, err);
+  formsStructuredLog('error', 'forms.unhandled_error', {
+    requestId: req.requestId,
+    code: safeFormsErrorCode(err),
+  });
   sendApiError(res, 500, 'internal_error', 'Unexpected server error', req.requestId);
 });
 
@@ -2289,7 +4064,7 @@ app.use((err, req, res, next) => {
 if (require.main === module) {
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
-    console.log('Tutorica Forms escuchando en el puerto', PORT);
+    formsStructuredLog('info', 'forms.service_started', { port: Number(PORT) });
   });
 }
 
@@ -2300,5 +4075,16 @@ if (require.main === module) {
 // export a un objeto rompería esa integracion en produccion. Solo para tests.
 app.inspectGoogleResponse = inspectGoogleResponse;
 app.inferReturnedFormMessage = inferReturnedFormMessage;
+app.sanitizeMultiPageConfig = sanitizeMultiPageConfig;
+app.buildRoutedAttemptPayload = buildRoutedAttemptPayload;
+app.parseRetryAfterMs = parseRetryAfterMs;
+app.computeProviderBackoffMs = computeProviderBackoffMs;
+app.retryProviderSubmission = retryProviderSubmission;
+app.settleTesistabJob = settleTesistabJob;
+app.retryPendingTesistabSettlements = retryPendingTesistabSettlements;
+app.runTesistabWatchdogCycle = runTesistabWatchdogCycle;
+app.recordUncertainDelivery = recordUncertainDelivery;
+app.reconcileTesistabDelivery = reconcileTesistabDelivery;
+app.nextTesistabCleanupDelay = nextTesistabCleanupDelay;
 
 module.exports = app;

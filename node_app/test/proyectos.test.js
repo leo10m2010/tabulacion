@@ -131,6 +131,29 @@ describe("ciclo de vida del proyecto", () => {
     assert.equal(lista.body.proyectos[0].nombre, "Proyecto A");
     assert.ok(lista.body.limite > 0, "informa el límite del plan");
   });
+
+  test("una edición con versión antigua devuelve 409 y no pisa cambios nuevos", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "versionado@test.local");
+    const creado = await api("POST", "/proyectos", token, {
+      nombre: "Versión inicial", instrumento: INSTRUMENTO,
+    });
+    const { id, version } = creado.body.proyecto;
+    assert.equal(version, 1);
+
+    const actualizado = await api("PATCH", `/proyectos/${id}`, token, {
+      nombre: "Cambio vigente", version,
+    });
+    assert.equal(actualizado.status, 200);
+    assert.equal(actualizado.body.proyecto.version, 2);
+
+    const obsoleto = await api("PATCH", `/proyectos/${id}`, token, {
+      nombre: "Cambio obsoleto", version,
+    });
+    assert.equal(obsoleto.status, 409);
+    assert.equal(obsoleto.body.code, "PROJECT_VERSION_CONFLICT");
+    assert.equal((await api("GET", `/proyectos/${id}`, token)).body.proyecto.nombre, "Cambio vigente");
+  });
 });
 
 describe("aislamiento entre usuarios", () => {
@@ -208,6 +231,28 @@ describe("validación del instrumento", () => {
     const r = await api("POST", "/proyectos", token, { nombre: "Baremo absurdo", instrumento: malo });
     assert.equal(r.status, 400);
     assert.match(r.body.error, /entre 0 y 100/);
+  });
+
+  test("los items inversos se normalizan y persisten por posicion", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "inversos@test.local");
+    const instrumento = JSON.parse(JSON.stringify(INSTRUMENTO));
+    instrumento.variables[0].itemsInversos = [2];
+    const r = await api("POST", "/proyectos", token, { nombre: "Con inversos", instrumento });
+    assert.equal(r.status, 201);
+    assert.deepEqual(r.body.proyecto.instrumento.variables[0].itemsInversos, [2]);
+  });
+
+  test("los items inversos fuera de rango o repetidos se rechazan", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "inversos-invalidos@test.local");
+    for (const itemsInversos of [[3], [1, 1]]) {
+      const instrumento = JSON.parse(JSON.stringify(INSTRUMENTO));
+      instrumento.variables[0].itemsInversos = itemsInversos;
+      const r = await api("POST", "/proyectos", token, { nombre: "Invalido", instrumento });
+      assert.equal(r.status, 400);
+      assert.match(r.body.error, /inversos/i);
+    }
   });
 
   test("se rechaza pasarse del máximo de ítems", async () => {

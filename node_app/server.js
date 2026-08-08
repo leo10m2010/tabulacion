@@ -13,10 +13,20 @@ import {
   MAX_MUESTRA,
   NIVELES_ALFA,
   NIVELES_CORRELACION,
+  isQuasiExperimentalConfig,
+  normalizeConfig,
+  normalizeCronbachConfig,
+  normalizeQuasiExperimentalConfig,
+  prepareQuasiExperimentalRawConfig,
+  resolveMediciones,
 } from "./generator.js";
 // La generacion del Excel corre en un hilo aparte: es CPU pura y sincrona, y
 // en el hilo principal congelaba el servidor entero mientras duraba.
-import { GenerationBusyError, runGeneration } from "./lib/generation/run.js";
+import {
+  GenerationBusyError,
+  getGenerationQueueStatus,
+  runGeneration,
+} from "./lib/generation/run.js";
 import {
   addPendingUse,
   clearPendingUse,
@@ -26,8 +36,61 @@ import {
 // Persistencia del almacen de usuarios: Postgres si hay DATABASE_URL, archivo
 // JSON si no. En el plan gratis de Render el disco es efimero y cada deploy
 // borraba todas las cuentas con sus usos y sus claves.
-import { closeStore, flushStore, initStore, persistUsers } from "./lib/store/index.js";
+import {
+  closeStore,
+  consumeEntitlement,
+  controlDurableJob,
+  createArtifactRecord,
+  createDevicePairing,
+  createSessionRecord,
+  deleteArtifactRecord,
+  createDurableJob,
+  createDurableJobBatches,
+  deleteUserStoreData,
+  flushStore,
+  getDurableJob,
+  getArtifactRecord,
+  getDevicePairing,
+  getEntitlementBalance,
+  getPaymentRecord,
+  getSessionByTokenHash,
+  initStore,
+  isStoreReady,
+  listSessionsByUser,
+  listDurableJobs,
+  persistUsers,
+  refundEntitlement,
+  recordPaymentAndCredit,
+  releaseEntitlement,
+  reserveEntitlement,
+  revokeSessionByTokenHash,
+  revokeSessionsByUser,
+  revokeOtherSessions,
+  setEntitlementBalances,
+  settleEntitlement,
+  findDevicePairingByCodeHash,
+  findAuthoritativeUserByEmail,
+  findAuthoritativeUserById,
+  findAuthoritativeUserByIdentity,
+  saveAuthoritativeUser,
+  usingPostgres,
+  updateDevicePairing,
+  updateDurableJob,
+  updateDurableJobBatch,
+  claimDurableJob,
+  renewDurableJobLease,
+} from "./lib/store/index.js";
+import { createR2ArtifactStore } from "./lib/artifacts/r2.js";
+import { getFormsResponsesTopup, getPurchasablePlan } from "./lib/payments/catalog.js";
+import {
+  createTaypiClient,
+  normalizeTaypiCheckout,
+  parseTaypiEvent,
+  taypiCheckoutEnabledFromEnv,
+} from "./lib/payments/taypi.js";
+import { errorLogFields, metrics, structuredLog } from "./lib/observability.js";
 import { googleClientId, googleEnabled, verifyGoogleIdToken } from "./lib/google-auth.js";
+import { isEmailRegistrationEnabled, isRestorableUser } from "./lib/auth-policy.js";
 // Proyecto de tesis: el instrumento se define UNA vez aqui y lo reutilizan las
 // herramientas, en vez de re-escribirlo en cada una.
 import {
@@ -46,6 +109,7 @@ import {
   initProyectos,
   listarProyectos,
   obtenerProyecto,
+  ProjectVersionConflictError,
 } from "./lib/proyectos/store.js";
 import {
   COOLDOWN_DAYS,
@@ -82,10 +146,23 @@ const PORT = Number.parseInt(process.env.PORT ?? "8080", 10);
 const MAX_BODY_BYTES = Number.parseInt(process.env.MAX_BODY_BYTES ?? "4194304", 10);
 const RESULT_TTL_SECONDS = Number.parseInt(process.env.RESULT_TTL_SECONDS ?? "900", 10);
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL ?? "").trim();
+const LEGACY_API_SUNSET_AT = String(
+  process.env.LEGACY_API_SUNSET_AT ?? "2026-09-07T00:00:00Z",
+).trim();
+const LEGACY_API_SUNSET_HEADER = new Date(LEGACY_API_SUNSET_AT).toUTCString();
+if (LEGACY_API_SUNSET_HEADER === "Invalid Date") {
+  throw new Error("LEGACY_API_SUNSET_AT debe ser una fecha ISO valida.");
+}
+const artifactStore = createR2ArtifactStore();
+const taypi = createTaypiClient();
+const taypiCheckoutEnabled = taypiCheckoutEnabledFromEnv();
 const ALLOWED_ORIGIN_RAW = String(process.env.CORS_ORIGIN ?? "*").trim();
 const ALLOWED_ORIGINS = ALLOWED_ORIGIN_RAW.split(",")
   .map((item) => item.trim())
   .filter(Boolean);
+if (process.env.NODE_ENV === "production" && ALLOWED_ORIGINS.includes("*")) {
+  throw new Error("CORS_ORIGIN no puede contener '*' en produccion.");
+}
 
 const AUTH_REQUIRED = !new Set(["0", "false", "no", "off"]).has(String(process.env.AUTH_REQUIRED ?? "true").trim().toLowerCase());
 
@@ -98,11 +175,7 @@ const AUTH_TOKEN_SECRET = INSECURE_SECRETS.has(envSecret)
   ? crypto.randomBytes(32).toString("hex")
   : envSecret;
 if (INSECURE_SECRETS.has(envSecret) && AUTH_REQUIRED) {
-  // eslint-disable-next-line no-console
-  console.warn(
-    "[AVISO] AUTH_TOKEN_SECRET no esta configurado: se genero un secreto aleatorio para esta ejecucion. "
-    + "Las sesiones se invalidan al reiniciar. Define AUTH_TOKEN_SECRET en produccion.",
-  );
+  structuredLog("warn", "auth.ephemeral_secret", { sessionsSurviveRestart: false });
 }
 
 const AUTH_TOKEN_TTL_SECONDS = Number.parseInt(process.env.AUTH_TOKEN_TTL_SECONDS ?? "86400", 10);
@@ -115,6 +188,15 @@ const SERVICE_SHARED_SECRET = String(process.env.SERVICE_SHARED_SECRET ?? "").tr
 const USER_STORE_PATH = process.env.USER_STORE_PATH
   ? path.resolve(process.env.USER_STORE_PATH)
   : path.join(SCRIPT_DIR, "data", "users.json");
+if (process.env.NODE_ENV === "production" && !String(process.env.DATABASE_URL ?? "").trim()) {
+  throw new Error("DATABASE_URL es obligatoria en produccion; el backend de archivo es solo local.");
+}
+if (process.env.NODE_ENV === "production" && !PUBLIC_BASE_URL) {
+  throw new Error("PUBLIC_BASE_URL es obligatoria en produccion para construir enlaces seguros.");
+}
+if (process.env.NODE_ENV === "production" && INSECURE_SECRETS.has(envSecret)) {
+  throw new Error("AUTH_TOKEN_SECRET es obligatorio y debe ser estable en produccion.");
+}
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL ?? "admin@tabulacion.local").trim();
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD ?? "").trim();
 // Clave de API fija del admin (formato ttab_...): con disco efimero (plan free
@@ -132,8 +214,10 @@ const LOGIN_WINDOW_MS = Number.parseInt(process.env.LOGIN_WINDOW_SECONDS ?? "900
 
 // ── Auto-registro (plan gratuito) ───────────────────────────────────────────
 // Se puede apagar sin tocar codigo si hiciera falta cerrar el registro.
-const REGISTRATION_ENABLED = !new Set(["0", "false", "no", "off"])
-  .has(String(process.env.REGISTRATION_ENABLED ?? "true").trim().toLowerCase());
+// Hasta disponer de dominio y correo transaccional, produccion solo permite
+// alta publica mediante Google. El flag se conserva exclusivamente para
+// pruebas y desarrollo local de compatibilidad.
+const REGISTRATION_ENABLED = isEmailRegistrationEnabled();
 // Cuentas nuevas por IP. La ventana es larga (24 h por defecto) a proposito:
 // con una ventana corta se pueden crear cuentas en tandas indefinidamente.
 const REGISTER_MAX_PER_IP = Number.parseInt(process.env.REGISTER_MAX_PER_IP ?? "3", 10);
@@ -142,65 +226,148 @@ const REGISTER_PLAN = String(process.env.REGISTER_PLAN ?? "free").trim() || "fre
 
 const results = new Map();
 let users = [];
+const DEVICE_PAIRING_TTL_MS = Number.parseInt(
+  process.env.DEVICE_PAIRING_TTL_SECONDS ?? "600", 10,
+) * 1000;
 
-// Jobs de Tabulacion Descriptiva (IA): la llamada a OpenRouter puede tardar
-// minutos, asi que POST /descriptiva crea un job y el frontend hace polling.
+// Cachés de ejecución: conservan buffers/promesas mientras vive el proceso.
+// El estado, resultado recuperable y artefacto autoritativos están en el store
+// durable; el polling cae a Neon/R2 cuando este Map no tiene la entrada.
 const descriptivaJobs = new Map();
 const DESCRIPTIVA_JOB_TTL_MS = Number.parseInt(process.env.DESCRIPTIVA_JOB_TTL_SECONDS ?? "1800", 10) * 1000;
 // Un job terminado retiene el Excel en memoria (contenedor de 512 MB): se le
 // da un TTL corto propio, y aun mas corto una vez que el cliente lo descargo.
 const DESCRIPTIVA_DONE_TTL_MS = Number.parseInt(process.env.DESCRIPTIVA_DONE_TTL_SECONDS ?? "600", 10) * 1000;
 const DESCRIPTIVA_SERVED_TTL_MS = 120 * 1000;
-const DESCRIPTIVA_MAX_CONCURRENT = Number.parseInt(process.env.DESCRIPTIVA_MAX_CONCURRENT ?? "3", 10);
 
-// Un job cuenta como "en curso" solo dentro de su TTL: si su promesa quedara
-// colgada, no debe bloquear al usuario (409) para siempre.
-const isDescriptivaJobActive = (job) => job.status === "processing"
-  && Date.now() - job.createdAt < DESCRIPTIVA_JOB_TTL_MS;
-
-// Jobs del Generador de Titulos de Investigacion (IA): mismo patron que
-// Tabulacion Descriptiva (la llamada a OpenRouter con web_search puede tardar
-// varios minutos, asi que POST /titulos crea un job y el frontend hace
-// polling).
+// Caché de ejecución del Generador de Títulos.
 const titulosJobs = new Map();
 const TITULOS_JOB_TTL_MS = Number.parseInt(process.env.TITULOS_JOB_TTL_SECONDS ?? "1800", 10) * 1000;
 const TITULOS_DONE_TTL_MS = Number.parseInt(process.env.TITULOS_DONE_TTL_SECONDS ?? "600", 10) * 1000;
 const TITULOS_SERVED_TTL_MS = 120 * 1000;
-const TITULOS_MAX_CONCURRENT = Number.parseInt(process.env.TITULOS_MAX_CONCURRENT ?? "3", 10);
 
-const isTitulosJobActive = (job) => job.status === "processing"
-  && Date.now() - job.createdAt < TITULOS_JOB_TTL_MS;
-
-// Jobs de la Matriz de Consistencia (IA): mismo patron que Titulos (dos
-// llamadas a OpenRouter + busquedas dirigidas pueden tardar minutos, asi que
-// POST /matriz crea un job y el frontend hace polling).
+// Caché de ejecución de la Matriz de Consistencia.
 const matrizJobs = new Map();
 const MATRIZ_JOB_TTL_MS = Number.parseInt(process.env.MATRIZ_JOB_TTL_SECONDS ?? "1800", 10) * 1000;
 const MATRIZ_DONE_TTL_MS = Number.parseInt(process.env.MATRIZ_DONE_TTL_SECONDS ?? "600", 10) * 1000;
 const MATRIZ_SERVED_TTL_MS = 120 * 1000;
-const MATRIZ_MAX_CONCURRENT = Number.parseInt(process.env.MATRIZ_MAX_CONCURRENT ?? "3", 10);
 
-const isMatrizJobActive = (job) => job.status === "processing"
-  && Date.now() - job.createdAt < MATRIZ_JOB_TTL_MS;
-
-// Jobs del Humanizador (IA): mismo patron (varias llamadas a OpenRouter por
-// bloque de ~1000 palabras pueden tardar minutos; POST /humanizador crea un
-// job y el frontend hace polling).
+// Caché de ejecución del Humanizador.
 const humanizadorJobs = new Map();
 const HUMANIZADOR_JOB_TTL_MS = Number.parseInt(process.env.HUMANIZADOR_JOB_TTL_SECONDS ?? "1800", 10) * 1000;
 const HUMANIZADOR_DONE_TTL_MS = Number.parseInt(process.env.HUMANIZADOR_DONE_TTL_SECONDS ?? "600", 10) * 1000;
 const HUMANIZADOR_SERVED_TTL_MS = 120 * 1000;
-const HUMANIZADOR_MAX_CONCURRENT = Number.parseInt(process.env.HUMANIZADOR_MAX_CONCURRENT ?? "3", 10);
-
-const isHumanizadorJobActive = (job) => job.status === "processing"
-  && Date.now() - job.createdAt < HUMANIZADOR_JOB_TTL_MS;
 
 class HttpError extends Error {
-  constructor(statusCode, message) {
+  constructor(statusCode, message, options = {}) {
     super(message);
     this.statusCode = statusCode;
+    this.code = options.code;
+    this.field = options.field;
+    this.retryable = options.retryable;
   }
 }
+
+const HEAVY_GENERATION_TYPES = new Set([
+  "tabulacion", "descriptiva", "titulos", "matriz", "humanizador",
+]);
+
+const beginLegacyGenerationJob = async ({ id, ownerUserId, type, input, ttlMs: jobTtlMs }) => {
+  if (!HEAVY_GENERATION_TYPES.has(type)) {
+    throw new Error(`Tipo de generacion durable no soportado: ${type}`);
+  }
+  const created = await createDurableJob({
+    id,
+    userId: ownerUserId,
+    type,
+    status: "pending",
+    parameters: {
+      input,
+      expiresAt: new Date(Date.now() + jobTtlMs).toISOString(),
+      execution: "api-inline-v1",
+    },
+    progress: { stage: "awaiting_quota" },
+  });
+  if (!created || (created.id !== id && created.userId !== ownerUserId)) {
+    throw new HttpError(429, "La capacidad de generación está ocupada; intenta de nuevo en unos minutos.", {
+      code: "HEAVY_GENERATION_BUSY",
+      retryable: true,
+    });
+  }
+  if (created.id !== id) {
+    throw new HttpError(409, "Ya tienes una generacion pesada en curso; espera a que termine.", {
+      code: "HEAVY_GENERATION_IN_PROGRESS",
+      retryable: true,
+    });
+  }
+  return created;
+};
+
+const activateLegacyGenerationJob = async (id) => {
+  const updated = await updateDurableJob(id, {
+    status: "processing",
+    progress: { stage: "generating" },
+  });
+  if (!updated) throw new Error(`No se pudo activar el job durable ${id}.`);
+  return updated;
+};
+
+const persistLegacyGenerationSuccess = async ({ id, result, artifact, doneTtlMs }) => {
+  const current = await getDurableJob(id);
+  if (!current) throw new Error(`No existe el job durable ${id}.`);
+  const parameters = { ...(current.parameters ?? {}) };
+  delete parameters.input;
+  const expiresAt = new Date(Date.now() + doneTtlMs).toISOString();
+  const updated = await updateDurableJob(id, {
+    status: "completed",
+    parameters: {
+      ...parameters,
+      expiresAt,
+      artifactId: artifact?.id ?? null,
+    },
+    progress: { stage: "completed", result },
+    clearLease: true,
+  });
+  if (!updated) throw new Error(`No se pudo completar el job durable ${id}.`);
+  return updated;
+};
+
+const persistLegacyGenerationFailure = async ({ id, error, doneTtlMs }) => {
+  const current = await getDurableJob(id);
+  if (!current) return null;
+  const parameters = { ...(current.parameters ?? {}) };
+  delete parameters.input;
+  return updateDurableJob(id, {
+    status: "failed",
+    parameters: {
+      ...parameters,
+      expiresAt: new Date(Date.now() + doneTtlMs).toISOString(),
+    },
+    progress: { stage: "failed", error },
+    clearLease: true,
+  });
+};
+
+const legacyGenerationFromDurable = async (id) => {
+  const stored = await getDurableJob(id);
+  if (!stored || !HEAVY_GENERATION_TYPES.has(stored.type)) return null;
+  const artifact = stored.parameters?.artifactId
+    ? artifactRow(await getArtifactRecord(stored.parameters.artifactId))
+    : null;
+  return {
+    id: stored.id,
+    ownerUserId: stored.userId,
+    type: stored.type,
+    status: stored.status === "completed"
+      ? "done"
+      : (stored.status === "failed" ? "error" : "processing"),
+    createdAt: Date.parse(stored.createdAt),
+    expiresAt: Date.parse(stored.parameters?.expiresAt ?? stored.updatedAt),
+    result: stored.progress?.result ?? null,
+    error: stored.progress?.error ?? null,
+    artifact,
+  };
+};
 
 const ttlMs = RESULT_TTL_SECONDS * 1000;
 
@@ -239,12 +406,11 @@ const cleanupExpired = () => {
   }
 };
 
-const getBaseUrl = (req) => {
+const getBaseUrl = () => {
   if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL.replace(/\/$/, "");
-  const protoHeader = String(req.headers["x-forwarded-proto"] ?? "").trim();
-  const proto = protoHeader || "http";
-  const host = String(req.headers.host ?? `localhost:${PORT}`);
-  return `${proto}://${host}`;
+  // Nunca construir enlaces con Host/X-Forwarded-* controlados por el cliente.
+  // Produccion exige PUBLIC_BASE_URL; este origen fijo es solo para desarrollo.
+  return `http://localhost:${PORT}`;
 };
 
 // Cabeceras de seguridad de la API. No habia ninguna: nada impedia enmarcar
@@ -263,13 +429,9 @@ const setSecurityHeaders = (res) => {
 
 const setCorsHeaders = (req, res) => {
   const origin = String(req.headers.origin ?? "").trim();
-  // La extension Tutorica Forms inicia sesion desde su popup
-  // (origen chrome-extension://...); el control de acceso real son las
-  // credenciales, no el origen.
-  const isExtensionOrigin = origin.startsWith("chrome-extension://");
   if (ALLOWED_ORIGINS.includes("*")) {
     res.setHeader("Access-Control-Allow-Origin", "*");
-  } else if (origin && (ALLOWED_ORIGINS.includes(origin) || isExtensionOrigin)) {
+  } else if (origin && ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
   }
@@ -284,7 +446,7 @@ const sendJson = (res, statusCode, payload) => {
   res.end(body);
 };
 
-const parseJsonBody = (req) => new Promise((resolve, reject) => {
+const readRawBody = (req) => new Promise((resolve, reject) => {
   const chunks = [];
   let total = 0;
 
@@ -300,15 +462,10 @@ const parseJsonBody = (req) => new Promise((resolve, reject) => {
 
   req.on("end", () => {
     if (total === 0) {
-      resolve({});
+      resolve("");
       return;
     }
-    try {
-      const body = Buffer.concat(chunks).toString("utf-8");
-      resolve(JSON.parse(body));
-    } catch {
-      reject(new HttpError(400, "JSON invalido."));
-    }
+    resolve(Buffer.concat(chunks).toString("utf-8"));
   });
 
   req.on("error", (err) => {
@@ -365,9 +522,51 @@ const PLAN_PRESETS = {
   //     (titulos ademas paga busqueda web): quedan en 0 y son el gancho de pago.
   // Con 0 usos de IA, crearse cuentas de mas no le cuesta dinero al servicio.
   free: { tabulacion: 2, confiabilidad: 2, descriptiva: 0, titulos: 0, matriz: 0, humanizador: 1, forms: 0 },
-  esencial: { tabulacion: 2, confiabilidad: 2, descriptiva: 3, titulos: 3, matriz: 1, humanizador: 5, forms: 2 },
-  tesista: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
-  institucion: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
+  esencial: { tabulacion: 2, confiabilidad: 2, descriptiva: 3, titulos: 3, matriz: 1, humanizador: 5, forms: 500 },
+  tesista: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 2500 },
+  institucion: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 2500 },
+};
+const PUBLIC_PLAN_PRESETS = Object.fromEntries(
+  Object.entries(PLAN_PRESETS).filter(([plan]) => plan !== "institucion"),
+);
+
+const paymentRow = (row) => (row ? {
+  id: row.id,
+  userId: row.userId ?? row.user_id,
+  providerOrderId: row.providerOrderId ?? row.provider_order_id,
+  status: row.status,
+  amountMinor: Number(row.amountMinor ?? row.amount_minor),
+  currency: row.currency,
+  payload: row.payload ?? {},
+  creditedAt: row.creditedAt ?? row.credited_at ?? null,
+} : null);
+
+const artifactRow = (row) => (row ? {
+  id: row.id,
+  userId: row.userId ?? row.user_id,
+  jobId: row.jobId ?? row.job_id ?? null,
+  storageKey: row.storageKey ?? row.storage_key,
+  contentType: row.contentType ?? row.content_type,
+  byteSize: Number(row.byteSize ?? row.byte_size ?? 0),
+  expiresAt: row.expiresAt ?? row.expires_at,
+} : null);
+
+const pairingRow = (row) => (row ? {
+  id: row.id,
+  userCodeHash: row.userCodeHash ?? row.user_code_hash,
+  secretHash: row.secretHash ?? row.secret_hash,
+  deviceName: row.deviceName ?? row.device_name,
+  userId: row.userId ?? row.user_id ?? null,
+  status: row.status,
+  expiresAt: row.expiresAt ?? row.expires_at,
+  consumedAt: row.consumedAt ?? row.consumed_at ?? null,
+} : null);
+
+const paidSubscriptionEnd = (user, billingCycle) => {
+  const current = Date.parse(user?.subscriptionEndsAt ?? "");
+  const base = Number.isFinite(current) && current > Date.now() ? current : Date.now();
+  const days = billingCycle === "yearly" ? 365 : 30;
+  return new Date(base + days * 24 * 60 * 60 * 1000).toISOString();
 };
 
 // Cuota inicial de una cuenta nueva. Quien borro su cuenta hace poco vuelve a
@@ -404,6 +603,14 @@ const normalizeUses = (user) => {
     }
     consumed[tool] = Math.floor(used);
   }
+  // Hasta julio de 2026 Forms se vendia por corridas (una corrida admitia
+  // hasta 250 envios). La migracion es monotona y queda marcada en la ficha
+  // para que cada reinicio no vuelva a multiplicar el saldo.
+  if (user.formsQuotaUnit !== "response") {
+    uses.forms *= 250;
+    consumed.forms *= 250;
+    user.formsQuotaUnit = "response";
+  }
   user.uses = uses;
   user.usesConsumed = consumed;
   user.formsUsesLeft = uses.forms;
@@ -417,78 +624,140 @@ const usesLeftOf = (owner, tool) => (
 
 // Descuenta 1 uso o lanza 403. En modo dev sin store (AUTH_REQUIRED=false) el
 // usuario sintetico no existe en users: acceso ilimitado.
-const consumeUse = (authUser, tool) => {
-  const owner = users.find((item) => item.id === authUser.id);
+const consumeUse = async (authUser, tool, amount = 1, metadata = {}) => {
+  const owner = await authoritativeUserById(authUser.id);
   if (!owner) return null;
   if (owner.role === "admin") return null;
+  const ownerExpectedUpdatedAt = owner.updatedAt;
   normalizeUses(owner);
-  const left = owner.uses[tool] ?? 0;
-  if (left <= 0) {
+  const charged = await consumeEntitlement({
+    userId: owner.id,
+    tool,
+    amount,
+    referenceId: metadata.referenceId,
+    idempotencyKey: metadata.idempotencyKey,
+    metadata,
+  });
+  if (!charged.ok) {
     throw new HttpError(403, `No te quedan usos de ${TOOL_LABELS[tool]}. Pide una recarga a tu administrador.`);
   }
-  owner.uses[tool] = left - 1;
-  owner.usesConsumed[tool] = (owner.usesConsumed[tool] ?? 0) + 1;
+  owner.uses[tool] = charged.balance.available;
+  owner.usesConsumed[tool] = charged.balance.consumed;
+  if (tool === "forms") owner.formsResponsesReserved = charged.balance.reserved;
   owner.formsUsesLeft = owner.uses.forms;
   owner.formsUsesUsed = owner.usesConsumed.forms;
-  // Forms conserva su mensaje historico ("Corrida de Forms") por
-  // compatibilidad con el historial existente.
   logActivity(owner, tool === "forms"
-    ? `Corrida de Forms (quedan ${owner.uses.forms} usos)`
+    ? `${amount} respuesta(s) de Forms consumida(s) (quedan ${owner.uses.forms})`
     : `Uso de ${TOOL_LABELS[tool]} (quedan ${owner.uses[tool]})`);
   owner.updatedAt = new Date().toISOString();
-  writeUsers();
+  await commitUser(owner, ownerExpectedUpdatedAt);
   return owner.uses[tool];
 };
 
 // Devuelve el uso si el trabajo termino en error (el usuario no recibio nada).
-const refundUse = (userId, tool, motivo = "la generación falló") => {
-  const owner = users.find((item) => item.id === userId);
+const refundUse = async (
+  userId,
+  tool,
+  motivo = "la generación falló",
+  amount = 1,
+  { idempotencyKey = null } = {},
+) => {
+  const owner = await authoritativeUserById(userId);
   if (!owner || owner.role === "admin") return;
+  const ownerExpectedUpdatedAt = owner.updatedAt;
   normalizeUses(owner);
-  owner.uses[tool] = (owner.uses[tool] ?? 0) + 1;
-  owner.usesConsumed[tool] = Math.max(0, (owner.usesConsumed[tool] ?? 0) - 1);
+  const refunded = await refundEntitlement({
+    userId, tool, amount, idempotencyKey, metadata: { motivo },
+  });
+  owner.uses[tool] = refunded.balance.available;
+  owner.usesConsumed[tool] = refunded.balance.consumed;
+  if (tool === "forms") owner.formsResponsesReserved = refunded.balance.reserved;
   owner.formsUsesLeft = owner.uses.forms;
   owner.formsUsesUsed = owner.usesConsumed.forms;
   logActivity(owner, `Uso de ${TOOL_LABELS[tool]} devuelto (${motivo})`);
   owner.updatedAt = new Date().toISOString();
-  try {
-    writeUsers();
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[usos] no se pudo persistir el reembolso de ${tool}:`, err);
-  }
+  await commitUser(owner, ownerExpectedUpdatedAt);
 };
 
 // ── Usos de jobs de IA: consumo con red de seguridad ────────────────────────
-// Los jobs viven en memoria. Anotar en disco el uso descontado permite
-// devolverlo si el proceso se reinicia antes de que el job termine.
+// El estado del job vive en el store durable. La marca de uso pendiente
+// permite reconciliar saldo y estado si el proceso muere antes de terminar.
 
 // Descuenta el uso y lo deja anotado como pendiente. `consumeUse` devuelve
 // null cuando no hay a quien cobrarle (admin, o usuario sintetico de
 // desarrollo): en ese caso no hay nada que anotar ni que devolver.
-const consumeUseForJob = (authUser, tool, jobId) => {
-  const left = consumeUse(authUser, tool);
+const consumeUseForJob = async (authUser, tool, jobId) => {
+  const left = await consumeUse(authUser, tool, 1, {
+    referenceId: jobId,
+    idempotencyKey: `generation:${jobId}:consume`,
+  });
   if (left !== null) addPendingUse(jobId, authUser.id, tool);
   return left;
 };
 
 // Cierra el job: si fallo devuelve el uso, y en ambos casos borra la anotacion
 // para que el arranque no lo vuelva a reembolsar.
-const settleJobUse = (jobId, userId, tool, { refund }) => {
-  if (refund) refundUse(userId, tool);
+const settleJobUse = async (jobId, userId, tool, { refund }) => {
+  if (refund) {
+    await refundUse(userId, tool, "la generación falló", 1, {
+      idempotencyKey: `generation:${jobId}:refund`,
+    });
+  }
   clearPendingUse(jobId);
+  await flushStore();
 };
 
-// Al arrancar: todo uso anotado corresponde a un job que ya no existe (los
-// jobs no sobreviven al reinicio), asi que se devuelve.
-const recoverPendingUses = () => {
+// Al arrancar: un uso pendiente corresponde a una ejecucion que no puede
+// reanudarse de forma exacta. El job durable se conserva como fallido y el
+// movimiento idempotente devuelve la cuota.
+const recoverPendingUses = async () => {
   const pending = drainPendingUses();
   if (pending.length === 0) return;
   for (const item of pending) {
-    refundUse(item.userId, item.tool, "el servidor se reinició durante la generación");
+    await refundUse(item.userId, item.tool, "el servidor se reinició durante la generación", 1, {
+      idempotencyKey: `generation:${item.jobId}:refund`,
+    });
+    await persistLegacyGenerationFailure({
+      id: item.jobId,
+      error: "La generación se interrumpió al reiniciar el servicio. Tu uso fue devuelto.",
+      doneTtlMs: 24 * 60 * 60 * 1000,
+    }).catch((error) => {
+      // Los registros legacy anteriores a los jobs durables no tienen fila.
+      if (error) {
+        structuredLog("error", "generation.reconciliation_failed", {
+          jobId: item.jobId, ...errorLogFields(error),
+        });
+      }
+    });
   }
-  // eslint-disable-next-line no-console
-  console.log(`[usos] ${pending.length} uso(s) devuelto(s): quedaron a medias en un reinicio anterior.`);
+  structuredLog("info", "generation.pending_uses_refunded", { count: pending.length });
+};
+
+const recoverOrphanedGenerationJobs = async () => {
+  const active = [];
+  for (const status of ["pending", "queued", "processing", "running"]) {
+    active.push(...await listDurableJobs({ status, limit: 100 }));
+  }
+  const orphaned = active.filter((job) => HEAVY_GENERATION_TYPES.has(job.type));
+  for (const job of orphaned) {
+    const parameters = { ...(job.parameters ?? {}) };
+    delete parameters.input;
+    await updateDurableJob(job.id, {
+      status: "failed",
+      parameters: {
+        ...parameters,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      },
+      progress: {
+        stage: "interrupted",
+        error: "La generación se interrumpió al reiniciar el servicio.",
+      },
+      clearLease: true,
+    });
+  }
+  if (orphaned.length > 0) {
+    structuredLog("warn", "generation.orphaned_jobs_recovered", { count: orphaned.length });
+  }
 };
 
 // Limpia un objeto de usos recibido por API: solo herramientas conocidas,
@@ -509,23 +778,62 @@ const cleanUsesPayload = (raw) => {
   return any ? out : null;
 };
 
-// La escritura es diferida (ver lib/store): la memoria es la fuente de verdad
-// en caliente y la persistencia sale por detras en una cola ordenada. Se
-// mantiene utilizable de forma sincrona a proposito — la llaman decenas de
-// sitios, incluido el callback de consumo de usos de Forms, que es sincrono
-// por contrato.
+// En producción Neon es la autoridad y `users` es solo una caché de la única
+// instancia API: autenticación y mutaciones críticas refrescan y confirman por
+// consulta dirigida. En desarrollo y tests sin DATABASE_URL, el arreglo y el
+// archivo JSON conservan el adaptador histórico.
 //
-// Devuelve la promesa del vaciado para quien SI necesite durabilidad antes de
-// responder. La regla: si al usuario se le confirma algo que no puede
-// reconstruir (su clave de API, su contraseña nueva, la recarga que le hizo el
-// admin), hay que `await writeUsers()`. Si no, se ignora el retorno y la
-// escritura sale por detras.
-//
-// Nunca rechaza: los errores se registran dentro de la cola, asi que ignorar
-// la promesa no deja rechazos sin capturar.
+// `writeUsers` queda para el adaptador masivo/compatibilidad. Las rutas críticas
+// usan `commitUser`, que bloquea la fila, verifica la versión observada y no
+// responde antes del COMMIT.
 const writeUsers = () => {
   persistUsers(users);
   return flushStore();
+};
+
+const cacheCommittedUser = (committed) => {
+  if (!committed) return null;
+  const index = users.findIndex((candidate) => candidate.id === committed.id);
+  if (index >= 0) Object.assign(users[index], committed);
+  else users.push(committed);
+  return index >= 0 ? users[index] : committed;
+};
+
+const authoritativeUserById = async (id) => {
+  if (!usingPostgres) return users.find((candidate) => candidate.id === id) ?? null;
+  return cacheCommittedUser(await findAuthoritativeUserById(id));
+};
+
+const authoritativeUserByEmail = async (emailLower) => {
+  if (!usingPostgres) {
+    return users.find((candidate) => candidate.emailLower === emailLower) ?? null;
+  }
+  return cacheCommittedUser(await findAuthoritativeUserByEmail(emailLower));
+};
+
+const authoritativeUserByGoogleSub = async (subject) => {
+  if (!usingPostgres) return users.find((candidate) => candidate.googleSub === subject) ?? null;
+  return cacheCommittedUser(await findAuthoritativeUserByIdentity("google", subject));
+};
+
+const commitUser = async (user, expectedUpdatedAt = null) => {
+  if (!usingPostgres) {
+    await writeUsers();
+    return user;
+  }
+  try {
+    return cacheCommittedUser(await saveAuthoritativeUser(user, { expectedUpdatedAt }));
+  } catch (error) {
+    if (error?.code === "23505") {
+      throw new HttpError(409, "La identidad o el correo ya pertenece a otra cuenta.", {
+        code: "IDENTITY_ALREADY_EXISTS",
+      });
+    }
+    if (error?.code === "USER_VERSION_CONFLICT") {
+      throw new HttpError(409, error.message, { code: "USER_VERSION_CONFLICT", retryable: true });
+    }
+    throw error;
+  }
 };
 
 const sanitizeUser = (user) => ({
@@ -538,16 +846,35 @@ const sanitizeUser = (user) => ({
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
   lastLoginAt: user.lastLoginAt,
+  passwordEnabled: user.passwordEnabled !== false,
+  googleLinked: Boolean(user.googleSub),
   // Usos por herramienta (1 uso = 1 generacion/corrida); admins ilimitados
   // (null). formsUsesLeft se mantiene como espejo para clientes antiguos.
   uses: user.role === "admin" ? null : { ...normalizeUses(user).uses },
   usesConsumed: user.role === "admin" ? {} : { ...user.usesConsumed },
   formsUsesLeft: user.role === "admin" ? null : (Number.isFinite(user.formsUsesLeft) ? user.formsUsesLeft : 0),
   formsUsesUsed: user.formsUsesUsed ?? 0,
+  formsResponses: user.role === "admin" ? {
+    available: null, consumed: user.formsUsesUsed ?? 0, reserved: 0, unit: "response",
+  } : {
+    available: Number.isFinite(user.formsUsesLeft) ? user.formsUsesLeft : 0,
+    consumed: user.formsUsesUsed ?? 0,
+    reserved: user.formsResponsesReserved ?? 0,
+    unit: "response",
+  },
   generationsCount: user.generationsCount ?? 0,
   lastGenerationAt: user.lastGenerationAt ?? null,
   hasApiKey: Boolean(user.apiKeyHash),
   apiKeyLast4: user.apiKeyLast4 ?? null,
+  devices: (Array.isArray(user.deviceCredentials) ? user.deviceCredentials : [])
+    .filter((device) => !device.revokedAt)
+    .map((device) => ({
+      id: device.id,
+      name: device.name,
+      last4: device.last4,
+      createdAt: device.createdAt,
+      lastUsedAt: device.lastUsedAt ?? null,
+    })),
 });
 
 const hashPassword = (password, saltHex) => {
@@ -569,6 +896,7 @@ const buildPassword = (password) => {
 const hashApiKey = (key) => crypto.createHash("sha256").update(key).digest("hex");
 
 const checkPassword = (password, user) => {
+  if (user.passwordEnabled === false || !user.passwordHash || !user.passwordSalt) return false;
   const expected = Buffer.from(user.passwordHash, "hex");
   const received = Buffer.from(hashPassword(password, user.passwordSalt), "hex");
   if (expected.length !== received.length) return false;
@@ -597,6 +925,8 @@ const createUser = ({
   subscriptionDays,
   formsUses,
   uses,
+  passwordEnabled = true,
+  googleSub = null,
 }) => {
   const normalizedEmail = assertUniqueEmail(email);
   if (!["admin", "user"].includes(role)) {
@@ -605,7 +935,7 @@ const createUser = ({
   if (!["active", "disabled"].includes(status)) {
     throw new HttpError(400, "Estado invalido.");
   }
-  const credentials = buildPassword(password);
+  const credentials = passwordEnabled ? buildPassword(password) : {};
   const nowIso = new Date().toISOString();
   const subscriptionDate = toIsoOrNull(subscriptionEndsAt)
     ?? (Number.isFinite(Number(subscriptionDays)) ? addDaysIso(Number(subscriptionDays)) : null);
@@ -636,13 +966,15 @@ const createUser = ({
     lastGenerationAt: null,
     activity: [],
     tokenVersion: 1,
+    passwordEnabled,
+    formsQuotaUnit: "response",
+    ...(googleSub ? { googleSub, googleLinkedAt: nowIso } : {}),
     ...credentials,
   };
   normalizeUses(user);
   logActivity(user, "Cuenta creada");
 
   users.push(user);
-  writeUsers();
   return user;
 };
 
@@ -693,6 +1025,7 @@ const patchUser = (user, payload) => {
   }
   if (payload.password !== undefined) {
     Object.assign(next, buildPassword(String(payload.password)));
+    next.passwordEnabled = true;
     // Restablecer la contraseña invalida todas las sesiones abiertas.
     next.tokenVersion = (next.tokenVersion ?? 1) + 1;
   }
@@ -744,8 +1077,7 @@ const patchUser = (user, payload) => {
 const syncAdminApiKey = (admin) => {
   if (!ADMIN_API_KEY) return false;
   if (!ADMIN_API_KEY.startsWith("ttab_") || ADMIN_API_KEY.length < 20) {
-    // eslint-disable-next-line no-console
-    console.warn("[WARN] ADMIN_API_KEY ignorada: debe empezar con ttab_ y tener al menos 20 caracteres.");
+    structuredLog("warn", "auth.legacy_admin_key_ignored", { reason: "invalid_format" });
     return false;
   }
   const hash = hashApiKey(ADMIN_API_KEY);
@@ -754,8 +1086,7 @@ const syncAdminApiKey = (admin) => {
   admin.apiKeyLast4 = ADMIN_API_KEY.slice(-4);
   admin.apiKeyCreatedAt = new Date().toISOString();
   admin.updatedAt = admin.apiKeyCreatedAt;
-  // eslint-disable-next-line no-console
-  console.log(`Admin ${admin.email}: clave de API restaurada desde ADMIN_API_KEY (···${admin.apiKeyLast4}).`);
+  structuredLog("warn", "auth.legacy_admin_key_restored", { migrationRequired: true });
   return true;
 };
 
@@ -769,13 +1100,13 @@ const ensureBootstrapAdmin = () => {
     let changed = false;
     if (ADMIN_PASSWORD && !checkPassword(ADMIN_PASSWORD, existing)) {
       Object.assign(existing, buildPassword(ADMIN_PASSWORD));
+      existing.passwordEnabled = true;
       existing.role = "admin";
       existing.status = "active";
       existing.tokenVersion = (existing.tokenVersion ?? 1) + 1;
       existing.updatedAt = new Date().toISOString();
       changed = true;
-      // eslint-disable-next-line no-console
-      console.log(`Admin ${existing.email}: contraseña sincronizada desde ADMIN_PASSWORD.`);
+      structuredLog("info", "auth.bootstrap_admin_password_synchronized");
     }
     if (syncAdminApiKey(existing)) changed = true;
     if (changed) writeUsers();
@@ -795,13 +1126,12 @@ const ensureBootstrapAdmin = () => {
     plan: "enterprise",
     subscriptionEndsAt: null,
   });
-  if (syncAdminApiKey(admin)) writeUsers();
-  // eslint-disable-next-line no-console
-  console.log(
-    generated
-      ? `Admin inicial creado: ${admin.email} | contraseña generada (guardala y cambiala): ${password}`
-      : `Admin inicial creado: ${admin.email} | cambia la contraseña luego de ingresar.`,
-  );
+  syncAdminApiKey(admin);
+  writeUsers();
+  structuredLog("warn", "auth.bootstrap_admin_created", {
+    generatedPassword: generated,
+    operatorActionRequired: true,
+  });
 };
 
 const base64UrlJson = (obj) => Buffer.from(JSON.stringify(obj), "utf-8").toString("base64url");
@@ -814,6 +1144,9 @@ const signToken = (user) => {
     sub: user.id,
     email: user.email,
     role: user.role,
+    // Evita que dos inicios de sesion del mismo usuario dentro del mismo
+    // segundo produzcan exactamente el mismo token y compartan revocacion.
+    jti: crypto.randomUUID(),
     // Version de credenciales: cambiar/restablecer la contraseña la
     // incrementa y todos los tokens anteriores quedan invalidados.
     ver: user.tokenVersion ?? 1,
@@ -825,6 +1158,21 @@ const signToken = (user) => {
     token: `${header}.${payload}.${sig}`,
     expiresAt: new Date(exp * 1000).toISOString(),
   };
+};
+
+const sessionTokenHash = (token) => crypto
+  .createHash("sha256")
+  .update(String(token ?? ""))
+  .digest("hex");
+
+const persistSignedSession = async (user, signed) => {
+  await createSessionRecord({
+    id: crypto.randomUUID(),
+    userId: user.id,
+    tokenHash: sessionTokenHash(signed.token),
+    expiresAt: signed.expiresAt,
+  });
+  return signed;
 };
 
 const verifyToken = (token) => {
@@ -856,7 +1204,7 @@ const getBearerToken = (req) => {
   return token;
 };
 
-const requireAuth = (req, opts = {}) => {
+const requireAuth = async (req, opts = {}) => {
   if (!AUTH_REQUIRED) {
     return {
       id: "local-dev-admin",
@@ -870,7 +1218,13 @@ const requireAuth = (req, opts = {}) => {
   const token = getBearerToken(req);
   if (!token) throw new HttpError(401, "Token requerido.");
   const claims = verifyToken(token);
-  const user = users.find((item) => item.id === claims.sub);
+  const session = await getSessionByTokenHash(sessionTokenHash(token));
+  const sessionExpiresAt = Date.parse(session?.expiresAt ?? session?.expires_at ?? "");
+  if (!session || session.revokedAt || session.revoked_at
+    || !Number.isFinite(sessionExpiresAt) || sessionExpiresAt <= Date.now()) {
+    throw new HttpError(401, "Sesion revocada o expirada.");
+  }
+  const user = await authoritativeUserById(claims.sub);
   if (!user) throw new HttpError(401, "Usuario del token no existe.");
   if (user.status !== "active") throw new HttpError(403, "Usuario inactivo.");
   if ((claims.ver ?? 1) !== (user.tokenVersion ?? 1)) {
@@ -894,14 +1248,15 @@ const logActivity = (user, detail) => {
 
 // Metricas de generacion por usuario (Excel de tabulacion o de confiabilidad;
 // el usuario dev sin store no se contabiliza).
-const registerGeneration = (authUser, detail) => {
-  const owner = users.find((item) => item.id === authUser.id);
+const registerGeneration = async (authUser, detail) => {
+  const owner = await authoritativeUserById(authUser.id);
   if (!owner) return;
+  const ownerExpectedUpdatedAt = owner.updatedAt;
   owner.generationsCount = (owner.generationsCount ?? 0) + 1;
   owner.lastGenerationAt = new Date().toISOString();
   owner.updatedAt = owner.lastGenerationAt;
   logActivity(owner, detail);
-  writeUsers();
+  await commitUser(owner, ownerExpectedUpdatedAt);
 };
 
 // ── Rate limiting de login (en memoria) ─────────────────────────────────────
@@ -1008,7 +1363,8 @@ initPendingUses(cargado.pendientes);
 initDeletedAccounts(cargado.borradas);
 await initProyectos(USER_STORE_PATH);
 ensureBootstrapAdmin();
-recoverPendingUses();
+await recoverPendingUses();
+await recoverOrphanedGenerationJobs();
 // El admin inicial y los reembolsos deben estar en firme antes de atender.
 await flushStore();
 setInterval(cleanupExpired, 60_000).unref();
@@ -1018,7 +1374,105 @@ setInterval(cleanupExpired, 60_000).unref();
 const findKeyOwner = (apiKey) => {
   const key = String(apiKey || "").trim();
   if (!key.startsWith("ttab_") || key.length < 20) return null;
-  return users.find((item) => item.apiKeyHash === hashApiKey(key)) ?? null;
+  const hash = hashApiKey(key);
+  return users.find((item) => item.apiKeyHash === hash
+    || (Array.isArray(item.deviceCredentials)
+      && item.deviceCredentials.some((device) => (
+        device.credentialHash === hash && !device.revokedAt
+      )))) ?? null;
+};
+
+const storeGeneratedArtifacts = async (ownerUserId, resultId, artifacts) => {
+  if (!artifactStore.enabled) return null;
+  const uploaded = [];
+  const records = [];
+  try {
+    const files = [
+      {
+        filename: "Tabulacion_generada.xlsx",
+        body: artifacts.excelBuffer,
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+      {
+        filename: "Tabulacion_base.csv",
+        body: Buffer.from(artifacts.baseCsv, "utf-8"),
+        contentType: "text/csv; charset=utf-8",
+      },
+    ];
+    for (const file of files) {
+      const stored = await artifactStore.put({
+        ownerUserId,
+        jobId: resultId,
+        ...file,
+      });
+      uploaded.push(stored);
+      const record = await createArtifactRecord({
+        userId: ownerUserId,
+        jobId: resultId,
+        storageKey: stored.key,
+        contentType: stored.contentType,
+        byteSize: Buffer.byteLength(file.body),
+        expiresAt: stored.expiresAt,
+      });
+      records.push(artifactRow(record));
+    }
+    return {
+      xlsx: records.find((record) => record.contentType.includes("spreadsheet")),
+      csv: records.find((record) => record.contentType.startsWith("text/csv")),
+    };
+  } catch (error) {
+    await Promise.allSettled(uploaded.map((item) => artifactStore.deleteArtifact(item.key)));
+    await Promise.allSettled(records.map((item) => deleteArtifactRecord(item.id)));
+    throw error;
+  }
+};
+
+const storeGeneratedFile = async ({ ownerUserId, jobId, filename, body, contentType }) => {
+  if (!artifactStore.enabled) return null;
+  let uploaded = null;
+  try {
+    uploaded = await artifactStore.put({ ownerUserId, jobId, filename, body, contentType });
+    return artifactRow(await createArtifactRecord({
+      userId: ownerUserId,
+      jobId,
+      storageKey: uploaded.key,
+      contentType: uploaded.contentType,
+      byteSize: Buffer.byteLength(body),
+      expiresAt: uploaded.expiresAt,
+    }));
+  } catch (error) {
+    if (uploaded) await artifactStore.deleteArtifact(uploaded.key).catch(() => {});
+    throw error;
+  }
+};
+
+const artifactResponse = (artifact) => artifact ? {
+  id: artifact.id,
+  contentType: artifact.contentType,
+  byteSize: artifact.byteSize,
+  expiresAt: new Date(artifact.expiresAt).toISOString(),
+  downloadUrl: `/artifacts/${artifact.id}/download`,
+} : null;
+
+const applyEntitlementBalance = (owner, tool, balance) => {
+  normalizeUses(owner);
+  owner.uses[tool] = balance.available;
+  owner.usesConsumed[tool] = balance.consumed;
+  if (tool === "forms") {
+    owner.formsUsesLeft = balance.available;
+    owner.formsUsesUsed = balance.consumed;
+    owner.formsResponsesReserved = balance.reserved;
+  }
+  owner.updatedAt = new Date().toISOString();
+};
+
+const refreshEntitlementBalances = async (owner) => {
+  if (!owner || owner.role === "admin") return owner;
+  const balances = await Promise.all(
+    USE_TOOLS.map(async (tool) => [tool, await getEntitlementBalance(owner.id, tool)]),
+  );
+  for (const [tool, balance] of balances) applyEntitlementBalance(owner, tool, balance);
+  return owner;
 };
 
 // Forms va por usos como todas las herramientas: la clave es valida mientras
@@ -1027,30 +1481,271 @@ formsApp.setKeyValidator((apiKey) => {
   const owner = findKeyOwner(apiKey);
   if (!owner) return { valid: false, reason: "clave_desconocida" };
   if (owner.status !== "active") return { valid: false, reason: "usuario_inactivo" };
+  const formsResponses = owner.role === "admin" ? null : usesLeftOf(owner, "forms");
   return {
     valid: true,
     email: owner.email,
     plan: owner.plan,
     role: owner.role,
-    usesLeft: usesLeftOf(owner, "forms"),
+    // `usesLeft` se conserva durante la ventana de compatibilidad. El contrato
+    // comercial y la extension consumen respuestas, no corridas de 250.
+    usesLeft: formsResponses,
+    formsResponses,
   };
 });
 
-// 1 uso de Forms = 1 corrida de llenado. El consumo ocurre al crear el job
-// (los admins tienen usos ilimitados: usesLeft null).
-formsApp.setUsageConsumer((apiKey) => {
-  const owner = findKeyOwner(apiKey);
-  if (!owner) return { ok: false, reason: "clave_desconocida" };
-  if (owner.role === "admin") return { ok: true, usesLeft: null };
+// El adaptador HTTP legado sigue disponible, pero usa el mismo usageManager
+// transaccional que /api/forms/jobs. Se desactiva expresamente el consumidor
+// por "corrida de 250" para que ningun camino pueda volver a esa semantica.
+formsApp.setUsageConsumer(null);
+
+const parseJsonBody = async (req) => {
+  const rawBody = await readRawBody(req);
+  if (!rawBody) return {};
   try {
-    const left = consumeUse(owner, "forms");
-    return { ok: true, usesLeft: left };
+    return JSON.parse(rawBody);
   } catch {
-    return { ok: false, reason: "sin_usos" };
+    throw new HttpError(400, "JSON invalido.");
   }
-});
+};
+
+if (typeof formsApp.setUsageManager === "function") {
+  formsApp.setUsageManager({
+    // Los trabajos terminales conservan su userId en Neon, no la credencial
+    // del navegador. Esto permite reintentar una liquidacion tras reiniciar el
+    // API sin persistir secretos ni dejar respuestas reservadas para siempre.
+    supportsCredentiallessSettlement: true,
+    async reserve(apiKey, requested, meta = {}) {
+      const owner = findKeyOwner(apiKey);
+      if (!owner) return { ok: false, reason: "clave_desconocida" };
+      const amount = Math.floor(Number(requested));
+      if (!Number.isFinite(amount) || amount <= 0) return { ok: false, reason: "cantidad_invalida" };
+      const reservationId = String(meta.reservationId ?? meta.jobId ?? crypto.randomUUID());
+      if (owner.role === "admin") {
+        return { ok: true, reservationId, reserved: amount, responsesLeft: null };
+      }
+      const result = await reserveEntitlement({
+        userId: owner.id,
+        tool: "forms",
+        amount,
+        reservationId,
+        idempotencyKey: String(meta.idempotencyKey ?? reservationId),
+        metadata: {
+          jobId: meta.jobId, requestId: meta.requestId, formId: meta.formId,
+        },
+      });
+      if (!result.ok) {
+        return { ok: false, reason: result.reason, responsesLeft: result.balance?.available ?? 0 };
+      }
+      applyEntitlementBalance(owner, "forms", result.balance);
+      logActivity(owner, `${amount} respuesta(s) de Forms reservada(s) (quedan ${result.balance.available})`);
+      await writeUsers();
+      return {
+        ok: true,
+        reservationId: result.reservation.id,
+        reserved: Number(result.reservation.requested),
+        responsesLeft: result.balance.available,
+      };
+    },
+    async settle(apiKey, reservationId, outcome = {}) {
+      let owner = apiKey ? findKeyOwner(apiKey) : null;
+      if (!owner && outcome.jobId) {
+        const durableJob = await getDurableJob(String(outcome.jobId));
+        owner = durableJob ? users.find((item) => item.id === durableJob.userId) : null;
+      }
+      if (!owner) return { ok: false, reason: "clave_desconocida" };
+      const accepted = Math.max(0, Math.floor(Number(outcome.accepted) || 0));
+      if (owner.role === "admin") {
+        return { ok: true, consumed: accepted, refunded: 0, responsesLeft: null };
+      }
+      const result = await settleEntitlement({
+        userId: owner.id,
+        reservationId: String(reservationId),
+        accepted,
+        uncertain: Math.max(0, Math.floor(Number(outcome.uncertain) || 0)),
+        metadata: {
+          jobId: outcome.jobId,
+          failed: outcome.failed,
+          uncertain: outcome.uncertain,
+          cancelled: outcome.cancelled,
+        },
+      });
+      if (!result.ok) return { ok: false, reason: result.reason };
+      applyEntitlementBalance(owner, "forms", result.balance);
+      await writeUsers();
+      return {
+        ok: true,
+        consumed: Number(result.reservation.accepted),
+        refunded: Number(result.reservation.refunded),
+        reserved: Number(
+          result.reservation.reservedRemaining
+            ?? result.reservation.reserved_remaining
+            ?? result.reservation.uncertain
+            ?? 0,
+        ),
+        responsesLeft: result.balance.available,
+      };
+    },
+    async release(apiKey, reservationId, meta = {}) {
+      const owner = findKeyOwner(apiKey);
+      if (!owner) return { ok: false, reason: "clave_desconocida" };
+      if (owner.role === "admin") return { ok: true, consumed: 0, refunded: 0, responsesLeft: null };
+      const result = await releaseEntitlement({
+        userId: owner.id,
+        reservationId: String(reservationId),
+        metadata: { jobId: meta.jobId, reason: meta.reason },
+      });
+      if (!result.ok) return { ok: false, reason: result.reason };
+      applyEntitlementBalance(owner, "forms", result.balance);
+      await writeUsers();
+      return {
+        ok: true,
+        consumed: Number(result.reservation.accepted),
+        refunded: Number(result.reservation.refunded),
+        responsesLeft: result.balance.available,
+      };
+    },
+  });
+}
+
+if (typeof formsApp.setMetricsObserver === "function") {
+  formsApp.setMetricsObserver((event, fields = {}) => {
+    if (event === "response") {
+      metrics.increment("forms_responses_total", 1, {
+        outcome: String(fields.outcome ?? "unknown"),
+      });
+      return;
+    }
+    if (event === "job_blocked") {
+      metrics.increment("forms_jobs_blocked_total", 1, {
+        reason: String(fields.reason ?? "unknown"),
+      });
+    }
+  });
+}
+
+if (typeof formsApp.setJobRepository === "function") {
+  const fromDurableJob = (stored) => {
+    if (!stored) return null;
+    const job = stored.parameters?.job ?? {};
+    return {
+      ...job,
+      id: stored.id,
+      status: stored.status,
+      ...(stored.parameters?.payload !== undefined ? { payload: stored.parameters.payload } : {}),
+      leaseOwner: stored.leaseOwner ?? null,
+      leaseExpiresAt: stored.leaseExpiresAt ?? null,
+      attempts: stored.attempts ?? 0,
+      createdAt: job.createdAt ?? stored.createdAt,
+      updatedAt: stored.updatedAt,
+    };
+  };
+  formsApp.setJobRepository({
+    async create(job, { payload } = {}) {
+      const owner = users.find((item) => item.emailLower === normalizeEmail(job.ownerEmail));
+      if (!owner) throw new Error("No se encontro el propietario del trabajo Forms.");
+      const stored = await createDurableJob({
+        id: job.id,
+        userId: owner.id,
+        type: "forms",
+        status: job.status ?? "pending",
+        parameters: { job, payload },
+        progress: {
+          requested: job.requestedCount ?? job.count ?? 0,
+          accepted: job.accepted ?? job.sent ?? 0,
+          failed: job.failed ?? 0,
+        },
+        idempotencyKey: job.idempotencyKey ?? job.id,
+      });
+      await createDurableJobBatches({
+        jobId: stored.id,
+        total: job.requestedCount ?? job.count ?? 0,
+        batchSize: job.batchSize ?? 100,
+      });
+      return fromDurableJob(stored);
+    },
+    async update(job, { workerId, leaseMs } = {}) {
+      const previous = await getDurableJob(job.id);
+      if (!previous) return null;
+      const active = ["processing", "running", "paused", "cancelling"].includes(job.status);
+      const stored = await updateDurableJob(job.id, {
+        status: job.status,
+        parameters: { ...previous.parameters, job },
+        progress: {
+          requested: job.requestedCount ?? job.count ?? 0,
+          // Forms usa `accepted`/`sent` y `failed`. Los nombres
+          // `successes`/`failures` pertenecen al adaptador legado; mantenerlos
+          // solo como ultimo fallback evita que el progreso durable vuelva a
+          // cero cuando API y worker comparten proceso en desarrollo.
+          accepted: job.accepted ?? job.sent ?? job.successes ?? 0,
+          failed: job.failed ?? job.failures ?? 0,
+          uncertain: job.uncertain ?? 0,
+          cursor: job.cursor ?? job.currentIndex ?? 0,
+        },
+        ...(active ? (workerId ? { renewLeaseMs: leaseMs } : {}) : { clearLease: true }),
+        ...(workerId ? { workerId } : {}),
+      });
+      if (!stored) return null;
+      if (job.currentBatch > 0) {
+        const batchSize = job.batchSize ?? 100;
+        const batchStart = (job.currentBatch - 1) * batchSize;
+        const batchEnd = Math.min(
+          job.requestedCount ?? job.count ?? 0,
+          job.currentBatch * batchSize,
+        );
+        const batch = await updateDurableJobBatch(job.id, job.currentBatch, {
+          status: (job.currentIndex ?? 0) >= batchEnd ? "completed" : job.status,
+          cursor: Math.max(0, Math.min(batchSize, (job.currentIndex ?? 0) - batchStart)),
+          attempts: job.attempts ?? 0,
+          ...(workerId ? { workerId } : {}),
+        });
+        if (!batch && workerId) return null;
+      }
+      return fromDurableJob(stored);
+    },
+    async control(id, { status, jobPatch }) {
+      return fromDurableJob(await controlDurableJob(id, { status, jobPatch }));
+    },
+    async get(id) { return fromDurableJob(await getDurableJob(id)); },
+    async list({ ownerEmail, limit, status, since } = {}) {
+      const owner = ownerEmail
+        ? users.find((item) => item.emailLower === normalizeEmail(ownerEmail))
+        : null;
+      if (ownerEmail && !owner) return [];
+      const stored = await listDurableJobs({
+        userId: owner?.id,
+        type: "forms",
+        status,
+        since,
+        limit,
+      });
+      return stored.map(fromDurableJob);
+    },
+    async claim({ workerId, leaseMs }) {
+      const stored = await claimDurableJob({ type: "forms", workerId, leaseMs });
+      if (!stored) return null;
+      return {
+        job: fromDurableJob(stored),
+        payload: stored.parameters?.payload ?? null,
+      };
+    },
+    async renew(id, workerId, leaseMs) {
+      return fromDurableJob(await renewDurableJobLease({ id, workerId, leaseMs }));
+    },
+    async completeClaim(id, workerId) {
+      const existing = await getDurableJob(id);
+      if (!existing || existing.leaseOwner !== workerId) return null;
+      return fromDurableJob(await updateDurableJob(id, { clearLease: true }));
+    },
+  });
+}
 
 const server = http.createServer(async (req, res) => {
+  const requestedId = String(req.headers["x-request-id"] ?? "").trim();
+  const requestId = /^[a-zA-Z0-9._:-]{8,100}$/.test(requestedId)
+    ? requestedId
+    : crypto.randomUUID();
+  res.setHeader("X-Request-Id", requestId);
   // Cabeceras de seguridad para TODA la superficie HTTP, incluidas las rutas
   // de Forms (por eso van antes del despacho). La API sirve JSON: no debe
   // cargar nada, no debe poder enmarcarse y su tipo de contenido no debe
@@ -1103,12 +1798,281 @@ const server = http.createServer(async (req, res) => {
           google: googleEnabled ? { enabled: true, clientId: googleClientId } : { enabled: false },
           // Registro por correo: hoy apagado a proposito mientras no haya
           // verificacion por correo (ver REGISTRATION_ENABLED).
-          emailRegistration: REGISTRATION_ENABLED,
+          emailRegistration: false,
         },
         planPredeterminado: REGISTER_PLAN,
         herramientas: USE_TOOLS.map((id) => ({ id, label: TOOL_LABELS[id] })),
-        planes: PLAN_PRESETS,
+        planes: PUBLIC_PLAN_PRESETS,
+        quotaUnit: { forms: "response" },
+        formsResponses: Object.fromEntries(
+          Object.entries(PUBLIC_PLAN_PRESETS).map(([plan, preset]) => [plan, preset.forms]),
+        ),
+        capabilities: {
+          emailRegistration: false,
+          googleRegistration: googleEnabled,
+          devicePairing: true,
+          versionedProjects: true,
+          formsResponseReservations: true,
+          commercialLaunch: taypiCheckoutEnabled,
+          taypiPayments: taypiCheckoutEnabled,
+          formsTopups: taypiCheckoutEnabled
+            && Number.isSafeInteger(Number(process.env.FORMS_RESPONSE_PRICE_CENTS))
+            && Number(process.env.FORMS_RESPONSE_PRICE_CENTS) > 0,
+        },
+        paymentCurrency: "PEN",
       });
+      return;
+    }
+
+    // El checkout solo crea la orden. Ningún retorno del navegador acredita
+    // saldo: esa decisión pertenece exclusivamente al webhook HMAC de Taypi.
+    if (req.method === "POST" && pathname === "/payments/taypi/checkout") {
+      const user = await requireAuth(req);
+      if (!taypiCheckoutEnabled) {
+        throw new HttpError(503, "Los pagos todavía no están habilitados.", {
+          code: "PAYMENTS_NOT_CONFIGURED", retryable: true,
+        });
+      }
+      const payload = await parseJsonBody(req);
+      let purchase;
+      try {
+        purchase = getPurchasablePlan(payload?.plan, payload?.billingCycle);
+      } catch (error) {
+        throw new HttpError(400, error.message, { code: "INVALID_PURCHASE" });
+      }
+      const clientKey = String(payload?.idempotencyKey ?? "").trim();
+      if (!/^[a-zA-Z0-9._:-]{8,128}$/.test(clientKey)) {
+        throw new HttpError(400, "Envía una idempotencyKey válida.", {
+          code: "INVALID_IDEMPOTENCY_KEY", field: "idempotencyKey",
+        });
+      }
+      const reference = `PLAN-${crypto.randomUUID()}`;
+      const providerResult = await taypi.createCheckoutSession({
+        amount: purchase.amount,
+        currency: purchase.currency,
+        reference,
+        description: purchase.name,
+        metadata: { plan: purchase.id, billing_cycle: purchase.billingCycle },
+      }, `${user.id}:${clientKey}`);
+      let checkout;
+      try {
+        checkout = normalizeTaypiCheckout(providerResult);
+      } catch (error) {
+        throw new HttpError(502, error.message, {
+          code: "INVALID_PAYMENT_PROVIDER_RESPONSE", retryable: true,
+        });
+      }
+      const providerOrderId = checkout.paymentId;
+      await recordPaymentAndCredit({
+        userId: user.id,
+        provider: "taypi",
+        providerOrderId,
+        status: "pending",
+        amountMinor: purchase.amountCents,
+        currency: purchase.currency,
+        payload: {
+          order: {
+            kind: "plan",
+            planId: purchase.id,
+            billingCycle: purchase.billingCycle,
+            reference,
+          },
+        },
+      });
+      sendJson(res, 201, {
+        ok: true,
+        paymentId: providerOrderId,
+        status: "pending",
+        checkoutUrl: checkout.checkoutUrl,
+        expiresAt: checkout.expiresAt,
+      });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/payments/taypi/forms-topup") {
+      const user = await requireAuth(req);
+      if (!taypiCheckoutEnabled) {
+        throw new HttpError(503, "Los pagos todavía no están habilitados.", {
+          code: "PAYMENTS_NOT_CONFIGURED", retryable: true,
+        });
+      }
+      const payload = await parseJsonBody(req);
+      let purchase;
+      try {
+        purchase = getFormsResponsesTopup(payload?.requestedResponses);
+      } catch (error) {
+        throw new HttpError(error?.code === "TOPUP_NOT_CONFIGURED" ? 503 : 400, error.message, {
+          code: error?.code ?? "INVALID_FORMS_TOPUP",
+          field: error?.code ? undefined : "requestedResponses",
+          retryable: error?.code === "TOPUP_NOT_CONFIGURED",
+        });
+      }
+      const clientKey = String(payload?.idempotencyKey ?? "").trim();
+      if (!/^[a-zA-Z0-9._:-]{8,128}$/.test(clientKey)) {
+        throw new HttpError(400, "Envía una idempotencyKey válida.", {
+          code: "INVALID_IDEMPOTENCY_KEY", field: "idempotencyKey",
+        });
+      }
+      const reference = `FORMS-${crypto.randomUUID()}`;
+      const providerResult = await taypi.createCheckoutSession({
+        amount: purchase.amount,
+        currency: purchase.currency,
+        reference,
+        description: purchase.name,
+        metadata: {
+          kind: purchase.kind,
+          requested_responses: String(purchase.requestedResponses),
+        },
+      }, `${user.id}:forms:${clientKey}`);
+      let checkout;
+      try {
+        checkout = normalizeTaypiCheckout(providerResult);
+      } catch (error) {
+        throw new HttpError(502, error.message, {
+          code: "INVALID_PAYMENT_PROVIDER_RESPONSE", retryable: true,
+        });
+      }
+      await recordPaymentAndCredit({
+        userId: user.id,
+        provider: "taypi",
+        providerOrderId: checkout.paymentId,
+        status: "pending",
+        amountMinor: purchase.amountCents,
+        currency: purchase.currency,
+        payload: {
+          order: {
+            kind: purchase.kind,
+            requestedResponses: purchase.requestedResponses,
+            unitPriceMinor: purchase.unitPriceMinor,
+            reference,
+          },
+        },
+      });
+      sendJson(res, 201, {
+        ok: true,
+        paymentId: checkout.paymentId,
+        status: "pending",
+        checkoutUrl: checkout.checkoutUrl,
+        expiresAt: checkout.expiresAt,
+        requestedResponses: purchase.requestedResponses,
+        amount: purchase.amount,
+        currency: purchase.currency,
+      });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/payments/taypi/webhook") {
+      if (!taypi.enabled) {
+        throw new HttpError(503, "Taypi no está configurado.", {
+          code: "PAYMENTS_NOT_CONFIGURED", retryable: true,
+        });
+      }
+      const rawBody = await readRawBody(req);
+      if (!taypi.verifyWebhook(rawBody, req.headers)) {
+        throw new HttpError(401, "Firma de webhook inválida.", {
+          code: "INVALID_WEBHOOK_SIGNATURE",
+        });
+      }
+      let event;
+      try {
+        event = parseTaypiEvent(rawBody);
+      } catch (error) {
+        throw new HttpError(400, error.message, { code: "INVALID_WEBHOOK" });
+      }
+      const stored = paymentRow(await getPaymentRecord("taypi", event.payment_id));
+      if (!stored) {
+        // Se responde 200 para que Taypi no martille una orden que esta
+        // instalación nunca creó, pero no se acredita absolutamente nada.
+        structuredLog("warn", "taypi.unknown_payment", {
+          requestId, paymentId: event.payment_id,
+        });
+        sendJson(res, 200, { ok: true, ignored: true });
+        return;
+      }
+      if (stored.amountMinor !== event.amountCents || stored.currency !== event.currency) {
+        structuredLog("error", "taypi.amount_mismatch", {
+          requestId, paymentId: event.payment_id,
+          expectedAmountMinor: stored.amountMinor,
+          receivedAmountMinor: event.amountCents,
+        });
+        sendJson(res, 200, { ok: true, ignored: true });
+        return;
+      }
+      const order = stored.payload?.order ?? {};
+      let owner = await authoritativeUserById(stored.userId);
+      if (!owner) {
+        sendJson(res, 200, { ok: true, ignored: true });
+        return;
+      }
+      const isPaid = event.event === "payment.completed";
+      const isFormsTopup = order.kind === "forms_responses";
+      const topupQuantity = Number(order.requestedResponses);
+      if (isFormsTopup && (!Number.isSafeInteger(topupQuantity) || topupQuantity < 1)) {
+        structuredLog("error", "taypi.invalid_stored_topup", {
+          requestId, paymentId: event.payment_id,
+        });
+        sendJson(res, 200, { ok: true, ignored: true });
+        return;
+      }
+      let purchase = null;
+      if (!isFormsTopup) {
+        try {
+          purchase = getPurchasablePlan(order.planId, order.billingCycle);
+        } catch {
+          sendJson(res, 200, { ok: true, ignored: true });
+          return;
+        }
+      }
+      const credits = isPaid
+        ? (isFormsTopup ? { forms: topupQuantity } : { ...PLAN_PRESETS[purchase.id] })
+        : {};
+      const result = await recordPaymentAndCredit({
+        userId: owner.id,
+        provider: "taypi",
+        providerOrderId: event.payment_id,
+        status: isPaid ? "paid" : String(event.status ?? event.event.slice("payment.".length)),
+        amountMinor: event.amountCents,
+        currency: event.currency,
+        credits,
+        plan: isPaid && !isFormsTopup ? purchase.id : null,
+        subscriptionDays: isPaid && !isFormsTopup
+          ? (purchase.billingCycle === "yearly" ? 365 : 30)
+          : 0,
+        subscriptionEndsAt: isPaid && !isFormsTopup
+          ? paidSubscriptionEnd(owner, purchase.billingCycle)
+          : null,
+        payload: {
+          ...stored.payload,
+          webhook: {
+            event: event.event,
+            status: event.status,
+            paidAt: event.paid_at ?? null,
+            webhookId: String(req.headers["taypi-webhook-id"] ?? "") || null,
+          },
+        },
+      });
+      if (isPaid) {
+        owner = await authoritativeUserById(owner.id);
+        const ownerExpectedUpdatedAt = owner.updatedAt;
+        if (!isFormsTopup) {
+          owner.plan = purchase.id;
+          owner.subscriptionEndsAt = result.subscriptionEndsAt
+            ?? paidSubscriptionEnd(owner, purchase.billingCycle);
+        }
+        for (const [tool, balance] of Object.entries(result.balances ?? {})) {
+          applyEntitlementBalance(owner, tool, balance);
+        }
+        if (result.credited) {
+          logActivity(owner, isFormsTopup
+            ? `Pago Taypi acreditó ${topupQuantity} respuestas de Forms`
+            : `Pago Taypi acreditó el plan ${purchase.name}`);
+        }
+        await commitUser(owner, ownerExpectedUpdatedAt);
+      }
+      metrics.increment("payments_webhooks_total", 1, {
+        provider: "taypi", outcome: result.credited ? "credited" : "duplicate",
+      });
+      sendJson(res, 200, { ok: true, credited: Boolean(result.credited) });
       return;
     }
 
@@ -1120,7 +2084,7 @@ const server = http.createServer(async (req, res) => {
       const rateKey = `${ip}|${email}`;
       assertLoginAllowedForIp(ip);
       assertLoginAllowed(rateKey);
-      const user = users.find((item) => item.emailLower === email);
+      let user = await authoritativeUserByEmail(email);
       if (!user || !checkPassword(password, user)) {
         registerLoginFailure(rateKey);
         if (ip && ip !== "unknown") registerLoginFailure(`ip|${ip}`);
@@ -1135,10 +2099,11 @@ const server = http.createServer(async (req, res) => {
       }
       // La suscripcion vencida NO bloquea el login: el usuario puede entrar a
       // ver su cuenta y usar Forms con sus usos; /generate si exige dias.
+      const loginExpectedUpdatedAt = user.updatedAt;
       user.lastLoginAt = new Date().toISOString();
       user.updatedAt = user.lastLoginAt;
-      writeUsers();
-      const signed = signToken(user);
+      user = await commitUser(user, loginExpectedUpdatedAt);
+      const signed = await persistSignedSession(user, signToken(user));
       sendJson(res, 200, {
         ok: true,
         token: signed.token,
@@ -1184,14 +2149,17 @@ const server = http.createServer(async (req, res) => {
       registerRegistration(ip);
       logActivity(user, "Se registró desde la web (plan gratuito)");
       // La cuenta debe estar en firme antes de devolver la sesion.
-      await writeUsers();
+      const committedUser = await commitUser(user).catch((error) => {
+        users = users.filter((candidate) => candidate.id !== user.id);
+        throw error;
+      });
 
-      const signed = signToken(user);
+      const signed = await persistSignedSession(committedUser, signToken(committedUser));
       sendJson(res, 201, {
         ok: true,
         token: signed.token,
         tokenExpiresAt: signed.expiresAt,
-        user: sanitizeUser(user),
+        user: sanitizeUser(committedUser),
       });
       return;
     }
@@ -1217,24 +2185,38 @@ const server = http.createServer(async (req, res) => {
       }
 
       const emailLower = normalizeEmail(perfil.email);
-      let user = users.find((item) => item.emailLower === emailLower);
+      // Google se resuelve siempre por el identificador estable `sub`.
+      // Compartir correo nunca vincula automaticamente dos credenciales.
+      let user = await authoritativeUserByGoogleSub(perfil.sub);
+      const previousUser = user ? structuredClone(user) : null;
       let creado = false;
 
       if (!user) {
+        const emailOwner = await authoritativeUserByEmail(emailLower);
+        if (emailOwner) {
+          throw new HttpError(
+            409,
+            "Ya existe una cuenta con ese correo y otro metodo de acceso. Un administrador debe vincularla de forma verificada.",
+            { code: "IDENTITY_LINK_REQUIRED" },
+          );
+        }
         // Alta nueva: cuenta el limite por IP, igual que el registro por
         // correo. Que Google verifique el correo no impide que alguien tenga
         // muchas cuentas de Google.
         assertRegisterAllowed(ip);
+        // `user` es local a esta petición; el CAS del commit protege la fila.
+        // eslint-disable-next-line require-atomic-updates
         user = createUser({
           email: perfil.email,
           // Sin contraseña utilizable: se entra por Google. Es aleatoria y no
           // se le comunica a nadie, en vez de dejar el campo vacio (que haria
           // que checkPassword se comportara de forma imprevisible).
-          password: crypto.randomBytes(24).toString("base64url"),
           role: "user",
           status: "active",
           plan: REGISTER_PLAN,
           uses: usesForNewAccount(emailLower),
+          passwordEnabled: false,
+          googleSub: perfil.sub,
         });
         registerRegistration(ip);
         creado = true;
@@ -1242,6 +2224,12 @@ const server = http.createServer(async (req, res) => {
       } else if (user.status !== "active") {
         throw new HttpError(403, "Usuario inactivo.");
       } else {
+        const emailOwnerCandidate = await authoritativeUserByEmail(emailLower);
+        const emailOwner = emailOwnerCandidate?.id !== user.id ? emailOwnerCandidate : null;
+        if (!emailOwner) {
+          user.email = perfil.email;
+          user.emailLower = emailLower;
+        }
         logActivity(user, "Inició sesión con Google");
       }
 
@@ -1252,22 +2240,364 @@ const server = http.createServer(async (req, res) => {
       user.lastLoginAt = new Date().toISOString();
       user.updatedAt = user.lastLoginAt;
       // Una cuenta recien creada no puede confirmarse antes de estar en firme.
-      await writeUsers();
+      const committedUser = await commitUser(user, previousUser?.updatedAt ?? null).catch((error) => {
+        if (creado) users = users.filter((candidate) => candidate.id !== user.id);
+        else if (previousUser) Object.assign(user, previousUser);
+        throw error;
+      });
 
-      const signed = signToken(user);
+      const signed = await persistSignedSession(committedUser, signToken(committedUser));
       sendJson(res, creado ? 201 : 200, {
         ok: true,
         creado,
         token: signed.token,
         tokenExpiresAt: signed.expiresAt,
-        user: sanitizeUser(user),
+        user: sanitizeUser(committedUser),
       });
       return;
     }
 
-    if (req.method === "GET" && pathname === "/auth/me") {
-      const user = requireAuth(req);
+    // Vinculación explícita para una cuenta manual: exige la contraseña
+    // vigente y una credencial Google válida del mismo correo. Compartir el
+    // correo por sí solo nunca vincula identidades.
+    if (req.method === "POST" && pathname === "/auth/link-google") {
+      const user = await requireAuth(req);
+      if (!user.passwordEnabled) {
+        throw new HttpError(409, "Esta cuenta ya usa un proveedor externo.", {
+          code: "PASSWORD_IDENTITY_REQUIRED",
+        });
+      }
+      const payload = await parseJsonBody(req);
+      if (!checkPassword(String(payload?.currentPassword ?? ""), user)) {
+        throw new HttpError(401, "La contraseña actual no es correcta.", {
+          code: "INVALID_CURRENT_PASSWORD", field: "currentPassword",
+        });
+      }
+      let profile;
+      try {
+        profile = await verifyGoogleIdToken(payload?.credential ?? payload?.idToken);
+      } catch (error) {
+        throw new HttpError(401, error.message, { code: "INVALID_GOOGLE_IDENTITY" });
+      }
+      if (normalizeEmail(profile.email) !== user.emailLower) {
+        throw new HttpError(409, "La cuenta Google debe tener el mismo correo verificado.", {
+          code: "IDENTITY_EMAIL_MISMATCH",
+        });
+      }
+      const subjectOwnerCandidate = await authoritativeUserByGoogleSub(profile.sub);
+      const subjectOwner = subjectOwnerCandidate?.id !== user.id ? subjectOwnerCandidate : null;
+      if (subjectOwner) {
+        throw new HttpError(409, "Esa identidad Google ya pertenece a otra cuenta.", {
+          code: "IDENTITY_ALREADY_LINKED",
+        });
+      }
+      const previousSub = user.googleSub;
+      const previousLinkedAt = user.googleLinkedAt;
+      const previousUpdatedAt = user.updatedAt;
+      user.googleSub = profile.sub;
+      user.googleLinkedAt = new Date().toISOString();
+      user.updatedAt = user.googleLinkedAt;
+      logActivity(user, "Vinculó su acceso con Google");
+      try {
+        await commitUser(user, previousUpdatedAt);
+      } catch (error) {
+        user.googleSub = previousSub;
+        user.googleLinkedAt = previousLinkedAt;
+        throw error;
+      }
       sendJson(res, 200, { ok: true, user: sanitizeUser(user) });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/auth/logout") {
+      await requireAuth(req);
+      await revokeSessionByTokenHash(sessionTokenHash(getBearerToken(req)));
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/auth/me") {
+      const user = await requireAuth(req);
+      await refreshEntitlementBalances(user);
+      sendJson(res, 200, { ok: true, user: sanitizeUser(user) });
+      return;
+    }
+    if (req.method === "GET" && pathname === "/auth/sessions") {
+      const user = await requireAuth(req);
+      const currentHash = sessionTokenHash(getBearerToken(req));
+      const sessions = await listSessionsByUser(user.id);
+      sendJson(res, 200, {
+        ok: true,
+        sessions: sessions.map((session) => ({
+          id: session.id,
+          current: (session.tokenHash ?? session.token_hash) === currentHash,
+          createdAt: session.createdAt ?? session.created_at,
+          expiresAt: session.expiresAt ?? session.expires_at,
+          revokedAt: session.revokedAt ?? session.revoked_at ?? null,
+        })),
+      });
+      return;
+    }
+    if (req.method === "POST" && pathname === "/auth/sessions/revoke-others") {
+      const user = await requireAuth(req);
+      const userExpectedUpdatedAt = user.updatedAt;
+      const currentHash = sessionTokenHash(getBearerToken(req));
+      const revoked = await revokeOtherSessions(user.id, currentHash);
+      logActivity(user, `Revoco ${revoked} sesion(es) adicional(es)`);
+      user.updatedAt = new Date().toISOString();
+      await commitUser(user, userExpectedUpdatedAt);
+      sendJson(res, 200, { ok: true, revoked });
+      return;
+    }
+    if (req.method === "GET" && pathname === "/ready") {
+      try {
+        const startedAt = Date.now();
+        await isStoreReady();
+        const databaseLatencyMs = Date.now() - startedAt;
+        const r2 = await artifactStore.readiness();
+        const queue = getGenerationQueueStatus();
+        const formsJobs = await listDurableJobs({ type: "forms", limit: 500 });
+        const formsQueueDepth = formsJobs.filter((job) => ["pending", "queued"].includes(job.status)).length;
+        const formsActive = formsJobs.filter((job) => (
+          ["processing", "running", "paused", "blocked", "cancelling"].includes(job.status)
+        )).length;
+        const formsQueueLimit = Math.max(1, Number(process.env.FORMS_READY_MAX_QUEUE ?? 10_000));
+        if ((artifactStore.enabled && !r2.ok)
+          || (process.env.NODE_ENV === "production" && !artifactStore.enabled)
+          || !queue.accepting
+          || formsQueueDepth >= formsQueueLimit) {
+          throw new Error("dependency_not_ready");
+        }
+        metrics.observe("neon_latency_ms", databaseLatencyMs);
+        metrics.gauge("generation_queue_depth", queue.queued);
+        metrics.gauge("forms_queue_depth", formsQueueDepth);
+        metrics.gauge("forms_active_jobs", formsActive);
+        metrics.gauge("process_rss_bytes", process.memoryUsage().rss);
+        sendJson(res, 200, {
+          ok: true,
+          service: "tabulacion-api",
+          database: { ok: true, latencyMs: databaseLatencyMs },
+          r2,
+          queue,
+          formsQueue: {
+            queued: formsQueueDepth,
+            active: formsActive,
+            accepting: formsQueueDepth < formsQueueLimit,
+          },
+          memory: { rssBytes: process.memoryUsage().rss },
+          now: new Date().toISOString(),
+        });
+      } catch {
+        sendJson(res, 503, {
+          ok: false,
+          code: "DEPENDENCY_UNAVAILABLE",
+          message: "La base de datos no esta disponible.",
+          retryable: true,
+        });
+      }
+      return;
+    }
+    if (req.method === "GET" && pathname === "/metrics") {
+      await requireAuth(req, { adminOnly: true });
+      const memory = process.memoryUsage();
+      metrics.gauge("process_heap_used_bytes", memory.heapUsed);
+      metrics.gauge("process_rss_bytes", memory.rss);
+      sendJson(res, 200, {
+        ok: true,
+        metrics: metrics.snapshot(),
+        queue: getGenerationQueueStatus(),
+      });
+      return;
+    }
+
+    // Emparejamiento de la extension sin contraseña. La extension crea un
+    // codigo breve; el usuario lo aprueba desde una sesion web y recibe una
+    // credencial exclusiva de esa instalacion, revocable sin afectar las demas.
+    if (req.method === "POST" && pathname === "/auth/device-pairings") {
+      const payload = await parseJsonBody(req);
+      const deviceName = String(payload?.deviceName ?? "Chrome").trim().slice(0, 80) || "Chrome";
+      const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      let userCode = "";
+      let pairing = null;
+      for (let attempt = 0; attempt < 3 && !pairing; attempt += 1) {
+        userCode = Array.from(
+          crypto.randomBytes(8),
+          (byte) => alphabet[byte % alphabet.length],
+        ).join("");
+        const candidate = {
+          id: crypto.randomUUID(),
+          userCodeHash: hashApiKey(userCode),
+          secretHash: "",
+          deviceName,
+          status: "pending",
+          userId: null,
+          expiresAt: new Date(Date.now() + DEVICE_PAIRING_TTL_MS).toISOString(),
+          consumedAt: null,
+        };
+        // El secreto se genera fuera del registro porque se entrega una sola
+        // vez; Neon conserva únicamente su hash.
+        candidate.deviceSecret = crypto.randomBytes(24).toString("base64url");
+        candidate.secretHash = hashApiKey(candidate.deviceSecret);
+        try {
+          const stored = pairingRow(await createDevicePairing(candidate));
+          pairing = { ...stored, deviceSecret: candidate.deviceSecret };
+        } catch (error) {
+          if (error?.code !== "23505" || attempt === 2) throw error;
+        }
+      }
+      if (!pairing) throw new HttpError(503, "No se pudo crear el emparejamiento.");
+      sendJson(res, 201, {
+        ok: true,
+        pairingId: pairing.id,
+        userCode,
+        deviceSecret: pairing.deviceSecret,
+        expiresAt: new Date(pairing.expiresAt).toISOString(),
+        verificationUrl: `${getBaseUrl()}/cuenta`,
+      });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/auth/device-pairings/approve") {
+      const user = await requireAuth(req);
+      const payload = await parseJsonBody(req);
+      const userCode = String(payload?.userCode ?? "").trim().toUpperCase().replace(/[\s-]/g, "");
+      const pairing = pairingRow(await findDevicePairingByCodeHash(hashApiKey(userCode)));
+      if (!pairing || Date.parse(pairing.expiresAt) <= Date.now()) {
+        throw new HttpError(404, "El codigo de emparejamiento no existe o vencio.", {
+          code: "PAIRING_NOT_FOUND",
+        });
+      }
+      if (pairing.userId && pairing.userId !== user.id) {
+        throw new HttpError(409, "Ese codigo ya fue aprobado por otra cuenta.", {
+          code: "PAIRING_ALREADY_APPROVED",
+        });
+      }
+      const approved = pairingRow(await updateDevicePairing(pairing.id, {
+        userId: user.id, status: "approved",
+      }));
+      sendJson(res, 200, {
+        ok: true,
+        pairingId: approved.id,
+        deviceName: approved.deviceName,
+        status: approved.status,
+      });
+      return;
+    }
+
+    const pairingStatusRoute = pathname.match(
+      /^\/auth\/device-pairings\/([0-9a-fA-F-]+)$/,
+    );
+    if (pairingStatusRoute && new Set(["GET", "POST"]).has(req.method)) {
+      const pairing = pairingRow(await getDevicePairing(pairingStatusRoute[1]));
+      // POST evita que el secreto acabe en logs de acceso, historial o
+      // herramientas de observabilidad. GET se conserva temporalmente como
+      // adaptador para extensiones anteriores, pero se marca como obsoleto.
+      let providedSecret;
+      if (req.method === "POST") {
+        const payload = await parseJsonBody(req);
+        providedSecret = String(payload?.deviceSecret ?? "");
+      } else {
+        providedSecret = String(
+          req.headers["x-device-secret"] ?? requestUrl.searchParams.get("secret") ?? "",
+        );
+        res.setHeader("Deprecation", "true");
+        res.setHeader("Sunset", LEGACY_API_SUNSET_HEADER);
+      }
+      res.setHeader("Cache-Control", "no-store");
+      if (!pairing || Date.parse(pairing.expiresAt) <= Date.now()
+        || hashApiKey(providedSecret) !== pairing.secretHash) {
+        throw new HttpError(404, "El emparejamiento no existe o vencio.", {
+          code: "PAIRING_NOT_FOUND",
+        });
+      }
+      if (pairing.consumedAt) {
+        throw new HttpError(410, "La credencial de este emparejamiento ya fue entregada.", {
+          code: "PAIRING_CONSUMED",
+        });
+      }
+      if (pairing.status !== "approved" || !pairing.userId) {
+        sendJson(res, 200, { ok: true, status: "pending", expiresAt: new Date(pairing.expiresAt).toISOString() });
+        return;
+      }
+      const owner = await authoritativeUserById(pairing.userId);
+      if (!owner || owner.status !== "active") {
+        throw new HttpError(403, "La cuenta que aprobo el dispositivo no esta activa.");
+      }
+      const deliveryClaim = pairingRow(await updateDevicePairing(pairing.id, {
+        status: "delivering",
+        expectedStatus: "approved",
+        requireUnconsumed: true,
+        requireNotExpired: true,
+      }));
+      if (!deliveryClaim) {
+        throw new HttpError(410, "La credencial de este emparejamiento ya fue entregada.", {
+          code: "PAIRING_CONSUMED",
+        });
+      }
+      const apiKey = `ttab_${crypto.randomBytes(24).toString("hex")}`;
+      const nowIso = new Date().toISOString();
+      const device = {
+        id: crypto.randomUUID(),
+        name: pairing.deviceName,
+        credentialHash: hashApiKey(apiKey),
+        last4: apiKey.slice(-4),
+        createdAt: nowIso,
+        lastUsedAt: null,
+        revokedAt: null,
+      };
+      const ownerExpectedUpdatedAt = owner.updatedAt;
+      owner.deviceCredentials = [
+        ...(Array.isArray(owner.deviceCredentials) ? owner.deviceCredentials : []),
+        device,
+      ];
+      owner.updatedAt = nowIso;
+      logActivity(owner, `Vinculo el dispositivo "${device.name}"`);
+      try {
+        await commitUser(owner, ownerExpectedUpdatedAt);
+      } catch (err) {
+        owner.deviceCredentials = owner.deviceCredentials.filter((item) => item.id !== device.id);
+        await updateDevicePairing(pairing.id, {
+          status: "approved",
+          expectedStatus: "delivering",
+          requireUnconsumed: true,
+        }).catch(() => null);
+        throw err;
+      }
+      await updateDevicePairing(pairing.id, {
+        consumedAt: new Date().toISOString(),
+        status: "consumed",
+        expectedStatus: "delivering",
+        requireUnconsumed: true,
+      });
+      sendJson(res, 200, {
+        ok: true,
+        status: "approved",
+        apiKey,
+        device: {
+          id: device.id, name: device.name, last4: device.last4, createdAt: device.createdAt,
+        },
+      });
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/auth/devices") {
+      const user = await requireAuth(req);
+      sendJson(res, 200, { ok: true, devices: sanitizeUser(user).devices });
+      return;
+    }
+
+    const deviceRoute = pathname.match(/^\/auth\/devices\/([0-9a-fA-F-]+)$/);
+    if (deviceRoute && req.method === "DELETE") {
+      const user = await requireAuth(req);
+      const userExpectedUpdatedAt = user.updatedAt;
+      const device = (Array.isArray(user.deviceCredentials) ? user.deviceCredentials : [])
+        .find((item) => item.id === deviceRoute[1] && !item.revokedAt);
+      if (!device) throw new HttpError(404, "Dispositivo no encontrado.");
+      device.revokedAt = new Date().toISOString();
+      user.updatedAt = device.revokedAt;
+      logActivity(user, `Revoco el dispositivo "${device.name}"`);
+      await commitUser(user, userExpectedUpdatedAt);
+      sendJson(res, 200, { ok: true });
       return;
     }
 
@@ -1276,7 +2606,7 @@ const server = http.createServer(async (req, res) => {
     // ofrecer la eliminacion de la cuenta a las aplicaciones que usan su inicio
     // de sesion, y el derecho de supresion del RGPD apunta a lo mismo.
     if (req.method === "DELETE" && pathname === "/auth/me") {
-      const user = requireAuth(req);
+      const user = await requireAuth(req);
       const payload = await parseJsonBody(req);
 
       // La confirmacion es escribir el propio correo, NO la contraseña: quien
@@ -1291,6 +2621,8 @@ const server = http.createServer(async (req, res) => {
       if (user.role === "admin") {
         throw new HttpError(403, "Una cuenta de administrador no puede eliminarse a si misma.");
       }
+
+      if (artifactStore.enabled) await artifactStore.deleteUserArtifacts(user.id);
 
       // Se anota ANTES de borrar: si el proceso muriera en medio, el peor caso
       // es que la cuenta siga viva pero marcada, no que se regale otra cuota.
@@ -1312,9 +2644,9 @@ const server = http.createServer(async (req, res) => {
       // Sus proyectos se van con la cuenta: es parte de "eliminar tus datos".
       await borrarProyectosDeUsuario(user.id);
       users = users.filter((item) => item.id !== user.id);
-      await writeUsers();
-      // eslint-disable-next-line no-console
-      console.log(`[cuenta] un usuario elimino su cuenta (quedan ${users.length}).`);
+      await deleteUserStoreData(user.id);
+      if (!usingPostgres) await writeUsers();
+      structuredLog("info", "account.deleted", { remainingUserCount: users.length });
       sendJson(res, 200, {
         ok: true,
         mensaje: "Tu cuenta y tus datos fueron eliminados.",
@@ -1327,7 +2659,7 @@ const server = http.createServer(async (req, res) => {
 
     // ── Clave de API del usuario (para la extension Tutorica Forms) ─────────
     if (pathname === "/auth/api-key") {
-      const user = requireAuth(req);
+      const user = await requireAuth(req);
       if (req.method === "GET") {
         sendJson(res, 200, {
           ok: true,
@@ -1338,30 +2670,71 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (req.method === "POST") {
+        const userExpectedUpdatedAt = user.updatedAt;
+        const installationId = String(req.headers["x-device-id"] ?? "").trim();
+        if (installationId && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(installationId)) {
+          throw new HttpError(400, "X-Device-Id debe ser un UUID v4.", {
+            code: "INVALID_DEVICE_ID",
+          });
+        }
         // El admin con ADMIN_API_KEY fija recibe siempre esa clave: si se
         // regenerara, el proximo reinicio la restauraria desde el entorno y la
         // clave recien emitida dejaria de validar sin aviso.
         const isBootstrapAdmin = user.emailLower === normalizeEmail(ADMIN_EMAIL);
         const hasFixedAdminKey =
           isBootstrapAdmin && ADMIN_API_KEY.startsWith("ttab_") && ADMIN_API_KEY.length >= 20;
-        const apiKey = hasFixedAdminKey ? ADMIN_API_KEY : `ttab_${crypto.randomBytes(24).toString("hex")}`;
-        user.apiKeyHash = hashApiKey(apiKey);
-        user.apiKeyLast4 = apiKey.slice(-4);
-        user.apiKeyCreatedAt = new Date().toISOString();
-        user.updatedAt = user.apiKeyCreatedAt;
-        logActivity(user, "Generó su clave de API");
-        await writeUsers();
+        const apiKey = installationId
+          ? `ttab_${crypto.randomBytes(24).toString("hex")}`
+          : hasFixedAdminKey ? ADMIN_API_KEY : `ttab_${crypto.randomBytes(24).toString("hex")}`;
+        const nowIso = new Date().toISOString();
+        if (installationId) {
+          const existing = (Array.isArray(user.deviceCredentials) ? user.deviceCredentials : [])
+            .find((device) => device.id === installationId);
+          const credential = {
+            id: installationId,
+            name: "Chrome · acceso manual",
+            credentialHash: hashApiKey(apiKey),
+            last4: apiKey.slice(-4),
+            createdAt: existing?.createdAt ?? nowIso,
+            lastUsedAt: null,
+            revokedAt: null,
+          };
+          user.deviceCredentials = [
+            ...(Array.isArray(user.deviceCredentials)
+              ? user.deviceCredentials.filter((device) => device.id !== installationId)
+              : []),
+            credential,
+          ];
+          logActivity(user, existing
+            ? "Renovó la credencial de una instalación de Forms"
+            : "Vinculó una instalación de Forms con acceso manual");
+        } else {
+          // Adaptador para clientes antiguos sin identificador de instalacion.
+          user.apiKeyHash = hashApiKey(apiKey);
+          user.apiKeyLast4 = apiKey.slice(-4);
+          user.apiKeyCreatedAt = nowIso;
+          logActivity(user, "Generó su clave de API heredada");
+        }
+        user.updatedAt = nowIso;
+        await commitUser(user, userExpectedUpdatedAt);
         // La clave en claro solo viaja en esta respuesta.
-        sendJson(res, 200, { ok: true, apiKey, last4: user.apiKeyLast4, createdAt: user.apiKeyCreatedAt });
+        sendJson(res, 200, {
+          ok: true,
+          apiKey,
+          last4: apiKey.slice(-4),
+          createdAt: nowIso,
+          deviceId: installationId || null,
+        });
         return;
       }
       if (req.method === "DELETE") {
+        const userExpectedUpdatedAt = user.updatedAt;
         delete user.apiKeyHash;
         delete user.apiKeyLast4;
         delete user.apiKeyCreatedAt;
         user.updatedAt = new Date().toISOString();
         logActivity(user, "Revocó su clave de API");
-        await writeUsers();
+        await commitUser(user, userExpectedUpdatedAt);
         sendJson(res, 200, { ok: true });
         return;
       }
@@ -1407,7 +2780,8 @@ const server = http.createServer(async (req, res) => {
     // Cambio de contraseña por el propio usuario (self-service). Con rate
     // limiting: un token robado no puede probar contraseñas sin freno.
     if (req.method === "POST" && pathname === "/auth/change-password") {
-      const user = requireAuth(req);
+      const user = await requireAuth(req);
+      const userExpectedUpdatedAt = user.updatedAt;
       const payload = await parseJsonBody(req);
       const rateKey = `chpwd|${user.id}`;
       assertLoginAllowed(rateKey);
@@ -1423,8 +2797,9 @@ const server = http.createServer(async (req, res) => {
       user.tokenVersion = (user.tokenVersion ?? 1) + 1;
       logActivity(user, "Cambió su contraseña");
       user.updatedAt = new Date().toISOString();
-      await writeUsers();
-      const signed = signToken(user);
+      await commitUser(user, userExpectedUpdatedAt);
+      await revokeSessionsByUser(user.id);
+      const signed = await persistSignedSession(user, signToken(user));
       sendJson(res, 200, { ok: true, token: signed.token, tokenExpiresAt: signed.expiresAt });
       return;
     }
@@ -1433,20 +2808,19 @@ const server = http.createServer(async (req, res) => {
     // free) users.json se borra en cada reinicio; exportar/importar permite
     // no perder cuentas, claves y usos.
     if (req.method === "GET" && pathname === "/auth/users/backup") {
-      requireAuth(req, { adminOnly: true });
+      await requireAuth(req, { adminOnly: true });
       sendJson(res, 200, { ok: true, exportedAt: new Date().toISOString(), users });
       return;
     }
 
     if (req.method === "POST" && pathname === "/auth/users/restore") {
-      requireAuth(req, { adminOnly: true });
+      await requireAuth(req, { adminOnly: true });
       const payload = await parseJsonBody(req);
       const incoming = Array.isArray(payload?.users) ? payload.users : null;
       if (!incoming || incoming.length === 0) {
         throw new HttpError(400, "El respaldo debe incluir un arreglo 'users' con al menos un usuario.");
       }
-      const shapeOk = incoming.every((u) => u && typeof u === "object"
-        && u.id && u.emailLower && u.passwordHash && u.passwordSalt);
+      const shapeOk = incoming.every(isRestorableUser);
       if (!shapeOk) {
         throw new HttpError(400, "El respaldo tiene un formato invalido (faltan campos de usuario).");
       }
@@ -1460,7 +2834,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && pathname === "/auth/users") {
-      requireAuth(req, { adminOnly: true });
+      await requireAuth(req, { adminOnly: true });
       const list = [...users]
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
         .map((item) => ({ ...sanitizeUser(item), activity: (item.activity ?? []).slice(0, 20) }));
@@ -1469,7 +2843,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && pathname === "/auth/users") {
-      requireAuth(req, { adminOnly: true });
+      await requireAuth(req, { adminOnly: true });
       const payload = await parseJsonBody(req);
       const user = createUser({
         email: payload?.email,
@@ -1484,8 +2858,11 @@ const server = http.createServer(async (req, res) => {
       });
       // La cuenta debe estar en firme antes de confirmarla: el admin le pasa
       // esas credenciales al usuario y no puede reconstruirlas.
-      await writeUsers();
-      sendJson(res, 201, { ok: true, user: sanitizeUser(user) });
+      const committedUser = await commitUser(user).catch((error) => {
+        users = users.filter((candidate) => candidate.id !== user.id);
+        throw error;
+      });
+      sendJson(res, 201, { ok: true, user: sanitizeUser(committedUser) });
       return;
     }
 
@@ -1493,25 +2870,27 @@ const server = http.createServer(async (req, res) => {
     // deja de validar de inmediato.
     const userApiKeyRoute = pathname.match(/^\/auth\/users\/([0-9a-fA-F-]+)\/api-key$/);
     if (userApiKeyRoute && req.method === "DELETE") {
-      requireAuth(req, { adminOnly: true });
-      const target = users.find((item) => item.id === userApiKeyRoute[1]);
+      await requireAuth(req, { adminOnly: true });
+      const target = await authoritativeUserById(userApiKeyRoute[1]);
       if (!target) throw new HttpError(404, "Usuario no encontrado.");
+      const targetExpectedUpdatedAt = target.updatedAt;
       delete target.apiKeyHash;
       delete target.apiKeyLast4;
       delete target.apiKeyCreatedAt;
       target.updatedAt = new Date().toISOString();
       logActivity(target, "Clave de API revocada por el administrador");
-      await writeUsers();
+      await commitUser(target, targetExpectedUpdatedAt);
       sendJson(res, 200, { ok: true, user: sanitizeUser(target) });
       return;
     }
 
     const authUserRoute = pathname.match(/^\/auth\/users\/([0-9a-fA-F-]+)$/);
     if (authUserRoute && req.method === "PATCH") {
-      const admin = requireAuth(req, { adminOnly: true });
+      const admin = await requireAuth(req, { adminOnly: true });
       const targetId = authUserRoute[1];
-      const target = users.find((item) => item.id === targetId);
+      const target = await authoritativeUserById(targetId);
       if (!target) throw new HttpError(404, "Usuario no encontrado.");
+      const targetExpectedUpdatedAt = target.updatedAt;
 
       const payload = await parseJsonBody(req);
       if (target.id === admin.id) {
@@ -1551,29 +2930,56 @@ const server = http.createServer(async (req, res) => {
       // persistir — p. ej. un cambio de contraseña que respondia 200 sin haber
       // cambiado nada. `patchUser` sigue validando sobre una copia, asi que un
       // payload invalido no deja al usuario a medio modificar.
+      if (payload?.uses !== undefined || payload?.usesDelta !== undefined
+        || payload?.formsUses !== undefined || payload?.formsUsesDelta !== undefined) {
+        const balances = Object.fromEntries(USE_TOOLS.map((tool) => [tool, {
+          available: updated.uses[tool] ?? 0,
+          consumed: updated.usesConsumed[tool] ?? 0,
+          reserved: tool === "forms" ? (updated.formsResponsesReserved ?? 0) : 0,
+        }]));
+        await setEntitlementBalances(target.id, balances, {
+          actorUserId: admin.id,
+          reason: "admin_adjustment",
+        });
+      }
       Object.assign(target, updated);
-      await writeUsers();
+      await commitUser(target, targetExpectedUpdatedAt);
+      if (payload?.password !== undefined) await revokeSessionsByUser(target.id);
       sendJson(res, 200, { ok: true, user: sanitizeUser(target) });
       return;
     }
 
     if (authUserRoute && req.method === "DELETE") {
-      const admin = requireAuth(req, { adminOnly: true });
+      const admin = await requireAuth(req, { adminOnly: true });
       const targetId = authUserRoute[1];
       if (targetId === admin.id) {
         throw new HttpError(400, "No puedes eliminar tu propio usuario admin.");
       }
-      const target = users.find((item) => item.id === targetId);
+      const target = await authoritativeUserById(targetId);
       if (!target) throw new HttpError(404, "Usuario no encontrado.");
+      for (const [id, item] of results.entries()) {
+        if (item.ownerUserId === targetId) results.delete(id);
+      }
+      for (const jobs of [descriptivaJobs, titulosJobs, matrizJobs, humanizadorJobs]) {
+        for (const [id, job] of jobs.entries()) {
+          if (job.ownerUserId === targetId) {
+            jobs.delete(id);
+            clearPendingUse(id);
+          }
+        }
+      }
+      if (artifactStore.enabled) await artifactStore.deleteUserArtifacts(targetId);
+      await borrarProyectosDeUsuario(targetId);
       users = users.filter((item) => item.id !== targetId);
-      await writeUsers();
+      await deleteUserStoreData(targetId);
+      if (!usingPostgres) await writeUsers();
       sendJson(res, 200, { ok: true });
       return;
     }
 
     // Limites del generador (el Excel se construye por codigo, sin plantilla).
     if (req.method === "GET" && pathname === "/template-info") {
-      requireAuth(req);
+      await requireAuth(req);
       sendJson(res, 200, {
         ok: true,
         maxMuestra: MAX_MUESTRA,
@@ -1595,33 +3001,123 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Generar Excel consume 1 uso de Tabulación (se devuelve si la
-    // generacion falla).
+    // Cada generación tiene un job durable. La clave idempotente evita cobrar
+    // o construir dos veces cuando el cliente reintenta la misma petición.
     if (req.method === "POST" && pathname === "/generate") {
-      const authUser = requireAuth(req);
+      const authUser = await requireAuth(req);
       const payload = await parseJsonBody(req);
-      const config = payload?.config && typeof payload.config === "object"
+      let config = payload?.config && typeof payload.config === "object"
         ? payload.config
         : payload;
-
       if (!config || typeof config !== "object" || Array.isArray(config)) {
         throw new HttpError(400, "Debes enviar una configuracion valida (objeto JSON).");
       }
+      if (payload?.seed !== undefined && config.seed === undefined && config.semilla === undefined) {
+        config = { ...config, seed: payload.seed };
+      }
+      try {
+        if (isQuasiExperimentalConfig(config)) {
+          const prepared = prepareQuasiExperimentalRawConfig(config);
+          const common = normalizeConfig(prepared, {
+            presupuesto: { cuasiexperimental: true, mediciones: resolveMediciones(config) },
+          });
+          normalizeQuasiExperimentalConfig(config, common);
+        } else {
+          normalizeConfig(config);
+        }
+      } catch (error) {
+        throw new HttpError(400, error.message, {
+          code: "INVALID_GENERATION_CONFIG", field: "config",
+        });
+      }
+      const responseMode = String(payload?.responseMode ?? "links").toLowerCase();
+      if (!new Set(["links", "inline"]).has(responseMode)) {
+        throw new HttpError(400, "responseMode debe ser links o inline.", {
+          code: "INVALID_RESPONSE_MODE", field: "responseMode",
+        });
+      }
+      const idempotencyKey = String(payload?.idempotencyKey ?? "").trim();
+      if (idempotencyKey && !/^[a-zA-Z0-9._:-]{8,128}$/.test(idempotencyKey)) {
+        throw new HttpError(400, "idempotencyKey no es valida.", {
+          code: "INVALID_IDEMPOTENCY_KEY", field: "idempotencyKey",
+        });
+      }
 
-      consumeUse(authUser, "tabulacion");
+      const proposedId = crypto.randomUUID();
+      let generationJob = await createDurableJob({
+        id: proposedId,
+        userId: authUser.id,
+        type: "tabulacion",
+        status: "pending",
+        idempotencyKey: idempotencyKey || null,
+        parameters: {
+          configHash: crypto.createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+          responseMode,
+          generatorVersion: "latent-v2",
+        },
+        progress: { stage: "queued" },
+      });
+      if (!generationJob || generationJob.userId !== authUser.id) {
+        throw new HttpError(429, "La capacidad de generación está ocupada; intenta de nuevo en unos minutos.", {
+          code: "HEAVY_GENERATION_BUSY",
+          retryable: true,
+        });
+      }
+      if (generationJob.id !== proposedId) {
+        const previousResponse = generationJob.parameters?.response;
+        if (generationJob.status === "completed" && previousResponse) {
+          if (Date.parse(previousResponse.expiresAt ?? "") <= Date.now()) {
+            throw new HttpError(410, "El resultado idempotente ya expiro.", {
+              code: "IDEMPOTENT_RESULT_EXPIRED",
+            });
+          }
+          sendJson(res, 200, { ...previousResponse, idempotentReplay: true });
+          return;
+        }
+        if (generationJob.status !== "failed") {
+          throw new HttpError(409, "Ya existe una generacion en curso con esa clave.", {
+            code: "GENERATION_IN_PROGRESS", retryable: true,
+          });
+        }
+        generationJob = await updateDurableJob(generationJob.id, {
+          status: "pending",
+          parameters: {
+            ...generationJob.parameters,
+            responseMode,
+            previousFailureRetriedAt: new Date().toISOString(),
+          },
+          progress: { stage: "queued" },
+        });
+      }
+
+      try {
+        await consumeUseForJob(authUser, "tabulacion", generationJob.id);
+      } catch (error) {
+        await updateDurableJob(generationJob.id, {
+          status: "failed", progress: { stage: "quota_rejected" },
+        });
+        throw error;
+      }
+      await updateDurableJob(generationJob.id, {
+        status: "processing", progress: { stage: "generating" },
+      });
+
       let artifacts;
       try {
         artifacts = await runGeneration("artifacts", config);
       } catch (err) {
-        refundUse(authUser.id, "tabulacion");
+        await settleJobUse(generationJob.id, authUser.id, "tabulacion", { refund: true });
+        await updateDurableJob(generationJob.id, {
+          status: "failed", progress: { stage: "failed" },
+        });
         if (err instanceof GenerationBusyError) throw new HttpError(429, err.message);
         throw err;
       }
-      const responseMode = String(payload?.responseMode ?? "links").toLowerCase();
       registerGeneration(authUser, "Generó un Excel");
 
       if (responseMode === "inline") {
-        sendJson(res, 200, {
+        const inlineResponse = {
+          seed: artifacts.seed,
           correlation: artifacts.correlation,
           correlationControl: artifacts.correlationControl ?? null,
           quasiExperimental: artifacts.quasiExperimental ?? null,
@@ -1632,33 +3128,75 @@ const server = http.createServer(async (req, res) => {
           excelFileName: "Tabulacion_generada.xlsx",
           chartsPreview: artifacts.chartsPreview ?? [],
           tema: artifacts.tema ?? "clasico",
+        };
+        await updateDurableJob(generationJob.id, {
+          status: "completed",
+          parameters: { ...generationJob.parameters, seed: artifacts.seed },
+          progress: { stage: "completed" },
         });
+        await settleJobUse(generationJob.id, authUser.id, "tabulacion", { refund: false });
+        sendJson(res, 200, inlineResponse);
         return;
       }
 
-      const id = crypto.randomUUID();
+      const id = generationJob.id;
       const expiresAt = Date.now() + ttlMs;
-      results.set(id, {
-        createdAt: Date.now(),
-        expiresAt,
-        ownerUserId: authUser.id,
-        correlation: artifacts.correlation,
-        baseCsv: artifacts.baseCsv,
-        excelBuffer: artifacts.excelBuffer,
+      let persistedArtifacts;
+      try {
+        persistedArtifacts = await storeGeneratedArtifacts(authUser.id, id, artifacts);
+      } catch (error) {
+        await settleJobUse(id, authUser.id, "tabulacion", { refund: true });
+        await updateDurableJob(id, {
+          status: "failed", progress: { stage: "artifact_failed" },
+        });
+        throw error;
+      }
+      const baseUrl = PUBLIC_BASE_URL
+        ? PUBLIC_BASE_URL.replace(/\/$/, "")
+        : getBaseUrl();
+      let response;
+      if (persistedArtifacts) {
+        response = {
+          id,
+          seed: artifacts.seed,
+          correlation: artifacts.correlation,
+          warnings: artifacts.warnings ?? [],
+          expiresAt: persistedArtifacts.xlsx.expiresAt,
+          links: {
+            meta: `${baseUrl}/artifacts/${persistedArtifacts.xlsx.id}`,
+            xlsx: `${baseUrl}/artifacts/${persistedArtifacts.xlsx.id}/download`,
+            csv: `${baseUrl}/artifacts/${persistedArtifacts.csv.id}/download`,
+          },
+        };
+      } else {
+        results.set(id, {
+          createdAt: Date.now(),
+          expiresAt,
+          ownerUserId: authUser.id,
+          correlation: artifacts.correlation,
+          baseCsv: artifacts.baseCsv,
+          excelBuffer: artifacts.excelBuffer,
+        });
+        response = {
+          id,
+          seed: artifacts.seed,
+          correlation: artifacts.correlation,
+          warnings: artifacts.warnings ?? [],
+          expiresAt: new Date(expiresAt).toISOString(),
+          links: {
+            meta: `${baseUrl}/results/${id}`,
+            xlsx: `${baseUrl}/results/${id}/xlsx`,
+            csv: `${baseUrl}/results/${id}/csv`,
+          },
+        };
+      }
+      await updateDurableJob(id, {
+        status: "completed",
+        parameters: { ...generationJob.parameters, seed: artifacts.seed, response },
+        progress: { stage: "completed" },
       });
-
-      const baseUrl = getBaseUrl(req);
-      sendJson(res, 200, {
-        id,
-        correlation: artifacts.correlation,
-        warnings: artifacts.warnings ?? [],
-        expiresAt: new Date(expiresAt).toISOString(),
-        links: {
-          meta: `${baseUrl}/results/${id}`,
-          xlsx: `${baseUrl}/results/${id}/xlsx`,
-          csv: `${baseUrl}/results/${id}/csv`,
-        },
-      });
+      await settleJobUse(id, authUser.id, "tabulacion", { refund: false });
+      sendJson(res, 200, response);
       return;
     }
 
@@ -1666,24 +3204,45 @@ const server = http.createServer(async (req, res) => {
     // con datos simulados. Consume 1 uso de Confiabilidad (se devuelve si
     // la generacion falla).
     if (req.method === "POST" && pathname === "/cronbach") {
-      const authUser = requireAuth(req);
+      const authUser = await requireAuth(req);
       const payload = await parseJsonBody(req);
       const config = payload?.config && typeof payload.config === "object"
         ? payload.config
         : payload;
-      consumeUse(authUser, "confiabilidad");
+      try {
+        normalizeCronbachConfig(config);
+      } catch (error) {
+        throw new HttpError(400, error.message, {
+          code: "INVALID_CRONBACH_CONFIG", field: "config",
+        });
+      }
+      await consumeUse(authUser, "confiabilidad");
       let result;
       try {
         result = await runGeneration("cronbach", config);
       } catch (err) {
-        refundUse(authUser.id, "confiabilidad");
+        await refundUse(authUser.id, "confiabilidad");
         if (err instanceof GenerationBusyError) throw new HttpError(429, err.message);
         throw err;
+      }
+      let cronbachArtifact;
+      try {
+        cronbachArtifact = await storeGeneratedFile({
+          ownerUserId: authUser.id,
+          jobId: crypto.randomUUID(),
+          filename: "Alfa_Cronbach.xlsx",
+          body: result.excelBuffer,
+          contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+      } catch (error) {
+        await refundUse(authUser.id, "confiabilidad");
+        throw error;
       }
       registerGeneration(authUser, `Generó una prueba de confiabilidad (α = ${result.alpha.toFixed(3)})`);
 
       sendJson(res, 200, {
         ok: true,
+        seed: result.seed,
         alpha: result.alpha,
         cumple: result.cumple,
         nivel: result.nivel,
@@ -1696,6 +3255,7 @@ const server = http.createServer(async (req, res) => {
         warnings: result.warnings,
         excelBase64: result.excelBuffer.toString("base64"),
         excelFileName: "Alfa_Cronbach.xlsx",
+        artifact: artifactResponse(cronbachArtifact),
       });
       return;
     }
@@ -1706,7 +3266,7 @@ const server = http.createServer(async (req, res) => {
     // define una sola vez por proyecto. Hoy cada herramienta lo pide de nuevo:
     // esto es lo que lo arregla.
     if (pathname === "/proyectos" && (req.method === "GET" || req.method === "POST")) {
-      const user = requireAuth(req);
+      const user = await requireAuth(req);
 
       if (req.method === "GET") {
         sendJson(res, 200, {
@@ -1759,7 +3319,7 @@ const server = http.createServer(async (req, res) => {
     // sin tener que guardar los archivos generados.
     const progresoRoute = pathname.match(/^\/proyectos\/([0-9a-fA-F-]+)\/progreso$/);
     if (progresoRoute && req.method === "POST") {
-      const user = requireAuth(req);
+      const user = await requireAuth(req);
       const proyecto = await obtenerProyecto(progresoRoute[1]);
       if (!proyecto || proyecto.userId !== user.id) {
         throw new HttpError(404, "Proyecto no encontrado.");
@@ -1771,14 +3331,24 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         throw new HttpError(esErrorDeUsuario(err) ? 400 : 500, err.message);
       }
-      await guardarProyecto(actualizado);
+      try {
+        actualizado = await guardarProyecto(
+          actualizado,
+          Number.isInteger(payload?.version) ? payload.version : proyecto.version,
+        );
+      } catch (err) {
+        if (err instanceof ProjectVersionConflictError) {
+          throw new HttpError(409, err.message, { code: "PROJECT_VERSION_CONFLICT" });
+        }
+        throw err;
+      }
       sendJson(res, 200, { ok: true, proyecto: actualizado });
       return;
     }
 
     const proyectoRoute = pathname.match(/^\/proyectos\/([0-9a-fA-F-]+)$/);
     if (proyectoRoute) {
-      const user = requireAuth(req);
+      const user = await requireAuth(req);
       const proyecto = await obtenerProyecto(proyectoRoute[1]);
       if (!proyecto) throw new HttpError(404, "Proyecto no encontrado.");
       // Un proyecto es privado: ni siquiera un admin lo lee por accidente.
@@ -1799,7 +3369,17 @@ const server = http.createServer(async (req, res) => {
         } catch (err) {
           throw new HttpError(esErrorDeUsuario(err) ? 400 : 500, err.message);
         }
-        await guardarProyecto(actualizado);
+        try {
+          actualizado = await guardarProyecto(
+            actualizado,
+            Number.isInteger(payload?.version) ? payload.version : proyecto.version,
+          );
+        } catch (err) {
+          if (err instanceof ProjectVersionConflictError) {
+            throw new HttpError(409, err.message, { code: "PROJECT_VERSION_CONFLICT" });
+          }
+          throw err;
+        }
         sendJson(res, 200, { ok: true, proyecto: actualizado });
         return;
       }
@@ -1816,7 +3396,7 @@ const server = http.createServer(async (req, res) => {
     // ── Tabulacion Descriptiva (IA) ─────────────────────────────────────────
     // Info de limites para el frontend (defaults de N y niveles).
     if (req.method === "GET" && pathname === "/descriptiva/info") {
-      requireAuth(req);
+      await requireAuth(req);
       sendJson(res, 200, {
         ok: true,
         defaultN: DESCRIPTIVA_DEFAULT_N,
@@ -1830,7 +3410,7 @@ const server = http.createServer(async (req, res) => {
     // Crea el job: valida el input de inmediato (errores claros para el
     // usuario) y deja la llamada a la IA corriendo en segundo plano.
     if (req.method === "POST" && pathname === "/descriptiva") {
-      const authUser = requireAuth(req);
+      const authUser = await requireAuth(req);
       const payload = await parseJsonBody(req);
 
       let input;
@@ -1850,16 +3430,23 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(400, err.message);
       }
 
-      const active = [...descriptivaJobs.values()].filter(isDescriptivaJobActive);
-      if (active.some((j) => j.ownerUserId === authUser.id)) {
-        throw new HttpError(409, "Ya tienes una generacion en curso; espera a que termine.");
-      }
-      if (active.length >= DESCRIPTIVA_MAX_CONCURRENT) {
-        throw new HttpError(429, "El servidor esta ocupado generando otras bases; intenta en un par de minutos.");
-      }
-
       const id = crypto.randomUUID();
-      consumeUseForJob(authUser, "descriptiva", id);
+      await beginLegacyGenerationJob({
+        id,
+        ownerUserId: authUser.id,
+        type: "descriptiva",
+        input: { texto: input.texto, n: input.n, nivel: input.nivel },
+        ttlMs: DESCRIPTIVA_JOB_TTL_MS,
+      });
+      try {
+        await consumeUseForJob(authUser, "descriptiva", id);
+      } catch (error) {
+        await persistLegacyGenerationFailure({
+          id, error: "No hay saldo disponible.", doneTtlMs: DESCRIPTIVA_DONE_TTL_MS,
+        });
+        throw error;
+      }
+      await activateLegacyGenerationJob(id);
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -1884,26 +3471,41 @@ const server = http.createServer(async (req, res) => {
       await writeUsers();
 
       generateDescriptiva({ texto: input.texto, config: { n: input.n, nivel: input.nivel } })
-        .then((generated) => {
+        .then(async (generated) => {
+          job.artifact = await storeGeneratedFile({
+            ownerUserId: authUser.id,
+            jobId: id,
+            filename: "Tabulacion_descriptiva.xlsx",
+            body: generated.excelBuffer,
+            contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          });
           job.result = generated;
           job.warnings = generated.warnings;
           job.status = "done";
           job.expiresAt = Date.now() + DESCRIPTIVA_DONE_TTL_MS;
-          settleJobUse(id, authUser.id, "descriptiva", { refund: false });
+          await persistLegacyGenerationSuccess({
+            id,
+            result: { warnings: generated.warnings ?? [], resumen: generated.resumen },
+            artifact: job.artifact,
+            doneTtlMs: DESCRIPTIVA_DONE_TTL_MS,
+          });
+          await settleJobUse(id, authUser.id, "descriptiva", { refund: false });
           // El registro de metricas nunca debe voltear un job exitoso a
           // error (writeUsers toca disco y puede fallar).
           try {
             registerGeneration(authUser, "Generó una tabulación descriptiva");
           } catch (err) {
-            // eslint-disable-next-line no-console
-            console.error(`[descriptiva] job ${id}: no se pudo registrar la generacion:`, err);
+            structuredLog("error", "generation.activity_persist_failed", {
+              tool: "descriptiva", jobId: id, ...errorLogFields(err),
+            });
           }
         })
-        .catch((err) => {
-          // El detalle tecnico queda solo en el log del servidor.
-          // eslint-disable-next-line no-console
-          console.error(`[descriptiva] job ${id} fallo:`, err);
-          settleJobUse(id, authUser.id, "descriptiva", { refund: true });
+        .catch(async (err) => {
+          metrics.increment("generation_jobs_total", 1, { tool: "descriptiva", outcome: "failed" });
+          structuredLog("error", "generation.job_failed", {
+            tool: "descriptiva", jobId: id, ...errorLogFields(err),
+          });
+          await settleJobUse(id, authUser.id, "descriptiva", { refund: true });
           job.status = "error";
           // Las validaciones detectadas dentro del job (p. ej. el presupuesto
           // de memoria de lib/presupuesto.js, que solo se conoce tras la
@@ -1913,6 +3515,11 @@ const server = http.createServer(async (req, res) => {
             ? err.message
             : "Hubo un problema generando tu base de datos, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + DESCRIPTIVA_DONE_TTL_MS;
+          await persistLegacyGenerationFailure({
+            id, error: job.error, doneTtlMs: DESCRIPTIVA_DONE_TTL_MS,
+          }).catch((persistError) => structuredLog("error", "generation.failure_persist_failed", {
+            tool: "descriptiva", jobId: id, ...errorLogFields(persistError),
+          }));
         });
 
       sendJson(res, 202, { ok: true, jobId: id, status: job.status });
@@ -1922,8 +3529,9 @@ const server = http.createServer(async (req, res) => {
     // Polling del job; al completar entrega el Excel en base64.
     const descriptivaJobRoute = pathname.match(/^\/descriptiva\/jobs\/([0-9a-fA-F-]+)$/);
     if (req.method === "GET" && descriptivaJobRoute) {
-      const authUser = requireAuth(req);
-      const job = descriptivaJobs.get(descriptivaJobRoute[1]);
+      const authUser = await requireAuth(req);
+      const job = descriptivaJobs.get(descriptivaJobRoute[1])
+        ?? await legacyGenerationFromDurable(descriptivaJobRoute[1]);
       if (!job || (job.expiresAt <= Date.now() && job.status !== "processing")) {
         throw new HttpError(404, "Generacion no encontrada o expirada.");
       }
@@ -1931,13 +3539,18 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(403, "No tienes acceso a esta generacion.");
       }
       if (job.status === "done") {
+        const excelBuffer = job.result.excelBuffer
+          ?? (job.artifact && artifactStore.enabled
+            ? await artifactStore.readBuffer(job.artifact.storageKey)
+            : null);
         sendJson(res, 200, {
           ok: true,
           status: "done",
-          warnings: job.warnings,
+          warnings: job.warnings ?? job.result.warnings ?? [],
           resumen: job.result.resumen,
-          excelBase64: job.result.excelBuffer.toString("base64"),
+          excelBase64: excelBuffer?.toString("base64"),
           excelFileName: "Tabulacion_descriptiva.xlsx",
+          artifact: artifactResponse(job.artifact),
         });
         // Ya entregado: acortar la vida del buffer en memoria (el cliente
         // aun puede re-consultar un par de minutos, p. ej. tras un remount).
@@ -1953,7 +3566,7 @@ const server = http.createServer(async (req, res) => {
     // (errores claros para el usuario) y deja la llamada a la IA (con
     // busqueda web) corriendo en segundo plano.
     if (req.method === "POST" && pathname === "/titulos") {
-      const authUser = requireAuth(req);
+      const authUser = await requireAuth(req);
       const payload = await parseJsonBody(req);
 
       let input;
@@ -1963,16 +3576,19 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(400, err.message);
       }
 
-      const active = [...titulosJobs.values()].filter(isTitulosJobActive);
-      if (active.some((j) => j.ownerUserId === authUser.id)) {
-        throw new HttpError(409, "Ya tienes una generacion de titulos en curso; espera a que termine.");
-      }
-      if (active.length >= TITULOS_MAX_CONCURRENT) {
-        throw new HttpError(429, "El servidor esta ocupado generando otros titulos; intenta en un par de minutos.");
-      }
-
       const id = crypto.randomUUID();
-      consumeUseForJob(authUser, "titulos", id);
+      await beginLegacyGenerationJob({
+        id, ownerUserId: authUser.id, type: "titulos", input, ttlMs: TITULOS_JOB_TTL_MS,
+      });
+      try {
+        await consumeUseForJob(authUser, "titulos", id);
+      } catch (error) {
+        await persistLegacyGenerationFailure({
+          id, error: "No hay saldo disponible.", doneTtlMs: TITULOS_DONE_TTL_MS,
+        });
+        throw error;
+      }
+      await activateLegacyGenerationJob(id);
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -1990,28 +3606,51 @@ const server = http.createServer(async (req, res) => {
       await writeUsers();
 
       generateTitulos(input)
-        .then((generated) => {
+        .then(async (generated) => {
+          job.artifact = await storeGeneratedFile({
+            ownerUserId: authUser.id,
+            jobId: id,
+            filename: "Titulos_de_investigacion.docx",
+            body: generated.docxBuffer,
+            contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          });
           job.result = generated;
           job.status = "done";
           job.expiresAt = Date.now() + TITULOS_DONE_TTL_MS;
-          settleJobUse(id, authUser.id, "titulos", { refund: false });
+          await persistLegacyGenerationSuccess({
+            id,
+            result: {
+              contenido: generated.contenido,
+              webSearchRequests: generated.webSearchRequests ?? null,
+            },
+            artifact: job.artifact,
+            doneTtlMs: TITULOS_DONE_TTL_MS,
+          });
+          await settleJobUse(id, authUser.id, "titulos", { refund: false });
           // El registro de metricas nunca debe voltear un job exitoso a
           // error (writeUsers toca disco y puede fallar).
           try {
             registerGeneration(authUser, "Generó títulos de investigación");
           } catch (err) {
-            // eslint-disable-next-line no-console
-            console.error(`[titulos] job ${id}: no se pudo registrar la generacion:`, err);
+            structuredLog("error", "generation.activity_persist_failed", {
+              tool: "titulos", jobId: id, ...errorLogFields(err),
+            });
           }
         })
-        .catch((err) => {
-          // El detalle tecnico queda solo en el log del servidor.
-          // eslint-disable-next-line no-console
-          console.error(`[titulos] job ${id} fallo:`, err);
-          settleJobUse(id, authUser.id, "titulos", { refund: true });
+        .catch(async (err) => {
+          metrics.increment("generation_jobs_total", 1, { tool: "titulos", outcome: "failed" });
+          structuredLog("error", "generation.job_failed", {
+            tool: "titulos", jobId: id, ...errorLogFields(err),
+          });
+          await settleJobUse(id, authUser.id, "titulos", { refund: true });
           job.status = "error";
           job.error = "Hubo un problema generando tus títulos, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + TITULOS_DONE_TTL_MS;
+          await persistLegacyGenerationFailure({
+            id, error: job.error, doneTtlMs: TITULOS_DONE_TTL_MS,
+          }).catch((persistError) => structuredLog("error", "generation.failure_persist_failed", {
+            tool: "titulos", jobId: id, ...errorLogFields(persistError),
+          }));
         });
 
       sendJson(res, 202, { ok: true, jobId: id, status: job.status });
@@ -2021,8 +3660,9 @@ const server = http.createServer(async (req, res) => {
     // Polling del job; al completar entrega el markdown con los 3 titulos.
     const titulosJobRoute = pathname.match(/^\/titulos\/jobs\/([0-9a-fA-F-]+)$/);
     if (req.method === "GET" && titulosJobRoute) {
-      const authUser = requireAuth(req);
-      const job = titulosJobs.get(titulosJobRoute[1]);
+      const authUser = await requireAuth(req);
+      const job = titulosJobs.get(titulosJobRoute[1])
+        ?? await legacyGenerationFromDurable(titulosJobRoute[1]);
       if (!job || (job.expiresAt <= Date.now() && job.status !== "processing")) {
         throw new HttpError(404, "Generacion no encontrada o expirada.");
       }
@@ -2030,6 +3670,10 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(403, "No tienes acceso a esta generacion.");
       }
       if (job.status === "done") {
+        const docxBuffer = job.result.docxBuffer
+          ?? (job.artifact && artifactStore.enabled
+            ? await artifactStore.readBuffer(job.artifact.storageKey)
+            : null);
         sendJson(res, 200, {
           ok: true,
           status: "done",
@@ -2037,8 +3681,9 @@ const server = http.createServer(async (req, res) => {
           // Los titulos sueltos, para poder elegir uno sin copiarlo a mano.
           titulos: extraerTitulos(job.result.contenido),
           webSearchRequests: job.result.webSearchRequests ?? null,
-          docxBase64: job.result.docxBuffer.toString("base64"),
+          docxBase64: docxBuffer?.toString("base64"),
           docxFileName: "Titulos_de_investigacion.docx",
+          artifact: artifactResponse(job.artifact),
         });
         // Ya entregado: acortar la vida del contenido en memoria (el cliente
         // aun puede re-consultar un par de minutos, p. ej. tras un remount).
@@ -2054,7 +3699,7 @@ const server = http.createServer(async (req, res) => {
     // Valida el input de inmediato y deja la generacion (analisis + busqueda
     // de dimensiones + redaccion) corriendo en segundo plano.
     if (req.method === "POST" && pathname === "/matriz") {
-      const authUser = requireAuth(req);
+      const authUser = await requireAuth(req);
       const payload = await parseJsonBody(req);
 
       let input;
@@ -2064,16 +3709,19 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(400, err.message);
       }
 
-      const active = [...matrizJobs.values()].filter(isMatrizJobActive);
-      if (active.some((j) => j.ownerUserId === authUser.id)) {
-        throw new HttpError(409, "Ya tienes una matriz de consistencia en curso; espera a que termine.");
-      }
-      if (active.length >= MATRIZ_MAX_CONCURRENT) {
-        throw new HttpError(429, "El servidor esta ocupado generando otras matrices; intenta en un par de minutos.");
-      }
-
       const id = crypto.randomUUID();
-      consumeUseForJob(authUser, "matriz", id);
+      await beginLegacyGenerationJob({
+        id, ownerUserId: authUser.id, type: "matriz", input, ttlMs: MATRIZ_JOB_TTL_MS,
+      });
+      try {
+        await consumeUseForJob(authUser, "matriz", id);
+      } catch (error) {
+        await persistLegacyGenerationFailure({
+          id, error: "No hay saldo disponible.", doneTtlMs: MATRIZ_DONE_TTL_MS,
+        });
+        throw error;
+      }
+      await activateLegacyGenerationJob(id);
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -2091,28 +3739,51 @@ const server = http.createServer(async (req, res) => {
       await writeUsers();
 
       generateMatriz(input)
-        .then((generated) => {
+        .then(async (generated) => {
+          job.artifact = await storeGeneratedFile({
+            ownerUserId: authUser.id,
+            jobId: id,
+            filename: "Matriz_de_consistencia.docx",
+            body: generated.docxBuffer,
+            contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          });
           job.result = generated;
           job.status = "done";
           job.expiresAt = Date.now() + MATRIZ_DONE_TTL_MS;
-          settleJobUse(id, authUser.id, "matriz", { refund: false });
+          await persistLegacyGenerationSuccess({
+            id,
+            result: {
+              matriz: generated.matriz,
+              webSearchRequests: generated.webSearchRequests ?? null,
+            },
+            artifact: job.artifact,
+            doneTtlMs: MATRIZ_DONE_TTL_MS,
+          });
+          await settleJobUse(id, authUser.id, "matriz", { refund: false });
           // El registro de metricas nunca debe voltear un job exitoso a
           // error (writeUsers toca disco y puede fallar).
           try {
             registerGeneration(authUser, "Generó matriz de consistencia");
           } catch (err) {
-            // eslint-disable-next-line no-console
-            console.error(`[matriz] job ${id}: no se pudo registrar la generacion:`, err);
+            structuredLog("error", "generation.activity_persist_failed", {
+              tool: "matriz", jobId: id, ...errorLogFields(err),
+            });
           }
         })
-        .catch((err) => {
-          // El detalle tecnico queda solo en el log del servidor.
-          // eslint-disable-next-line no-console
-          console.error(`[matriz] job ${id} fallo:`, err);
-          settleJobUse(id, authUser.id, "matriz", { refund: true });
+        .catch(async (err) => {
+          metrics.increment("generation_jobs_total", 1, { tool: "matriz", outcome: "failed" });
+          structuredLog("error", "generation.job_failed", {
+            tool: "matriz", jobId: id, ...errorLogFields(err),
+          });
+          await settleJobUse(id, authUser.id, "matriz", { refund: true });
           job.status = "error";
           job.error = "Hubo un problema generando tu matriz de consistencia, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + MATRIZ_DONE_TTL_MS;
+          await persistLegacyGenerationFailure({
+            id, error: job.error, doneTtlMs: MATRIZ_DONE_TTL_MS,
+          }).catch((persistError) => structuredLog("error", "generation.failure_persist_failed", {
+            tool: "matriz", jobId: id, ...errorLogFields(persistError),
+          }));
         });
 
       sendJson(res, 202, { ok: true, jobId: id, status: job.status });
@@ -2122,8 +3793,9 @@ const server = http.createServer(async (req, res) => {
     // Polling del job; al completar entrega la matriz en JSON + el Word.
     const matrizJobRoute = pathname.match(/^\/matriz\/jobs\/([0-9a-fA-F-]+)$/);
     if (req.method === "GET" && matrizJobRoute) {
-      const authUser = requireAuth(req);
-      const job = matrizJobs.get(matrizJobRoute[1]);
+      const authUser = await requireAuth(req);
+      const job = matrizJobs.get(matrizJobRoute[1])
+        ?? await legacyGenerationFromDurable(matrizJobRoute[1]);
       if (!job || (job.expiresAt <= Date.now() && job.status !== "processing")) {
         throw new HttpError(404, "Generacion no encontrada o expirada.");
       }
@@ -2131,13 +3803,18 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(403, "No tienes acceso a esta generacion.");
       }
       if (job.status === "done") {
+        const docxBuffer = job.result.docxBuffer
+          ?? (job.artifact && artifactStore.enabled
+            ? await artifactStore.readBuffer(job.artifact.storageKey)
+            : null);
         sendJson(res, 200, {
           ok: true,
           status: "done",
           matriz: job.result.matriz,
           webSearchRequests: job.result.webSearchRequests ?? null,
-          docxBase64: job.result.docxBuffer.toString("base64"),
+          docxBase64: docxBuffer?.toString("base64"),
           docxFileName: "Matriz_de_consistencia.docx",
+          artifact: artifactResponse(job.artifact),
         });
         // Ya entregado: acortar la vida del contenido en memoria (el cliente
         // aun puede re-consultar un par de minutos, p. ej. tras un remount).
@@ -2152,7 +3829,7 @@ const server = http.createServer(async (req, res) => {
     // Texto pegado o .docx; el limite de 50-3000 palabras del .docx se valida
     // DENTRO del job (la conversion es async) y llega como error de usuario.
     if (req.method === "POST" && pathname === "/humanizador") {
-      const authUser = requireAuth(req);
+      const authUser = await requireAuth(req);
       const payload = await parseJsonBody(req);
 
       let input;
@@ -2162,16 +3839,23 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(400, err.message);
       }
 
-      const active = [...humanizadorJobs.values()].filter(isHumanizadorJobActive);
-      if (active.some((j) => j.ownerUserId === authUser.id)) {
-        throw new HttpError(409, "Ya tienes una humanización en curso; espera a que termine.");
-      }
-      if (active.length >= HUMANIZADOR_MAX_CONCURRENT) {
-        throw new HttpError(429, "El servidor esta ocupado humanizando otros textos; intenta en un par de minutos.");
-      }
-
       const id = crypto.randomUUID();
-      consumeUseForJob(authUser, "humanizador", id);
+      await beginLegacyGenerationJob({
+        id,
+        ownerUserId: authUser.id,
+        type: "humanizador",
+        input,
+        ttlMs: HUMANIZADOR_JOB_TTL_MS,
+      });
+      try {
+        await consumeUseForJob(authUser, "humanizador", id);
+      } catch (error) {
+        await persistLegacyGenerationFailure({
+          id, error: "No hay saldo disponible.", doneTtlMs: HUMANIZADOR_DONE_TTL_MS,
+        });
+        throw error;
+      }
+      await activateLegacyGenerationJob(id);
       const job = {
         id,
         ownerUserId: authUser.id,
@@ -2189,24 +3873,43 @@ const server = http.createServer(async (req, res) => {
       await writeUsers();
 
       generateHumanizacion(input)
-        .then((generated) => {
+        .then(async (generated) => {
+          job.artifact = await storeGeneratedFile({
+            ownerUserId: authUser.id,
+            jobId: id,
+            filename: "Texto_humanizado.docx",
+            body: generated.docxBuffer,
+            contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          });
           job.result = generated;
           job.status = "done";
           job.expiresAt = Date.now() + HUMANIZADOR_DONE_TTL_MS;
-          settleJobUse(id, authUser.id, "humanizador", { refund: false });
+          await persistLegacyGenerationSuccess({
+            id,
+            result: {
+              textoHumanizado: generated.textoHumanizado,
+              metricas: generated.metricas,
+            },
+            artifact: job.artifact,
+            doneTtlMs: HUMANIZADOR_DONE_TTL_MS,
+          });
+          await settleJobUse(id, authUser.id, "humanizador", { refund: false });
           // El registro de metricas nunca debe voltear un job exitoso a
           // error (writeUsers toca disco y puede fallar).
           try {
             registerGeneration(authUser, "Humanizó texto académico");
           } catch (err) {
-            // eslint-disable-next-line no-console
-            console.error(`[humanizador] job ${id}: no se pudo registrar la generacion:`, err);
+            structuredLog("error", "generation.activity_persist_failed", {
+              tool: "humanizador", jobId: id, ...errorLogFields(err),
+            });
           }
         })
-        .catch((err) => {
-          // eslint-disable-next-line no-console
-          console.error(`[humanizador] job ${id} fallo:`, err);
-          settleJobUse(id, authUser.id, "humanizador", { refund: true });
+        .catch(async (err) => {
+          metrics.increment("generation_jobs_total", 1, { tool: "humanizador", outcome: "failed" });
+          structuredLog("error", "generation.job_failed", {
+            tool: "humanizador", jobId: id, ...errorLogFields(err),
+          });
+          await settleJobUse(id, authUser.id, "humanizador", { refund: true });
           job.status = "error";
           // Las validaciones de entrada detectadas dentro del job (p. ej. el
           // conteo de palabras del .docx) SI se muestran al usuario; el
@@ -2215,6 +3918,11 @@ const server = http.createServer(async (req, res) => {
             ? err.message
             : "Hubo un problema humanizando tu texto, intenta de nuevo. No se descontó tu uso.";
           job.expiresAt = Date.now() + HUMANIZADOR_DONE_TTL_MS;
+          await persistLegacyGenerationFailure({
+            id, error: job.error, doneTtlMs: HUMANIZADOR_DONE_TTL_MS,
+          }).catch((persistError) => structuredLog("error", "generation.failure_persist_failed", {
+            tool: "humanizador", jobId: id, ...errorLogFields(persistError),
+          }));
         });
 
       sendJson(res, 202, { ok: true, jobId: id, status: job.status });
@@ -2224,8 +3932,9 @@ const server = http.createServer(async (req, res) => {
     // Polling del job; al completar entrega el texto + metricas + Word.
     const humanizadorJobRoute = pathname.match(/^\/humanizador\/jobs\/([0-9a-fA-F-]+)$/);
     if (req.method === "GET" && humanizadorJobRoute) {
-      const authUser = requireAuth(req);
-      const job = humanizadorJobs.get(humanizadorJobRoute[1]);
+      const authUser = await requireAuth(req);
+      const job = humanizadorJobs.get(humanizadorJobRoute[1])
+        ?? await legacyGenerationFromDurable(humanizadorJobRoute[1]);
       if (!job || (job.expiresAt <= Date.now() && job.status !== "processing")) {
         throw new HttpError(404, "Generacion no encontrada o expirada.");
       }
@@ -2233,13 +3942,18 @@ const server = http.createServer(async (req, res) => {
         throw new HttpError(403, "No tienes acceso a esta generacion.");
       }
       if (job.status === "done") {
+        const docxBuffer = job.result.docxBuffer
+          ?? (job.artifact && artifactStore.enabled
+            ? await artifactStore.readBuffer(job.artifact.storageKey)
+            : null);
         sendJson(res, 200, {
           ok: true,
           status: "done",
           textoHumanizado: job.result.textoHumanizado,
           metricas: job.result.metricas,
-          docxBase64: job.result.docxBuffer.toString("base64"),
+          docxBase64: docxBuffer?.toString("base64"),
           docxFileName: "Texto_humanizado.docx",
+          artifact: artifactResponse(job.artifact),
         });
         // Ya entregado: acortar la vida del contenido en memoria.
         job.expiresAt = Math.min(job.expiresAt, Date.now() + HUMANIZADOR_SERVED_TTL_MS);
@@ -2249,9 +3963,42 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const artifactRoute = pathname.match(/^\/artifacts\/([0-9a-fA-F-]+)(?:\/(download))?$/);
+    if (artifactRoute && req.method === "GET") {
+      const authUser = await requireAuth(req);
+      const item = artifactRow(await getArtifactRecord(artifactRoute[1]));
+      if (!item || Date.parse(item.expiresAt) <= Date.now()) {
+        throw new HttpError(404, "Archivo no encontrado o expirado.", { code: "ARTIFACT_NOT_FOUND" });
+      }
+      if (authUser.role !== "admin" && item.userId !== authUser.id) {
+        throw new HttpError(403, "No tienes acceso a este archivo.", { code: "ARTIFACT_FORBIDDEN" });
+      }
+      if (!artifactRoute[2]) {
+        sendJson(res, 200, {
+          ok: true,
+          id: item.id,
+          contentType: item.contentType,
+          byteSize: item.byteSize,
+          expiresAt: new Date(item.expiresAt).toISOString(),
+        });
+        return;
+      }
+      if (!artifactStore.enabled) {
+        throw new HttpError(503, "El almacenamiento de archivos no está disponible.", {
+          code: "ARTIFACT_STORAGE_UNAVAILABLE", retryable: true,
+        });
+      }
+      const signedUrl = await artifactStore.signedDownloadUrl(item.storageKey);
+      res.statusCode = 302;
+      res.setHeader("Location", signedUrl);
+      res.setHeader("Cache-Control", "no-store");
+      res.end();
+      return;
+    }
+
     const resultRoute = pathname.match(/^\/results\/([0-9a-fA-F-]+)(?:\/(xlsx|csv))?$/);
     if (resultRoute) {
-      const authUser = requireAuth(req);
+      const authUser = await requireAuth(req);
       const id = resultRoute[1];
       const fileType = resultRoute[2] ?? "meta";
       const item = getStoredResult(id);
@@ -2305,16 +4052,35 @@ const server = http.createServer(async (req, res) => {
     if (statusCode === 429 && Number.isFinite(err?.retryAfterSeconds)) {
       res.setHeader("Retry-After", String(err.retryAfterSeconds));
     }
+    // Ningun fallo 5xx devuelve mensajes del proveedor, SQL, rutas internas o
+    // stacks. Los detalles utiles quedan en el log estructurado por codigo y
+    // requestId; el cliente recibe un contrato estable y no sensible.
+    const internalMessage = err instanceof Error ? err.message : "Error no controlado.";
+    const message = statusCode >= 500
+      ? "No se pudo completar la solicitud. Intenta nuevamente."
+      : internalMessage;
+    if (statusCode >= 500) {
+      structuredLog("error", "http.request_failed", {
+        requestId,
+        method: req.method,
+        statusCode,
+        ...errorLogFields(err),
+      });
+    }
     sendJson(res, statusCode, {
       ok: false,
-      error: err instanceof Error ? err.message : "Error no controlado.",
+      error: message,
+      code: err?.code ?? (statusCode >= 500 ? "INTERNAL_ERROR" : "REQUEST_ERROR"),
+      message,
+      ...(err?.field ? { field: err.field } : {}),
+      retryable: err?.retryable ?? (statusCode === 429 || statusCode >= 500),
+      requestId,
     });
   }
 });
 
 server.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`API lista en puerto ${PORT} | generador por codigo (sin plantilla)`);
+  structuredLog("info", "service.started", { service: "tabulacion-api", port: PORT });
 });
 
 // Apagado ordenado: la escritura al almacen es diferida, asi que morir de
@@ -2324,14 +4090,12 @@ let apagando = false;
 const apagar = async (senal) => {
   if (apagando) return;
   apagando = true;
-  // eslint-disable-next-line no-console
-  console.log(`[apagado] ${senal}: guardando lo pendiente...`);
+  structuredLog("info", "service.shutdown_started", { signal: senal });
   server.close();
   try {
     await closeStore();
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("[apagado] no se pudo cerrar el almacen:", err.message);
+    structuredLog("error", "service.store_close_failed", errorLogFields(err));
   }
   process.exit(0);
 };

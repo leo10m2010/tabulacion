@@ -14,6 +14,7 @@ import {
   countWords, splitSentences, checkFidelity, evaluateTexto, analyzeText,
 } from "./metrics.js";
 import { buildHumanizadorDocx } from "./docx.js";
+import { errorLogFields, metrics, structuredLog } from "../observability.js";
 
 export const MAX_PALABRAS = 3000;
 export const MIN_PALABRAS = 50;
@@ -106,12 +107,13 @@ const humanizarBloque = async (bloque, indice, contextoPrevio, options) => {
   // nunca se entrega texto con citas o cifras perdidas.
   let fidelity = checkFidelity(bloque, pasada1);
   if (!fidelity.ok) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[humanizador] bloque ${indice + 1}: fidelidad rota `
-      + `(citas: ${fidelity.citasPerdidas.length}, cifras: ${fidelity.cifrasPerdidas.length}, `
-      + `ratio: ${fidelity.ratioPalabras}); reintento correctivo.`,
-    );
+    metrics.increment("humanizer_fidelity_retries_total", 1);
+    structuredLog("warn", "humanizer.fidelity_retry", {
+      blockIndex: indice + 1,
+      missingCitationCount: fidelity.citasPerdidas.length,
+      missingNumberCount: fidelity.cifrasPerdidas.length,
+      wordRatio: fidelity.ratioPalabras,
+    });
     const correctionMessages = [
       { role: "system", content: reescrituraPrompt },
       { role: "user", content: buildReescrituraUserContent(bloque, contextoPrevio) },
@@ -136,12 +138,10 @@ const humanizarBloque = async (bloque, indice, contextoPrevio, options) => {
   }
 
   const eval1 = evaluateTexto(pasada1);
-  // eslint-disable-next-line no-console
-  console.log(
-    `[humanizador] bloque ${indice + 1} pasada 1: cv=${eval1.metrics.cv}, `
-    + `banda=${eval1.metrics.pctBanda1522}%, problemas=${eval1.problemCount} `
-    + `(${eval1.problemas.fallasBurstiness.join(",") || "sin fallas de ritmo"})`,
-  );
+  structuredLog("info", "humanizer.pass_evaluated", {
+    blockIndex: indice + 1, pass: 1, cv: eval1.metrics.cv,
+    bandPercent: eval1.metrics.pctBanda1522, problemCount: eval1.problemCount,
+  });
   if (eval1.problemCount === 0) return pasada1;
 
   // Pasada 2 dirigida SOLO con los problemas concretos. Si rompe fidelidad
@@ -160,22 +160,23 @@ const humanizarBloque = async (bloque, indice, contextoPrevio, options) => {
       options,
     });
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(`[humanizador] bloque ${indice + 1}: repasada fallo (${err.message}); se entrega la pasada 1.`);
+    structuredLog("warn", "humanizer.revision_failed", {
+      blockIndex: indice + 1, fallbackPass: 1, ...errorLogFields(err),
+    });
     return pasada1;
   }
 
   if (!checkFidelity(bloque, pasada2).ok) {
-    // eslint-disable-next-line no-console
-    console.warn(`[humanizador] bloque ${indice + 1}: la repasada rompio la fidelidad; se entrega la pasada 1.`);
+    structuredLog("warn", "humanizer.revision_fidelity_failed", {
+      blockIndex: indice + 1, fallbackPass: 1,
+    });
     return pasada1;
   }
   const eval2 = evaluateTexto(pasada2);
-  // eslint-disable-next-line no-console
-  console.log(
-    `[humanizador] bloque ${indice + 1} pasada 2: cv=${eval2.metrics.cv}, `
-    + `banda=${eval2.metrics.pctBanda1522}%, problemas=${eval2.problemCount}`,
-  );
+  structuredLog("info", "humanizer.pass_evaluated", {
+    blockIndex: indice + 1, pass: 2, cv: eval2.metrics.cv,
+    bandPercent: eval2.metrics.pctBanda1522, problemCount: eval2.problemCount,
+  });
   if (eval2.problemCount < eval1.problemCount) return pasada2;
   if (eval2.problemCount === eval1.problemCount && eval2.metrics.cv > eval1.metrics.cv) return pasada2;
   return pasada1;
@@ -200,15 +201,15 @@ export const generateHumanizacion = async (payload, options = {}) => {
   }
 
   const bloques = splitIntoBloques(texto);
-  // eslint-disable-next-line no-console
-  console.log(`[humanizador] ${palabras} palabras en ${bloques.length} bloque(s).`);
+  structuredLog("info", "humanizer.started", {
+    wordCount: palabras, blockCount: bloques.length,
+  });
 
   const bloquesFinales = [];
   for (let i = 0; i < bloques.length; i += 1) {
     const contextoPrevio = i > 0 ? lastSentences(bloquesFinales[i - 1]) : null;
     // Secuencial a proposito: el contexto de continuidad depende del bloque
     // anterior ya humanizado.
-    // eslint-disable-next-line no-await-in-loop
     bloquesFinales.push(await humanizarBloque(bloques[i], i, contextoPrevio, options));
   }
 
@@ -217,12 +218,14 @@ export const generateHumanizacion = async (payload, options = {}) => {
     antes: analyzeText(texto),
     despues: analyzeText(textoHumanizado),
   };
-  // eslint-disable-next-line no-console
-  console.log(
-    `[humanizador] listo: cv ${metricas.antes.cv} -> ${metricas.despues.cv}, `
-    + `banda ${metricas.antes.pctBanda1522}% -> ${metricas.despues.pctBanda1522}%, `
-    + `delatoras ${metricas.antes.delatoras} -> ${metricas.despues.delatoras}.`,
-  );
+  structuredLog("info", "humanizer.completed", {
+    cvBefore: metricas.antes.cv,
+    cvAfter: metricas.despues.cv,
+    bandPercentBefore: metricas.antes.pctBanda1522,
+    bandPercentAfter: metricas.despues.pctBanda1522,
+    markerCountBefore: metricas.antes.delatoras,
+    markerCountAfter: metricas.despues.delatoras,
+  });
 
   const docxBuffer = await buildHumanizadorDocx({ texto: textoHumanizado });
 

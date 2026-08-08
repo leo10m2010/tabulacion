@@ -2,6 +2,10 @@
 // z-ai/glm-5.2 con la server tool openrouter:web_search (la ejecuta
 // OpenRouter del lado de su servidor; no hay loop de tool_calls que manejar
 // aqui). La salida es texto markdown, no JSON: no se usa response_format.
+import {
+  errorLogFields, metrics, providerUsageFields, structuredLog,
+} from "../observability.js";
+
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 export const DEFAULT_MODEL = "z-ai/glm-5.2";
 
@@ -253,12 +257,11 @@ export const requestTitulos = async ({
     const webSearchRequests = usage?.server_tool_use_details?.web_search_requests
       ?? usage?.server_tool_use?.web_search_requests
       ?? null;
-    // Monitoreo de costo: Exa/Parallel cobran ~$4 por 1000 resultados.
-    // eslint-disable-next-line no-console
-    console.log(
-      `[titulos] intento ${attempt}: finish_reason=${finishReason}, `
-      + `web_search_requests=${webSearchRequests ?? "n/a"}, usage=${JSON.stringify(usage)}`,
-    );
+    metrics.increment("openrouter_requests_total", 1, { tool: "titulos", stage: "draft" });
+    structuredLog("info", "openrouter.request_completed", {
+      tool: "titulos", stage: "draft", attempt, finishReason,
+      webSearchRequests, ...providerUsageFields(usage),
+    });
 
     // Un intento es valido solo si, tras quitar markup de tool_call filtrado,
     // queda contenido y contiene el primer titulo. Sin esto, una respuesta
@@ -281,11 +284,11 @@ export const requestTitulos = async ({
     }
 
     lastFailure = failure;
-    // Log tecnico completo en servidor (nunca llega al usuario final).
-    // eslint-disable-next-line no-console
-    console.error(
-      `[titulos] intento ${attempt} fallido (${failure}). Respuesta cruda:\n${content.slice(0, 2000)}`,
-    );
+    metrics.increment("openrouter_invalid_responses_total", 1, { tool: "titulos", stage: "draft" });
+    structuredLog("warn", "openrouter.invalid_response", {
+      tool: "titulos", stage: "draft", attempt,
+      responseLength: String(content ?? "").length,
+    });
     // Caso glitch de busqueda (visto en produccion 2026-07-10): la respuesta
     // es puro markup <tool_call> tras haber EJECUTADO ya muchas busquedas
     // reales — el modelo quedo atrapado buscando (p. ej. para "confirmar"
@@ -427,19 +430,23 @@ export const requestSeleccionVariables = async ({
       messages: attemptMessages, tools: undefined, model, apiKey, timeoutMs, maxTokens,
       reasoningEffort: "medium",
     });
-    // eslint-disable-next-line no-console
-    console.log(
-      `[titulos] seleccion intento ${attempt}: finish_reason=${finishReason}, `
-      + `usage=${JSON.stringify(usage)}`,
-    );
+    metrics.increment("openrouter_requests_total", 1, { tool: "titulos", stage: "selection" });
+    structuredLog("info", "openrouter.request_completed", {
+      tool: "titulos", stage: "selection", attempt, finishReason,
+      ...providerUsageFields(usage),
+    });
     try {
       return parseSeleccion(stripToolCallMarkup(content), datos.numeroVariables);
     } catch (err) {
       lastFailure = err.message;
-      // eslint-disable-next-line no-console
-      console.error(
-        `[titulos] seleccion intento ${attempt} fallido (${err.message}). Respuesta cruda:\n${String(content).slice(0, 1000)}`,
-      );
+      metrics.increment("openrouter_invalid_responses_total", 1, {
+        tool: "titulos", stage: "selection",
+      });
+      structuredLog("warn", "openrouter.invalid_response", {
+        tool: "titulos", stage: "selection", attempt,
+        responseLength: String(content ?? "").length,
+        ...errorLogFields(err),
+      });
       attemptMessages = [
         ...messages,
         ...(String(content ?? "").trim() ? [{ role: "assistant", content }] : []),

@@ -1,5 +1,7 @@
 const SETTINGS_KEY = 'tesistabSettings';
 const DIAGNOSTICS_KEY = 'tesistabDiagnostics';
+const ACTIVE_JOB_KEY = 'tesistabActiveJob';
+const MULTIPAGE_CAPTURE_KEY = 'tesistabMultiPageCapture';
 
 const DEFAULT_SETTINGS = {
   enabled: true,
@@ -8,8 +10,9 @@ const DEFAULT_SETTINGS = {
   accountEmail: '',
   // Auto-bloqueo estilo caja fuerte: minutos hasta pedir la contrasena de
   // nuevo (0 = nunca). sessionExpiresAt es el instante (ms) en que expira.
-  sessionLockMinutes: 1440,
+  sessionLockMinutes: 0,
   sessionExpiresAt: 0,
+  authMode: '',
   themeMode: 'system',
   panelViewMode: 'simple',
   submissionCount: 5,
@@ -33,10 +36,11 @@ const DEFAULT_SETTINGS = {
   requireConfirmation: true,
   randomizeBeforeSubmit: false,
   compatApiMode: false,
+  installationId: '',
+  pendingPairing: null,
 };
-
-const POPUP_MAX_SUBMISSIONS = 250;
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+let pairingPollToken = 0;
 
 // Declarado antes de las llamadas de arranque: decoratePopupIcons() corre al
 // cargar y un const posterior quedaria en zona muerta temporal (ReferenceError
@@ -66,6 +70,11 @@ const elements = {
   loginEmail: document.getElementById('loginEmail'),
   loginPassword: document.getElementById('loginPassword'),
   loginBtn: document.getElementById('loginBtn'),
+  pairDeviceBtn: document.getElementById('pairDeviceBtn'),
+  pairingPanel: document.getElementById('pairingPanel'),
+  pairingCode: document.getElementById('pairingCode'),
+  openPairingBtn: document.getElementById('openPairingBtn'),
+  cancelPairingBtn: document.getElementById('cancelPairingBtn'),
   lockEmail: document.getElementById('lockEmail'),
   lockPassword: document.getElementById('lockPassword'),
   unlockBtn: document.getElementById('unlockBtn'),
@@ -100,6 +109,9 @@ decoratePopupIcons();
 setupPasswordToggles();
 
 elements.loginBtn.addEventListener('click', () => authenticate('login'));
+elements.pairDeviceBtn.addEventListener('click', startDevicePairing);
+elements.openPairingBtn.addEventListener('click', openPairingVerification);
+elements.cancelPairingBtn.addEventListener('click', cancelDevicePairing);
 elements.unlockBtn.addEventListener('click', () => authenticate('unlock'));
 elements.loginPassword.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') authenticate('login');
@@ -123,16 +135,30 @@ elements.enabled.addEventListener('change', async () => {
 });
 
 async function initPopup() {
-  const settings = await readSettings();
+  let settings = await readSettings();
+  if (!settings.installationId) {
+    settings = await patchSettings({ installationId: crypto.randomUUID() });
+  }
+  // Las versiones anteriores no guardaban el tipo de acceso. Una credencial
+  // revocable ya emitida se trata como dispositivo vinculado para no pedir una
+  // contraseña que una cuenta Google nunca creó.
+  if (settings.apiKey && settings.accountEmail && !settings.authMode) {
+    settings = await patchSettings({ authMode: 'device', sessionExpiresAt: 0 });
+  }
   applyPopupTheme(settings.themeMode);
   fillFields(settings);
 
   // Ventana deslizante: usar el popup desbloqueado renueva la expiracion.
-  if (computeView(settings) === 'main' && settings.accountEmail && settings.sessionLockMinutes > 0) {
+  if (computeView(settings) === 'main' && settings.authMode === 'password'
+    && settings.accountEmail && settings.sessionLockMinutes > 0) {
     await patchSettings({ sessionExpiresAt: Date.now() + settings.sessionLockMinutes * 60_000 });
   }
 
   showView(computeView(settings), settings);
+  renderPairing(settings.pendingPairing);
+  if (settings.pendingPairing) {
+    monitorDevicePairing(settings.pendingPairing);
+  }
   loadDiagnostics();
   if (computeView(settings) === 'main') {
     refreshConnection(false);
@@ -163,7 +189,7 @@ function computeView(settings) {
   if (!settings.accountEmail) {
     return settings.apiKey ? 'main' : 'login';
   }
-  return isSessionLocked(settings) ? 'lock' : 'main';
+  return settings.authMode === 'password' && isSessionLocked(settings) ? 'lock' : 'main';
 }
 
 function isSessionLocked(settings) {
@@ -183,10 +209,11 @@ function showView(view, settings) {
 
   if (view === 'main') {
     const manualMode = !email;
+    const passwordMode = settings.authMode === 'password';
     elements.sessionEmail.textContent = manualMode ? 'Clave manual' : email;
     elements.sessionEmail.className = `status-pill ${manualMode ? 'is-muted' : 'is-ok'}`;
-    elements.lockTimeoutRow.hidden = manualMode;
-    elements.lockNowBtn.hidden = manualMode;
+    elements.lockTimeoutRow.hidden = manualMode || !passwordMode;
+    elements.lockNowBtn.hidden = manualMode || !passwordMode;
     elements.logoutBtn.textContent = manualMode ? 'Quitar clave' : 'Cerrar sesion';
     decorateButtonIcon(elements.logoutBtn, 'logout');
   }
@@ -206,6 +233,133 @@ function emailInitials(email) {
 }
 
 // ── Autenticacion ────────────────────────────────────────────────────────────
+
+async function startDevicePairing() {
+  const settings = await readSettings();
+  const backendBaseUrl = normalizeUrl(settings.backendBaseUrl);
+  elements.pairDeviceBtn.disabled = true;
+  showStatus('Creando vinculacion segura...', false);
+
+  try {
+    const response = await apiRequest(`${backendBaseUrl}/auth/device-pairings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceName: `Chrome · ${navigator.platform || 'TesisHub Forms'}`,
+        installationId: settings.installationId || undefined,
+      }),
+    });
+    const body = response.data;
+    if (!response.ok || !body?.pairingId || !body?.deviceSecret || !body?.userCode) {
+      showStatus(body?.error?.message || `No se pudo vincular (HTTP ${response.status}).`, true);
+      return;
+    }
+
+    const pendingPairing = {
+      pairingId: body.pairingId,
+      deviceSecret: body.deviceSecret,
+      userCode: body.userCode,
+      expiresAt: body.expiresAt,
+      verificationUrl: body.verificationUrl,
+    };
+    await patchSettings({ pendingPairing });
+    renderPairing(pendingPairing);
+    await openPairingVerification();
+    monitorDevicePairing(pendingPairing);
+  } catch (error) {
+    showStatus(`No se pudo iniciar la vinculacion: ${error.message}`, true);
+  } finally {
+    elements.pairDeviceBtn.disabled = false;
+  }
+}
+
+function renderPairing(pendingPairing) {
+  const active = Boolean(pendingPairing?.pairingId && pendingPairing?.deviceSecret);
+  elements.pairingPanel.hidden = !active;
+  elements.pairDeviceBtn.hidden = active;
+  elements.pairingCode.textContent = active ? String(pendingPairing.userCode || '-') : '-';
+}
+
+async function openPairingVerification() {
+  const settings = await readSettings();
+  const url = String(settings.pendingPairing?.verificationUrl || '').trim();
+  if (!url) return;
+  if (chrome.tabs?.create) {
+    await chrome.tabs.create({ url });
+    return;
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+async function cancelDevicePairing() {
+  pairingPollToken += 1;
+  const updated = await patchSettings({ pendingPairing: null });
+  renderPairing(null);
+  showView(computeView(updated), updated);
+  showStatus('Vinculacion cancelada.', false);
+}
+
+async function monitorDevicePairing(initialPairing) {
+  const token = ++pairingPollToken;
+  let pairing = initialPairing;
+
+  while (token === pairingPollToken && pairing?.pairingId) {
+    if (Date.parse(pairing.expiresAt || 0) <= Date.now()) {
+      const updated = await patchSettings({ pendingPairing: null });
+      renderPairing(null);
+      showView(computeView(updated), updated);
+      showStatus('El codigo vencio. Genera uno nuevo.', true);
+      return;
+    }
+
+    const settings = await readSettings();
+    const backendBaseUrl = normalizeUrl(settings.backendBaseUrl);
+    const response = await apiRequest(
+      `${backendBaseUrl}/auth/device-pairings/${encodeURIComponent(pairing.pairingId)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceSecret: pairing.deviceSecret }),
+      }
+    );
+    const body = response.data;
+
+    if (response.ok && body?.status === 'approved' && body?.apiKey) {
+      let accountEmail = body?.device?.email || body?.user?.email || '';
+      const config = await apiRequest(`${backendBaseUrl}/api/tesistab/config`, {
+        method: 'GET',
+        headers: {
+          'X-API-Key': body.apiKey,
+          ...(settings.installationId ? { 'X-Device-Id': settings.installationId } : {}),
+        },
+      });
+      accountEmail = config.data?.user?.email || accountEmail || 'Cuenta Google';
+      const lockMinutes = normalizeLockMinutes(settings.sessionLockMinutes);
+      const updated = await patchSettings({
+        apiKey: body.apiKey,
+        accountEmail,
+        pendingPairing: null,
+        authMode: 'device',
+        sessionExpiresAt: 0,
+      });
+      renderPairing(null);
+      fillFields(updated);
+      showView('main', updated);
+      showStatus('Dispositivo vinculado correctamente.', false);
+      refreshConnection(false);
+      return;
+    }
+
+    showStatus(
+      !response.ok && response.status !== 404
+        ? body?.error?.message || 'No se pudo consultar la vinculacion.'
+        : 'Esperando aprobacion en TesisHub...',
+      !response.ok && response.status !== 404
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    pairing = (await readSettings()).pendingPairing;
+  }
+}
 
 async function authenticate(mode) {
   const settings = await readSettings();
@@ -236,7 +390,10 @@ async function authenticate(mode) {
 
     const keyResponse = await apiRequest(`${backendBaseUrl}/auth/api-key`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${loginBody.token}` },
+      headers: {
+        Authorization: `Bearer ${loginBody.token}`,
+        ...(settings.installationId ? { 'X-Device-Id': settings.installationId } : {}),
+      },
     });
     const keyBody = keyResponse.data;
     if (!keyResponse.ok || !keyBody?.apiKey) {
@@ -250,6 +407,7 @@ async function authenticate(mode) {
       backendBaseUrl,
       apiKey: keyBody.apiKey,
       accountEmail,
+      authMode: 'password',
       sessionExpiresAt: lockMinutes > 0 ? Date.now() + lockMinutes * 60_000 : 0,
     });
 
@@ -267,11 +425,20 @@ async function authenticate(mode) {
 }
 
 async function logout() {
-  const updated = await patchSettings({ apiKey: '', accountEmail: '', sessionExpiresAt: 0 });
+  pairingPollToken += 1;
+  const updated = await patchSettings({
+    apiKey: '',
+    accountEmail: '',
+    sessionExpiresAt: 0,
+    pendingPairing: null,
+    authMode: '',
+  });
+  await chrome.storage.local.remove([ACTIVE_JOB_KEY, MULTIPAGE_CAPTURE_KEY]);
   elements.loginEmail.value = '';
   elements.loginPassword.value = '';
   elements.lockPassword.value = '';
   fillFields(updated);
+  renderPairing(null);
   showView('login', updated);
   showStatus('Sesion cerrada en este navegador.', false);
 }
@@ -313,7 +480,9 @@ async function refreshConnection(announce) {
   setConnectionState('checking', 'Verificando conexion...', 'Servicio TesisHub');
 
   try {
-    const headers = apiKey ? { 'X-API-Key': apiKey } : {};
+    const headers = {};
+    if (apiKey) headers['X-API-Key'] = apiKey;
+    if (settings.installationId) headers['X-Device-Id'] = settings.installationId;
     const response = await apiRequest(`${backendBaseUrl}/api/tesistab/config`, { method: 'GET', headers });
     const result = response.data;
 
@@ -330,14 +499,15 @@ async function refreshConnection(announce) {
     }
 
     applyBackendConfig(result);
-    // Forms funciona por usos (1 uso = 1 corrida de llenado). null significa
-    // usos ilimitados (admin) o backend sin control de usos (modo legado).
-    const usesLeft = result?.user?.usesLeft;
-    const connectionSub = usesLeft === null || usesLeft === undefined
+    const responsesLeft =
+      result?.quota?.responsesLeft ??
+      result?.user?.formsResponses ??
+      result?.user?.responsesLeft;
+    const connectionSub = responsesLeft === null || responsesLeft === undefined
       ? 'Listo para enviar respuestas'
-      : usesLeft > 0
-        ? `Usos de Forms disponibles: ${usesLeft}`
-        : 'Sin usos disponibles: pide una recarga en TesisHub';
+      : responsesLeft > 0
+        ? `Respuestas disponibles: ${responsesLeft}`
+        : 'Sin respuestas disponibles: pide una recarga en TesisHub';
     setConnectionState('online', 'Conectado', connectionSub);
     if (announce) showStatus('Conexion verificada.', false);
   } catch (error) {
@@ -348,16 +518,24 @@ async function refreshConnection(announce) {
 
 function applyBackendConfig(config) {
   const maxFromBackend = Number(config?.limits?.maxSubmissionsPerJob);
-  const maxSubmissions = Number.isFinite(maxFromBackend)
-    ? Math.max(1, Math.floor(maxFromBackend))
-    : POPUP_MAX_SUBMISSIONS;
+  const maxSubmissions = Number.isSafeInteger(maxFromBackend) && maxFromBackend > 0
+    ? Math.floor(maxFromBackend)
+    : null;
+  const responsesLeft =
+    config?.quota?.responsesLeft ??
+    config?.user?.formsResponses ??
+    config?.user?.responsesLeft;
 
   const genderMin = Number(config?.distribution?.genderShareRange?.min);
   const genderMax = Number(config?.distribution?.genderShareRange?.max);
   const age = config?.distribution?.ageShares || {};
   const frequency = config?.distribution?.purchaseFrequencyShares || {};
 
-  elements.backendMax.textContent = `Max por corrida: ${maxSubmissions}`;
+  elements.backendMax.textContent = maxSubmissions
+    ? `Limite operativo: ${maxSubmissions} respuestas`
+    : responsesLeft === null || responsesLeft === undefined
+      ? 'Capacidad: segun saldo de respuestas'
+      : `Saldo: ${responsesLeft} respuestas`;
   elements.backendGender.textContent = `Genero (rango): ${toPct(genderMin)}-${toPct(genderMax)}`;
   elements.backendAge.textContent =
     `Edad (pesos): 18-25 ${toPct(age.age_18_25)}, 26-35 ${toPct(age.age_26_35)}, ` +

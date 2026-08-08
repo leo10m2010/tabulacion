@@ -1,7 +1,8 @@
 import type { TabConfig, UseTool } from "./types";
 
 // ── Usos por herramienta ─────────────────────────────────────────────────────
-// Todas las herramientas funcionan por usos (1 uso = 1 generación/corrida).
+// Las herramientas de generación funcionan por usos. Forms se mide por
+// respuestas disponibles, aunque conserva el id `forms` por compatibilidad.
 // Debe coincidir con USE_TOOLS/PLAN_PRESETS del backend (node_app/server.js).
 // `unidad` es cómo se cuenta la herramienta en una frase ("2 tabulaciones").
 // Se declara en vez de pluralizar el label por código: en español eso obliga a
@@ -13,7 +14,7 @@ export const USE_TOOLS: { id: UseTool; label: string; unidad: [string, string] }
   { id: "titulos", label: "Generador de Títulos", unidad: ["generación de títulos", "generaciones de títulos"] },
   { id: "matriz", label: "Matriz de Consistencia", unidad: ["matriz de consistencia", "matrices de consistencia"] },
   { id: "humanizador", label: "Humanizador", unidad: ["humanización", "humanizaciones"] },
-  { id: "forms", label: "Forms", unidad: ["corrida de Forms", "corridas de Forms"] },
+  { id: "forms", label: "Forms", unidad: ["respuesta de Forms", "respuestas de Forms"] },
 ];
 
 export const PLAN_PRESETS: Record<string, Record<UseTool, number>> = {
@@ -22,16 +23,18 @@ export const PLAN_PRESETS: Record<string, Record<UseTool, number>> = {
   // abrir el registro no expone ese gasto. Tabulación y Confiabilidad no usan
   // IA — solo CPU — y por eso sí se regalan.
   free: { tabulacion: 2, confiabilidad: 2, descriptiva: 0, titulos: 0, matriz: 0, humanizador: 1, forms: 0 },
-  esencial: { tabulacion: 2, confiabilidad: 2, descriptiva: 3, titulos: 3, matriz: 1, humanizador: 5, forms: 2 },
-  tesista: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
-  institucion: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 10 },
+  esencial: { tabulacion: 2, confiabilidad: 2, descriptiva: 3, titulos: 3, matriz: 1, humanizador: 5, forms: 500 },
+  tesista: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 2500 },
+  institucion: { tabulacion: 10, confiabilidad: 10, descriptiva: 10, titulos: 10, matriz: 5, humanizador: 30, forms: 2500 },
 };
 
 export const PLAN_OPTIONS = [
-  { id: "free", label: "Gratuito" },
-  { id: "esencial", label: "Esencial" },
-  { id: "tesista", label: "Tesista" },
-  { id: "institucion", label: "Institución" },
+  { id: "free", label: "Gratuito", legacy: false },
+  { id: "esencial", label: "Esencial", legacy: false },
+  { id: "tesista", label: "Tesista", legacy: false },
+  // Compatibilidad administrativa para cuentas ya existentes. No se muestra
+  // en la landing ni en la contratación pública.
+  { id: "institucion", label: "Institución (legado)", legacy: true },
 ];
 
 // ─── Constants ───────────────────────────────────────────────────────────────

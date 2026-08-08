@@ -35,6 +35,7 @@ import {
 } from "../../lib/api";
 import { PLAN_OPTIONS, PLAN_PRESETS, USE_TOOLS } from "../../lib/constants";
 import { formatDateTime } from "../../lib/helpers";
+import { getFormsBalance } from "../../lib/usage";
 import { cn } from "../../lib/utils";
 import type { AuthUser, UseTool } from "../../lib/types";
 
@@ -42,22 +43,27 @@ import type { AuthUser, UseTool } from "../../lib/types";
 // estado y las llamadas a la API viven aquí; App solo lo monta cuando la
 // sección está activa (por eso carga usuarios en el mount).
 //
-// Modelo de acceso: TODAS las herramientas funcionan por usos (1 uso = 1
-// generación o corrida; admins ilimitados). El admin recarga cada
-// herramienta por separado desde el panel lateral.
+// Modelo de acceso: las generaciones funcionan por usos y Forms por saldo de
+// respuestas. El admin recarga cada herramienta desde el panel lateral.
 
 type StatusFilter = "todos" | "activos" | "sin_usos" | "desactivados";
 type RoleFilter = "todos" | "admin" | "user";
 
 const totalUsesLeft = (user: AuthUser): number => (
-  USE_TOOLS.reduce((acc, tool) => acc + (user.uses?.[tool.id] ?? 0), 0)
+  USE_TOOLS.filter((tool) => tool.id !== "forms")
+    .reduce((acc, tool) => acc + (user.uses?.[tool.id] ?? 0), 0)
 );
 
 const totalUsesConsumed = (user: AuthUser): number => (
-  USE_TOOLS.reduce((acc, tool) => acc + (user.usesConsumed?.[tool.id] ?? 0), 0)
+  USE_TOOLS.filter((tool) => tool.id !== "forms")
+    .reduce((acc, tool) => acc + (user.usesConsumed?.[tool.id] ?? 0), 0)
 );
 
-const isOutOfUses = (user: AuthUser) => user.role !== "admin" && totalUsesLeft(user) === 0;
+const isOutOfUses = (user: AuthUser) => (
+  user.role !== "admin"
+  && totalUsesLeft(user) === 0
+  && (getFormsBalance(user).available ?? 0) === 0
+);
 
 const usesLabel = (user: AuthUser) => (
   user.role === "admin" ? "∞" : String(totalUsesLeft(user))
@@ -202,7 +208,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   // Al cambiar de usuario seleccionado se limpian los campos de gestión.
   useEffect(() => {
@@ -381,7 +387,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
         <div>
           <h2 className="font-display text-2xl font-bold tracking-tight">Gestión de usuarios</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Todas las herramientas funcionan por usos (1 uso = 1 generación o corrida). Recarga cada una por separado.
+            Las generaciones funcionan por usos; Forms se administra por respuestas disponibles.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -448,7 +454,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
         />
         <StatCard
           icon={<Ticket className="h-3.5 w-3.5" />}
-          label="Usos totales"
+          label="Usos de generación"
           value={String(stats.usosRestantes)}
           detail={`disponibles · ${stats.usosConsumidos} consumidos`}
         />
@@ -505,7 +511,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                     setNewUserUsesByTool(presetAsStrings(e.target.value));
                   }}
                 >
-                  {PLAN_OPTIONS.map((p) => (
+                  {PLAN_OPTIONS.filter((p) => !p.legacy).map((p) => (
                     <option key={p.id} value={p.id}>{p.label}</option>
                   ))}
                 </Select>
@@ -520,7 +526,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {USE_TOOLS.map((tool) => (
                     <label key={tool.id} className="block space-y-1">
-                      <span className="text-[11px] text-muted-foreground">{tool.label}</span>
+                       <span className="text-[11px] text-muted-foreground">{tool.label}{tool.id === "forms" ? " (respuestas)" : ""}</span>
                       <Input
                         className="h-9 text-sm tabular-nums"
                         value={newUserUsesByTool[tool.id]}
@@ -621,7 +627,7 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
             <thead>
               <tr className="border-b border-border/70 text-left text-xs text-muted-foreground">
                 <th className="px-4 py-2.5 font-medium">Usuario</th>
-                <th className="px-3 py-2.5 text-right font-medium">Usos disponibles</th>
+                <th className="px-3 py-2.5 text-right font-medium">Cuota disponible</th>
                 <th className="px-3 py-2.5 text-right font-medium">Excel</th>
                 <th className="px-3 py-2.5 font-medium">Último acceso</th>
                 <th className="w-8 px-2 py-2.5" />
@@ -631,29 +637,9 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
               {filteredUsers.map((user) => (
                 <tr
                   key={user.id}
-                  // Antes solo tenía onClick: una fila de <tr> no es
-                  // focuseable ni activable por teclado por defecto, así que
-                  // todo el panel de gestión (recargas, reset de contraseña,
-                  // eliminar) era inalcanzable sin ratón. tabIndex + onKeyDown
-                  // la vuelven un control real por teclado. Contrapartida
-                  // aceptada: role="button" reemplaza el rol implícito de
-                  // fila, así que un lector de pantalla en modo tabla ya no
-                  // la anuncia como fila con sus encabezados de columna, sino
-                  // como un botón con el aria-label de abajo — se prioriza que
-                  // sea operable sobre conservar esa semántica de tabla.
-                  tabIndex={0}
-                  role="button"
-                  aria-haspopup="dialog"
-                  aria-label={`Gestionar a ${user.email}`}
-                  onClick={(e) => { lastTriggerRef.current = e.currentTarget; setSelectedId(user.id); }}
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter" && e.key !== " ") return;
-                    e.preventDefault();
-                    lastTriggerRef.current = e.currentTarget;
-                    setSelectedId(user.id);
-                  }}
+                  onClick={() => { lastTriggerRef.current = null; setSelectedId(user.id); }}
                   className={cn(
-                    "cursor-pointer border-b border-border/40 transition-colors duration-150 last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset",
+                    "cursor-pointer border-b border-border/40 transition-colors duration-150 last:border-b-0",
                     selectedId === user.id ? "bg-primary/5" : "hover:bg-accent/50",
                   )}
                 >
@@ -671,12 +657,28 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                     </div>
                   </td>
                   <td className="px-3 py-3 text-right text-sm tabular-nums">
-                    <span className="font-semibold">{usesLabel(user)}</span>
-                    <span className="text-xs text-muted-foreground"> · {totalUsesConsumed(user)} usados</span>
+                    <span className="font-semibold">{usesLabel(user)} usos</span>
+                    <span className="text-xs text-muted-foreground">
+                      {" · "}{getFormsBalance(user).available === null ? "∞" : getFormsBalance(user).available} resp.
+                    </span>
                   </td>
                   <td className="px-3 py-3 text-right font-semibold tabular-nums">{user.generationsCount ?? 0}</td>
                   <td className="px-3 py-3 text-xs text-muted-foreground">{formatDateTime(user.lastLoginAt)}</td>
-                  <td className="px-2 py-3 text-muted-foreground"><ChevronRight className="h-4 w-4" /></td>
+                  <td className="px-2 py-3 text-muted-foreground">
+                    <button
+                      type="button"
+                      aria-haspopup="dialog"
+                      aria-label={`Gestionar a ${user.email}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        lastTriggerRef.current = e.currentTarget;
+                        setSelectedId(user.id);
+                      }}
+                      className="flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-accent hover:text-foreground"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -751,15 +753,18 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                       <table className="w-full text-xs">
                         <tbody>
                           {USE_TOOLS.map((tool) => {
-                            const left = selectedUser.uses?.[tool.id] ?? 0;
-                            const used = selectedUser.usesConsumed?.[tool.id] ?? 0;
+                            const forms = getFormsBalance(selectedUser);
+                            const left = tool.id === "forms" ? (forms.available ?? 0) : (selectedUser.uses?.[tool.id] ?? 0);
+                            const used = tool.id === "forms" ? forms.consumed : (selectedUser.usesConsumed?.[tool.id] ?? 0);
                             return (
                               <tr key={tool.id} className="border-b border-border/40 last:border-b-0">
                                 <td className="px-2.5 py-1.5">{tool.label}</td>
                                 <td className={cn("px-2.5 py-1.5 text-right font-semibold tabular-nums", left === 0 && "text-amber-700 dark:text-amber-400")}>
                                   {left}
                                 </td>
-                                <td className="px-2.5 py-1.5 text-right text-muted-foreground tabular-nums">{used} usados</td>
+                                <td className="px-2.5 py-1.5 text-right text-muted-foreground tabular-nums">
+                                  {used} {tool.id === "forms" ? "enviadas" : "usados"}
+                                </td>
                               </tr>
                             );
                           })}
@@ -771,7 +776,11 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                         wrapperClassName="flex-1"
                         className="h-9 pl-2.5"
                         value={rechargeTool}
-                        onChange={(e) => setRechargeTool(e.target.value as UseTool)}
+                        onChange={(e) => {
+                          const tool = e.target.value as UseTool;
+                          setRechargeTool(tool);
+                          setRechargeAmount(tool === "forms" ? "250" : "5");
+                        }}
                       >
                         {USE_TOOLS.map((tool) => (
                           <option key={tool.id} value={tool.id}>{tool.label}</option>
@@ -788,12 +797,12 @@ export function UsersSection({ apiBaseUrl, authToken, authUser }: {
                         variant="outline"
                         onClick={() => {
                           const amount = Number.parseInt(rechargeAmount, 10);
-                          if (!Number.isFinite(amount) || amount === 0) { setUsersErrorMessage("Los usos deben ser un número distinto de 0 (negativo para corregir)."); return; }
+                          if (!Number.isFinite(amount) || amount === 0) { setUsersErrorMessage("La cantidad debe ser un número distinto de 0 (negativo para corregir)."); return; }
                           const label = USE_TOOLS.find((t) => t.id === rechargeTool)?.label ?? rechargeTool;
                           void patchManagedUser(
                             selectedUser.id,
                             { usesDelta: { [rechargeTool]: amount } },
-                            `${amount > 0 ? "+" : ""}${amount} usos de ${label} para ${selectedUser.email}.`,
+                            `${amount > 0 ? "+" : ""}${amount} ${rechargeTool === "forms" ? "respuestas" : "usos"} de ${label} para ${selectedUser.email}.`,
                           );
                         }}
                         disabled={isUsersLoading}

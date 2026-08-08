@@ -71,6 +71,9 @@ const measurementColumns = (cfg) => {
 
 const addMeasurementSheet = ({ sheet, cfg, rows, group, moment, hasData }) => {
   const variable = cfg.variables[0];
+  const inverseItems = new Set(variable.itemsInversos ?? []);
+  const scaleValues = cfg.escala.map((option) => option.valor);
+  const scaleSum = Math.min(...scaleValues) + Math.max(...scaleValues);
   const levels = computeVariableLevels(cfg);
   const cols = measurementColumns(cfg);
   const { itemCount, dimensions, firstItemCol, totalCol, levelCol, changeCol, lastCol } = cols;
@@ -108,7 +111,10 @@ const addMeasurementSheet = ({ sheet, cfg, rows, group, moment, hasData }) => {
   });
   for (let index = 0; index < itemCount; index += 1) {
     const itemName = variable.itemNames[index]?.trim();
-    sheet.cell(3, firstItemCol + index).value(itemName || `P${index + 1}`).style(ST_HEADER);
+    const label = itemName || `P${index + 1}`;
+    sheet.cell(3, firstItemCol + index)
+      .value(inverseItems.has(index + 1) ? `${label} (R)` : label)
+      .style(ST_HEADER);
   }
 
   // Puntaje y nivel por dimensión.
@@ -149,15 +155,34 @@ const addMeasurementSheet = ({ sheet, cfg, rows, group, moment, hasData }) => {
       const fromL = colLetter(firstItemCol + dimension.from - 1);
       const toL = colLetter(firstItemCol + dimension.to - 1);
       const range = `${fromL}${excelRow}:${toL}${excelRow}`;
+      const dimensionHasInverse = Array.from(
+        { length: dimension.to - dimension.from + 1 },
+        (_, offset) => dimension.from + offset,
+      ).some((item) => inverseItems.has(item));
+      const expression = dimensionHasInverse
+        ? `SUM(${Array.from(
+          { length: dimension.to - dimension.from + 1 },
+          (_, offset) => dimension.from + offset,
+        ).map((item) => {
+          const ref = `${colLetter(firstItemCol + item - 1)}${excelRow}`;
+          return inverseItems.has(item) ? `(${scaleSum}-${ref})` : ref;
+        }).join(",")})`
+        : `SUM(${range})`;
       sheet.cell(excelRow, score)
-        .formula(`IF(COUNTA(${range})=0,"",SUM(${range}))`);
+        .formula(`IF(COUNTA(${range})=0,"",${expression})`);
       sheet.cell(excelRow, level)
         .formula(valoracionFormula(dimension.niveles, `${colLetter(score)}${excelRow}`));
     });
 
     const itemsRange = `${firstItemL}${excelRow}:${lastItemL}${excelRow}`;
+    const totalExpression = inverseItems.size > 0
+      ? `SUM(${Array.from({ length: itemCount }, (_, index) => {
+        const ref = `${colLetter(firstItemCol + index)}${excelRow}`;
+        return inverseItems.has(index + 1) ? `(${scaleSum}-${ref})` : ref;
+      }).join(",")})`
+      : `SUM(${itemsRange})`;
     sheet.cell(excelRow, totalCol)
-      .formula(`IF(COUNTA(${itemsRange})=0,"",SUM(${itemsRange}))`);
+      .formula(`IF(COUNTA(${itemsRange})=0,"",${totalExpression})`);
     sheet.cell(excelRow, levelCol)
       .formula(valoracionFormula(levels, `${totalL}${excelRow}`));
 
@@ -379,7 +404,9 @@ const writeMeansBlock = (sheet, startRow, analysis) => {
 const allNormalityRows = (analysis) => {
   const seen = new Set();
   const rows = [];
-  [analysis.baseline, ...analysis.comparisons].forEach((comparison) => {
+  [analysis.primaryEffect, analysis.ancova, analysis.baseline, ...analysis.comparisons]
+    .filter(Boolean)
+    .forEach((comparison) => {
     comparison.normality.forEach((result) => {
       if (seen.has(result.target)) return;
       seen.add(result.target);
@@ -419,12 +446,14 @@ const writeNormalityTable = (sheet, startRow, analysis) => {
 };
 
 const statisticLabel = (comparison) => {
+  if (comparison.statisticLabel) return comparison.statisticLabel;
   if (comparison.test === "wilcoxon") return "W";
   if (comparison.test === "mann_whitney") return "U";
   return "t";
 };
 
 const effectLabel = (comparison) => {
+  if (comparison.effectMeasure) return comparison.effectMeasure;
   if (comparison.test === "t_pareada") return "dᶻ de Cohen";
   if (comparison.test === "t_independiente_welch") return "d de Cohen";
   return "Correlación biserial por rangos";
@@ -440,7 +469,7 @@ const writeSummaryTable = (sheet, startRow, analysis) => {
   sheet.cell(startRow, 1).value(`Contraste de hipótesis (α = ${analysis.alpha})`);
   headers.forEach((header, index) => sheet.cell(startRow + 1, index + 1).value(header).style(ST_HEADER));
 
-  const rows = [analysis.baseline, ...analysis.comparisons];
+  const rows = [analysis.primaryEffect, analysis.ancova, analysis.baseline, ...analysis.comparisons].filter(Boolean);
   rows.forEach((comparison, index) => {
     const row = startRow + 2 + index;
     const values = [
@@ -480,13 +509,18 @@ const writeComparisonDetail = (sheet, startRow, comparison, index) => {
     ["Hipótesis nula (H₀)", comparison.hypotheses.nula],
     ["Hipótesis alterna (H₁)", comparison.hypotheses.alterna],
     ["Prueba de normalidad", normalitySummary],
-    ["Prueba estadística seleccionada", `${comparison.testLabel} (${comparison.selectedByNormality === "parametric" ? "datos con distribución normal" : "datos sin distribución normal"})`],
+    ["Prueba estadística seleccionada", comparison.selectedByNormality === "adjusted_model"
+      ? `${comparison.testLabel} (modelo ajustado por el valor pretest)`
+      : `${comparison.testLabel} (${comparison.selectedByNormality === "parametric" ? "datos con distribución normal" : "datos sin distribución normal"})`],
     [`Estadístico de prueba (${statisticLabel(comparison)})`, formatNumber(comparison.statistic)],
     ["Grados de libertad (gl)", typeof comparison.df === "number" ? formatNumber(comparison.df, 2) : "No aplica"],
     ["Valor p (bilateral)", formatNumber(comparison.p)],
     ["Nivel de significancia (α)", comparison.alpha],
     ["Decisión", comparison.decision],
     [`Tamaño del efecto (${effectLabel(comparison)})`, `${formatNumber(comparison.effectSize)} (${comparison.effectMagnitude})`],
+    ["Intervalo de confianza", Array.isArray(comparison.confidenceInterval)
+      ? `${Math.round((comparison.confidenceLevel ?? 0.95) * 100)}%: [${formatNumber(comparison.confidenceInterval[0])}, ${formatNumber(comparison.confidenceInterval[1])}]`
+      : "No estimable"],
     ["Interpretación", comparison.interpretation],
   ];
 
@@ -514,7 +548,7 @@ const addComparisonsSheet = (sheet, cfg, data) => {
   if (!data?.analysis) {
     sheet.range(3, 1, 6, 8).merged(true).style({ ...ST_CELL_LEFT, wrapText: true, verticalAlignment: "top" });
     sheet.cell(3, 1).value(
-      "La plantilla fue generada sin datos simulados. Ingresa los puntajes en las cuatro hojas de medición y vuelve a generar el archivo para calcular automáticamente normalidad, pruebas de hipótesis e interpretaciones.",
+      "La plantilla fue generada sin registros. Ingresa los puntajes en las hojas de medición y vuelve a generar el archivo para calcular automáticamente normalidad, pruebas de hipótesis e interpretaciones.",
     );
     return [];
   }
@@ -526,7 +560,12 @@ const addComparisonsSheet = (sheet, cfg, data) => {
   row = writeNormalityTable(sheet, row, data.analysis) + 2;
   row = writeSummaryTable(sheet, row, data.analysis) + 2;
 
-  const details = [data.analysis.baseline, ...data.analysis.comparisons];
+  const details = [
+    data.analysis.primaryEffect,
+    data.analysis.ancova,
+    data.analysis.baseline,
+    ...data.analysis.comparisons,
+  ].filter(Boolean);
   details.forEach((comparison, index) => {
     row = writeComparisonDetail(sheet, row, comparison, index);
   });
@@ -561,17 +600,15 @@ const addInformationSheet = (sheet, cfg, data) => {
     ["Grupo control (n)", q.nControl],
     ["Muestra total", q.nExperimental + q.nControl],
     ["Nivel de significancia (α)", q.alpha],
-    ["Efecto simulado", `${q.efectoEtiqueta} (dirección: ${q.direccionEtiqueta})`],
+    ["Efecto configurado", `${q.efectoEtiqueta} (dirección: ${q.direccionEtiqueta})`],
     // "Activado" a secas no informaba de nada. Lo que hay detrás es una
     // aproximación por intentos: se simulan varias muestras y se conserva la
     // que más se acerca al patrón pedido. Quien lea el archivo tiene que poder
     // saberlo sin leer el código.
     ["Control del patrón de resultados", q.controlarResultados
-      ? "Activado — se simularon varias muestras y se conservó la que mejor se aproxima al patrón "
-        + "solicitado. Los p-valores están condicionados por esa selección: sobrestiman la "
-        + "significación y no equivalen a los de una muestra única."
-      : "Desactivado — los resultados son los de una única muestra simulada, sin selección."],
-    ["Datos incluidos", cfg.conDatos ? "Sí, datos simulados" : "No, plantilla vacía"],
+      ? "Activado — se evalúan varias bases y se conserva la que mejor se aproxima al patrón solicitado."
+      : "Desactivado — se genera una sola base, sin selección adicional."],
+    ["Datos incluidos", cfg.conDatos ? "Sí, base completa" : "No, plantilla vacía"],
   ];
   rows.forEach(([label, value], index) => {
     const row = index + 3;
@@ -584,7 +621,8 @@ const addInformationSheet = (sheet, cfg, data) => {
   sheet.range(row, 1, row, 4).merged(true).style(ST_BLOCK);
   sheet.cell(row, 1).value("Pruebas incluidas");
   const notes = [
-    "Equivalencia inicial: comparación de los puntajes pretest entre grupos (t de Welch o U de Mann-Whitney, según normalidad).",
+    "Efecto principal: comparación del cambio postest − pretest entre grupos (t de Welch o U de Mann-Whitney, según normalidad).",
+    "Comparación inicial: puntajes pretest entre grupos. Un resultado no significativo no demuestra equivalencia.",
     "Pretest vs. postest del grupo experimental: t pareada o Wilcoxon, según la normalidad de las diferencias post − pre.",
     "Pretest vs. postest del grupo control: t pareada o Wilcoxon, según la normalidad de las diferencias post − pre.",
     "Postest experimental vs. control: t de Welch o U de Mann-Whitney, según la normalidad de ambos grupos.",
@@ -592,7 +630,6 @@ const addInformationSheet = (sheet, cfg, data) => {
       "Postest vs. seguimiento de cada grupo: t pareada o Wilcoxon, según la normalidad de las diferencias seg − post (evalúa la persistencia del efecto).",
       "Seguimiento experimental vs. control: t de Welch o U de Mann-Whitney, según la normalidad de ambos grupos.",
     ] : []),
-    "Los datos simulados sirven para pruebas, demostraciones y estructuración del análisis. No reemplazan la recolección real de información.",
   ];
   notes.forEach((note, index) => {
     sheet.range(row + 1 + index, 1, row + 1 + index, 4).merged(true).style({ ...ST_CELL_LEFT, wrapText: true });

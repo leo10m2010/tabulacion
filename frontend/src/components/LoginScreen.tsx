@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeft, Check, Eye, EyeOff, FileSpreadsheet, Loader2, Moon, Sun } from "lucide-react";
+import { ArrowLeft, Check, Eye, EyeOff, FileSpreadsheet, Loader2, Moon, RefreshCw, Sun } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -14,7 +14,7 @@ import type { AppIntent, ThemeMode } from "../lib/types";
 //
 // El formulario de correo se queda debajo, más discreto, porque es por donde
 // entran las cuentas que crea el administrador (las de pago e instituciones).
-export function LoginScreen({ apiBaseUrl, onApiBaseUrlChange, themeMode, onToggleTheme, onBackToLanding, authError, authLoading, onLogin, googleClientId, onGoogleCredential, onAuthErrorChange, intent, onIntentChange, freePlan }: {
+export function LoginScreen({ apiBaseUrl, onApiBaseUrlChange, themeMode, onToggleTheme, onBackToLanding, authError, authLoading, onLogin, googleClientId, onGoogleCredential, onAuthErrorChange, intent, onIntentChange, freePlan, publicConfigStatus, onRetryPublicConfig, hasPendingSession, onRetrySession }: {
   apiBaseUrl: string;
   onApiBaseUrlChange: (url: string) => void;
   themeMode: ThemeMode;
@@ -34,6 +34,10 @@ export function LoginScreen({ apiBaseUrl, onApiBaseUrlChange, themeMode, onToggl
   // Cuotas reales del plan gratuito (de /config). Null mientras carga o si el
   // servidor no responde: en ese caso simplemente no se promete nada.
   freePlan: Record<string, number> | null;
+  publicConfigStatus?: "loading" | "ready" | "error";
+  onRetryPublicConfig?: () => void;
+  hasPendingSession?: boolean;
+  onRetrySession?: () => void;
 }) {
   const [email, setEmail] = useState<string>(() => localStorage.getItem("loginEmail") ?? "");
   const [password, setPassword] = useState("");
@@ -97,11 +101,31 @@ export function LoginScreen({ apiBaseUrl, onApiBaseUrlChange, themeMode, onToggl
           )}
 
           <div className="mt-7 space-y-4">
+            {publicConfigStatus === "loading" && (
+              <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Preparando el acceso seguro…
+              </div>
+            )}
+            {publicConfigStatus === "error" && onRetryPublicConfig && (
+              <div className="rounded-xl border border-border bg-muted/40 p-3 text-sm" role="alert">
+                <p>No pudimos cargar el acceso con Google. El servidor puede estar iniciando.</p>
+                <Button className="mt-3 w-full" size="sm" variant="outline" onClick={onRetryPublicConfig}>
+                  <RefreshCw className="h-4 w-4" /> Reintentar acceso
+                </Button>
+              </div>
+            )}
             {authError && (
               // role="alert": "contraseña incorrecta" o "tu sesión expiró" son
               // la respuesta a lo que el usuario acaba de intentar; deben
               // anunciarse, no solo pintarse de rojo.
               <div role="alert" className="rounded-xl border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{authError}</div>
+            )}
+            {hasPendingSession && onRetrySession && (
+              <Button className="w-full" variant="outline" onClick={onRetrySession} disabled={authLoading}>
+                {authLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Reintentar mi sesión
+              </Button>
             )}
 
             {googleClientId && (

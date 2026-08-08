@@ -248,6 +248,14 @@ export function HierarchyEditor({
   const updateItemName = (dimId: string, indId: string, itemId: string, nombre: string) => onChange(estructura.map((d) =>
     d.id === dimId ? { ...d, indicadores: d.indicadores.map((i) =>
       i.id === indId ? { ...i, items: i.items.map((it) => it.id === itemId ? { ...it, nombre } : it) } : i) } : d));
+  const toggleItemInverse = (dimId: string, indId: string, itemId: string) => onChange(estructura.map((d) =>
+    d.id === dimId ? { ...d, indicadores: d.indicadores.map((i) =>
+      i.id === indId ? {
+        ...i,
+        items: i.items.map((it) => (
+          it.id === itemId ? { ...it, invertido: !it.invertido } : it
+        )),
+      } : i) } : d));
 
   return (
     <div className="space-y-2">
@@ -368,6 +376,16 @@ export function HierarchyEditor({
                                   aria-label={`Pregunta ${globalNum}`}
                                   className="h-8 flex-1 text-sm"
                                 />
+                                <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(item.invertido)}
+                                    onChange={() => toggleItemInverse(dim.id, ind.id, item.id)}
+                                    aria-label={`Marcar pregunta ${globalNum} como ítem inverso`}
+                                    className="h-4 w-4 rounded border-border accent-primary"
+                                  />
+                                  Inverso
+                                </label>
                                 <Button
                                   variant="ghost"
                                   size="sm"

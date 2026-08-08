@@ -1,6 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -31,6 +32,7 @@ before(async () => {
       ADMIN_PASSWORD,
       LOGIN_MAX_ATTEMPTS: "3",
       LOGIN_WINDOW_SECONDS: "60",
+      TESISTAB_RUN_JOBS_INLINE: "false",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -71,6 +73,226 @@ test("login del admin inicial y /auth/me", async () => {
   assert.equal(me.status, 200);
   const mePayload = await me.json();
   assert.equal(mePayload.user.role, "admin");
+});
+
+test("logout revoca solo la sesion presentada", async () => {
+  const first = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  const second = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  const logout = await fetch(`${BASE}/auth/logout`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${first.body.token}` },
+  });
+  assert.equal(logout.status, 200);
+  const revoked = await fetch(`${BASE}/auth/me`, {
+    headers: { Authorization: `Bearer ${first.body.token}` },
+  });
+  const stillActive = await fetch(`${BASE}/auth/me`, {
+    headers: { Authorization: `Bearer ${second.body.token}` },
+  });
+  assert.equal(revoked.status, 401);
+  assert.equal(stillActive.status, 200);
+});
+
+test("lista sesiones y revoca todas salvo la sesion actual", async () => {
+  const first = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  const current = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  const listed = await fetch(`${BASE}/auth/sessions`, {
+    headers: { Authorization: `Bearer ${current.body.token}` },
+  });
+  assert.equal(listed.status, 200);
+  const listedBody = await listed.json();
+  assert.ok(listedBody.sessions.some((session) => session.current));
+  assert.ok(listedBody.sessions.some((session) => !session.current && !session.revokedAt));
+
+  const revoke = await fetch(`${BASE}/auth/sessions/revoke-others`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${current.body.token}` },
+  });
+  assert.equal(revoke.status, 200);
+  assert.ok((await revoke.json()).revoked >= 1);
+
+  const oldSession = await fetch(`${BASE}/auth/me`, {
+    headers: { Authorization: `Bearer ${first.body.token}` },
+  });
+  const currentSession = await fetch(`${BASE}/auth/me`, {
+    headers: { Authorization: `Bearer ${current.body.token}` },
+  });
+  assert.equal(oldSession.status, 401);
+  assert.equal(currentSession.status, 200);
+});
+
+test("empareja y revoca una instalacion sin exponer el secreto en la URL", async () => {
+  const pairingResponse = await fetch(`${BASE}/auth/device-pairings`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Host: "evil.example",
+      "X-Forwarded-Proto": "https",
+    },
+    body: JSON.stringify({ deviceName: "Chrome de prueba" }),
+  });
+  assert.equal(pairingResponse.status, 201);
+  const pairing = await pairingResponse.json();
+  assert.ok(pairing.pairingId);
+  assert.ok(pairing.deviceSecret);
+  assert.match(pairing.userCode, /^[A-Z2-9]{8}$/);
+  assert.equal(pairing.verificationUrl, `http://localhost:${PORT}/cuenta`,
+    "Host y X-Forwarded-Proto no contaminan enlaces emitidos por la API");
+
+  const legacyPending = await fetch(
+    `${BASE}/auth/device-pairings/${pairing.pairingId}?secret=${encodeURIComponent(pairing.deviceSecret)}`,
+  );
+  assert.equal(legacyPending.status, 200);
+  assert.equal(legacyPending.headers.get("deprecation"), "true");
+  assert.equal(legacyPending.headers.get("sunset"), "Mon, 07 Sep 2026 00:00:00 GMT");
+
+  const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  const approval = await fetch(`${BASE}/auth/device-pairings/approve`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${admin.body.token}`,
+    },
+    body: JSON.stringify({ userCode: pairing.userCode }),
+  });
+  assert.equal(approval.status, 200);
+
+  const credentialResponse = await fetch(
+    `${BASE}/auth/device-pairings/${pairing.pairingId}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceSecret: pairing.deviceSecret }),
+    },
+  );
+  assert.equal(credentialResponse.status, 200);
+  assert.equal(credentialResponse.headers.get("cache-control"), "no-store");
+  const credential = await credentialResponse.json();
+  assert.match(credential.apiKey, /^ttab_[a-f0-9]{48}$/);
+
+  const devicesResponse = await fetch(`${BASE}/auth/devices`, {
+    headers: { Authorization: `Bearer ${admin.body.token}` },
+  });
+  const devices = (await devicesResponse.json()).devices;
+  const device = devices.find((item) => item.name === "Chrome de prueba");
+  assert.ok(device);
+
+  const beforeRevoke = await fetch(`${BASE}/api/tesistab/config`, {
+    headers: { "X-API-Key": credential.apiKey },
+  });
+  assert.equal(beforeRevoke.status, 200);
+  const revoke = await fetch(`${BASE}/auth/devices/${device.id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${admin.body.token}` },
+  });
+  assert.equal(revoke.status, 200);
+  const afterRevoke = await fetch(`${BASE}/api/tesistab/config`, {
+    headers: { "X-API-Key": credential.apiKey },
+  });
+  assert.equal(afterRevoke.status, 401);
+
+  const replay = await fetch(`${BASE}/auth/device-pairings/${pairing.pairingId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ deviceSecret: pairing.deviceSecret }),
+  });
+  assert.equal(replay.status, 410);
+});
+
+test("un emparejamiento concurrente entrega exactamente una credencial", async () => {
+  const createdResponse = await fetch(`${BASE}/auth/device-pairings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ deviceName: "Chrome concurrente" }),
+  });
+  assert.equal(createdResponse.status, 201);
+  const pairing = await createdResponse.json();
+  const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  const approval = await fetch(`${BASE}/auth/device-pairings/approve`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${admin.body.token}`,
+    },
+    body: JSON.stringify({ userCode: pairing.userCode }),
+  });
+  assert.equal(approval.status, 200);
+
+  const deliver = () => fetch(`${BASE}/auth/device-pairings/${pairing.pairingId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ deviceSecret: pairing.deviceSecret }),
+  });
+  const deliveries = await Promise.all([deliver(), deliver()]);
+  assert.deepEqual(deliveries.map((response) => response.status).sort(), [200, 410]);
+  const successful = deliveries.find((response) => response.status === 200);
+  assert.match((await successful.json()).apiKey, /^ttab_[a-f0-9]{48}$/);
+});
+
+test("renovar o revocar una instalacion no invalida las demas", async () => {
+  const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  const pair = async (deviceName) => {
+    const created = await fetch(`${BASE}/auth/device-pairings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceName }),
+    });
+    assert.equal(created.status, 201);
+    const pairing = await created.json();
+    const approved = await fetch(`${BASE}/auth/device-pairings/approve`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${admin.body.token}`,
+      },
+      body: JSON.stringify({ userCode: pairing.userCode }),
+    });
+    assert.equal(approved.status, 200);
+    const delivered = await fetch(`${BASE}/auth/device-pairings/${pairing.pairingId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceSecret: pairing.deviceSecret }),
+    });
+    assert.equal(delivered.status, 200);
+    return delivered.json();
+  };
+  const first = await pair("Chrome principal");
+  const second = await pair("Chrome secundario");
+  const list = await fetch(`${BASE}/auth/devices`, {
+    headers: { Authorization: `Bearer ${admin.body.token}` },
+  });
+  const devices = (await list.json()).devices;
+  const firstDevice = devices.find((device) => device.name === "Chrome principal");
+  const secondDevice = devices.find((device) => device.name === "Chrome secundario");
+  assert.ok(firstDevice && secondDevice);
+
+  const validate = (apiKey) => fetch(`${BASE}/api/tesistab/config`, {
+    headers: { "X-API-Key": apiKey },
+  });
+  assert.equal((await validate(first.apiKey)).status, 200);
+  assert.equal((await validate(second.apiKey)).status, 200);
+
+  const renewedResponse = await fetch(`${BASE}/auth/api-key`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${admin.body.token}`,
+      "X-Device-Id": firstDevice.id,
+    },
+  });
+  assert.equal(renewedResponse.status, 200);
+  const renewed = await renewedResponse.json();
+  assert.equal((await validate(first.apiKey)).status, 401, "la credencial anterior se revoca");
+  assert.equal((await validate(renewed.apiKey)).status, 200, "la instalacion renovada valida");
+  assert.equal((await validate(second.apiKey)).status, 200, "la segunda instalacion sigue valida");
+
+  const revoke = await fetch(`${BASE}/auth/devices/${firstDevice.id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${admin.body.token}` },
+  });
+  assert.equal(revoke.status, 200);
+  assert.equal((await validate(renewed.apiKey)).status, 401);
+  assert.equal((await validate(second.apiKey)).status, 200,
+    "revocar una instalacion no invalida las credenciales hermanas");
 });
 
 test("rutas protegidas exigen token", async () => {
@@ -119,6 +341,31 @@ test("un usuario con rol 'user' y suscripcion vigente puede generar", async () =
   assert.equal(typeof payload.correlationControl?.obtenido, "number");
 });
 
+test("/generate genera, persiste y reutiliza una semilla segura con la misma idempotencyKey", async () => {
+  const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+  const raw = JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, "..", "..", "Tabulacion.json"), "utf-8"));
+  const body = JSON.stringify({
+    config: { ...raw, muestra: "12", seed: undefined },
+    responseMode: "links",
+    idempotencyKey: "generate-idempotente-001",
+  });
+  const request = () => fetch(`${BASE}/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${admin.body.token}` },
+    body,
+  });
+  const firstResponse = await request();
+  const first = await firstResponse.json();
+  const secondResponse = await request();
+  const second = await secondResponse.json();
+  assert.equal(firstResponse.status, 200);
+  assert.equal(secondResponse.status, 200);
+  assert.equal(second.id, first.id);
+  assert.equal(second.idempotentReplay, true);
+  assert.match(first.seed, /^[0-9a-f]{32}$/);
+  assert.equal(second.seed, first.seed);
+});
+
 test("la gestion de usuarios sigue siendo solo para admins", async () => {
   const user = await login("user@test.local", "OtraClave123!");
   const res = await fetch(`${BASE}/auth/users`, { headers: { Authorization: `Bearer ${user.body.token}` } });
@@ -148,7 +395,7 @@ test("/generate con diseno cuasiexperimental responde analisis y Excel", async (
   assert.ok(Array.isArray(payload.chartsPreview) && payload.chartsPreview.length === 1);
 });
 
-test("config que excede los limites devuelve 500 con mensaje claro", async () => {
+test("config que excede los limites devuelve 400 sin consumir cuota", async () => {
   const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
   const config = JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, "..", "..", "Tabulacion.json"), "utf-8"));
   const gen = await fetch(`${BASE}/generate`, {
@@ -156,9 +403,13 @@ test("config que excede los limites devuelve 500 con mensaje claro", async () =>
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${admin.body.token}` },
     body: JSON.stringify({ config: { ...config, muestra: "99999" }, responseMode: "inline" }),
   });
-  assert.equal(gen.status, 500);
+  assert.equal(gen.status, 400);
   const payload = await gen.json();
   assert.match(payload.error, /muestra maxima soportada/);
+  assert.equal(payload.code, "INVALID_GENERATION_CONFIG");
+  assert.equal(payload.field, "config");
+  assert.equal(payload.retryable, false);
+  assert.ok(payload.requestId);
 
   const genItems = await fetch(`${BASE}/generate`, {
     method: "POST",
@@ -168,7 +419,7 @@ test("config que excede los limites devuelve 500 con mensaje claro", async () =>
       responseMode: "inline",
     }),
   });
-  assert.equal(genItems.status, 500);
+  assert.equal(genItems.status, 400);
   const itemsPayload = await genItems.json();
   assert.match(itemsPayload.error, /maximo 60 items/);
 });
@@ -210,8 +461,10 @@ test("prueba de confiabilidad: /cronbach genera el Excel con alfa en el nivel pe
     headers: auth,
     body: JSON.stringify({ config: { variable: "X", encuestados: 30 } }),
   });
-  assert.equal(invalido.status, 500);
-  assert.match((await invalido.json()).error, /al menos 2 items/);
+  assert.equal(invalido.status, 400);
+  const invalidPayload = await invalido.json();
+  assert.equal(invalidPayload.code, "INVALID_CRONBACH_CONFIG");
+  assert.match(invalidPayload.error, /al menos 2 items/);
 });
 
 test("claves de API: generar, validar, vencimiento y revocar", async () => {
@@ -287,18 +540,23 @@ test("claves de API: generar, validar, vencimiento y revocar", async () => {
   assert.equal(v.valid, false);
 });
 
-test("Forms por usos: consume 1 uso por corrida, bloquea sin usos y admin recarga", async () => {
+test("Forms por respuestas: 1200, idempotencia, lotes y cancelacion con reembolso", async () => {
   const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
   const auth = { "Content-Type": "application/json", Authorization: `Bearer ${admin.body.token}` };
 
-  // Usuario nuevo con 2 usos asignados desde la creacion.
+  // Usuario nuevo con 1200 respuestas asignadas desde la creacion.
   const created = await fetch(`${BASE}/auth/users`, {
     method: "POST",
     headers: auth,
-    body: JSON.stringify({ email: "usos@test.local", password: "ClaveUsos123!", subscriptionDays: 30, formsUses: 2 }),
+    body: JSON.stringify({
+      email: "usos@test.local",
+      password: "ClaveUsos123!",
+      subscriptionDays: 30,
+      formsUses: 1200,
+    }),
   });
   const createdBody = await created.json();
-  assert.equal(createdBody.user.formsUsesLeft, 2);
+  assert.equal(createdBody.user.formsUsesLeft, 1200);
 
   const userLogin = await login("usos@test.local", "ClaveUsos123!");
   const keyRes = await fetch(`${BASE}/auth/api-key`, {
@@ -307,38 +565,77 @@ test("Forms por usos: consume 1 uso por corrida, bloquea sin usos y admin recarg
   });
   const apiKey = (await keyRes.json()).apiKey;
 
-  // La extension ve los usos restantes en /api/tesistab/config.
+  // La extension ve respuestas disponibles, no una cantidad de corridas.
   const cfgRes = await fetch(`${BASE}/api/tesistab/config`, { headers: { "X-API-Key": apiKey } });
   assert.equal(cfgRes.status, 200);
-  assert.equal((await cfgRes.json()).user.usesLeft, 2);
+  const initialConfig = await cfgRes.json();
+  assert.equal(initialConfig.user.usesLeft, 1200);
+  assert.equal(initialConfig.user.formsResponses, 1200);
+  assert.equal(initialConfig.quota.responsesLeft, 1200);
 
-  const submit = () => fetch(`${BASE}/api/tesistab/submit`, {
+  const submit = (count = 1, idempotencyKey = crypto.randomUUID()) => fetch(`${BASE}/api/tesistab/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
     body: JSON.stringify({
       formUrl: "https://docs.google.com/forms/d/e/prueba-usos/formResponse",
       payload: { "entry.1": "hola" },
-      count: 1,
+      count,
+      ownOrAuthorized: true,
+      idempotencyKey,
     }),
   });
 
-  // 1 uso = 1 corrida: 2 corridas consumen los 2 usos; la tercera se bloquea.
-  let res = await submit();
+  // Se reservan todas las respuestas del trabajo de forma atomica; otro
+  // trabajo no puede gastar el mismo saldo mientras el primero está activo.
+  let res = await submit(1200, "forms-server-1200-idempotent");
   assert.equal(res.status, 202);
-  assert.equal((await res.json()).usesLeft, 1);
-  res = await submit();
+  const createdJob = await res.json();
+  assert.equal(createdJob.responsesLeft, 0);
+  assert.equal(createdJob.applied.batchSize, 100);
+
+  // Un retry con la misma clave devuelve el mismo job y no reserva de nuevo.
+  res = await submit(1200, "forms-server-1200-idempotent");
   assert.equal(res.status, 202);
-  assert.equal((await res.json()).usesLeft, 0);
+  const replay = await res.json();
+  assert.equal(replay.id, createdJob.id);
+  assert.equal(replay.idempotentReplay, true);
+
+  const jobResponse = await fetch(`${BASE}/api/forms/jobs/${createdJob.id}`, {
+    headers: { "X-API-Key": apiKey },
+  });
+  const job = await jobResponse.json();
+  assert.equal(job.totalBatches, 12);
+  assert.equal(job.progress.requested, 1200);
+
   res = await submit();
   assert.equal(res.status, 403);
 
-  // El admin recarga usos desde el dashboard.
+  // Cancelar antes de enviar consume cero y devuelve las 1200 reservadas.
+  const cancelled = await fetch(`${BASE}/api/forms/jobs/${createdJob.id}/cancel`, {
+    method: "POST",
+    headers: { "X-API-Key": apiKey },
+  });
+  assert.equal(cancelled.status, 202);
+  const cancelledJob = await (await fetch(`${BASE}/api/forms/jobs/${createdJob.id}`, {
+    headers: { "X-API-Key": apiKey },
+  })).json();
+  assert.equal(cancelledJob.status, "cancelled");
+  assert.equal(cancelledJob.accepted, 0);
+  assert.equal(cancelledJob.refunded, 1200);
+  assert.equal(cancelledJob.reserved, 0);
+
+  const afterCancel = await (await fetch(`${BASE}/api/tesistab/config`, {
+    headers: { "X-API-Key": apiKey },
+  })).json();
+  assert.equal(afterCancel.quota.responsesLeft, 1200);
+
+  // El admin recarga respuestas desde el dashboard.
   const patch = await fetch(`${BASE}/auth/users/${createdBody.user.id}`, {
     method: "PATCH",
     headers: auth,
     body: JSON.stringify({ formsUsesDelta: 5 }),
   });
-  assert.equal((await patch.json()).user.formsUsesLeft, 5);
+  assert.equal((await patch.json()).user.formsUsesLeft, 1205);
 
   // El admin puede revocar la clave del usuario: la extension deja de validar.
   const revoke = await fetch(`${BASE}/auth/users/${createdBody.user.id}/api-key`, { method: "DELETE", headers: auth });
@@ -405,7 +702,7 @@ test("contraseña self-service, historial de actividad y respaldo", async () => 
   const listBody = await list.json();
   const conUsos = listBody.users.find((u) => u.email === "usos@test.local");
   assert.ok(Array.isArray(conUsos.activity) && conUsos.activity.length > 0, "historial presente");
-  assert.ok(conUsos.activity.some((e) => e.detail.includes("Corrida de Forms")), "corridas registradas");
+  assert.ok(conUsos.activity.some((e) => e.detail.includes("respuesta(s) de Forms")), "reservas registradas");
   assert.ok(conUsos.activity.some((e) => e.detail.includes("usos de Forms")), "recarga registrada");
   assert.ok(conUsos.activity.some((e) => e.detail.includes("Cambió su contraseña")), "cambio de contraseña registrado");
 

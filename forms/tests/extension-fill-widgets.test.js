@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { test, describe } = require('node:test');
 const { JSDOM } = require('jsdom');
+const { webcrypto } = require('node:crypto');
 
 const CONTENT_JS_PATH = path.join(
   __dirname, '..', 'tutorica-chrome-extension', 'content', 'content.js'
@@ -87,9 +88,20 @@ function buildDom() {
   // docs.google.com) y a window.matchMedia para el tema del panel — ninguno
   // de los dos importa para lo que se prueba aqui, solo hace falta que no
   // tiren excepcion al cargar el script.
+  const storageState = {};
+  window.__testStorage = storageState;
   window.chrome = {
     storage: {
-      local: { get: async () => ({}), set: async () => {} },
+      local: {
+        get: async (keys) => Object.fromEntries(
+          (Array.isArray(keys) ? keys : [keys]).filter((key) => key in storageState)
+            .map((key) => [key, storageState[key]])
+        ),
+        set: async (values) => Object.assign(storageState, values),
+        remove: async (keys) => {
+          for (const key of Array.isArray(keys) ? keys : [keys]) delete storageState[key];
+        },
+      },
       onChanged: { addListener: () => {} },
     },
     runtime: {
@@ -104,6 +116,7 @@ function buildDom() {
       removeEventListener: () => {},
     });
   }
+  Object.defineProperty(window, 'crypto', { configurable: true, value: webcrypto });
 
   // Simula lo que el JS REAL de Google Forms hace al clickear un <label> de
   // opcion multiple — confirmado en vivo con el navegador real sobre un
@@ -119,6 +132,7 @@ function buildDom() {
   //     ese timing detras de una actualizacion instantanea irreal.
   const ASYNC_CREATE_DELAY_MS = 120;
   window.__testAsyncCreateDelayMs = ASYNC_CREATE_DELAY_MS;
+  window.__testAsyncEventOrder = [];
   Array.from(window.document.querySelectorAll('label[data-value]')).forEach((label) => {
     label.addEventListener('click', () => {
       const container = label.closest('[role="listitem"]').querySelector('.geS5n');
@@ -127,6 +141,7 @@ function buildDom() {
       );
       if (sentinel) {
         const realName = sentinel.name.replace(/_sentinel$/, '');
+        window.__testAsyncEventOrder.push(`click:${realName}`);
         window.setTimeout(() => {
           let realInput = container.querySelector(`input[name="${realName}"]`);
           if (!realInput) {
@@ -136,6 +151,7 @@ function buildDom() {
             container.appendChild(realInput);
           }
           realInput.value = label.dataset.value;
+          window.__testAsyncEventOrder.push(`created:${realName}`);
         }, ASYNC_CREATE_DELAY_MS);
         return;
       }
@@ -188,28 +204,22 @@ describe('fillUnansweredFormInputs contra las variantes reales de Google Forms',
     // formulario real se mandaban vacias. La solucion dispara todos los
     // clicks primero y espera UNA vez al final; si alguien la regresiona a
     // "click, esperar, click, esperar..." por pregunta, este formulario de 2
-    // preguntas asincronicas tardaria ~2x ASYNC_CREATE_DELAY_MS en vez de
-    // ~1x, y la prueba de tiempo de abajo lo agarra.
+    // preguntas asincronicas procesaria el primer evento de creacion antes
+    // de disparar el segundo click; el orden de eventos de abajo lo detecta
+    // sin depender de tiempos de pared.
     const window = buildDom();
     const form = window.document.getElementById('mockForm');
-    const delay = window.__testAsyncCreateDelayMs;
-
-    const antes = Date.now();
     const resultado = await window.fillUnansweredFormInputs(form);
-    const transcurrido = Date.now() - antes;
 
     assert.equal(resultado.missingRequired.length, 0, 'no deberia quedar nada sin poder rellenar');
-    // Umbral generoso (no delay*2 exacto): el intervalo de polling real de
-    // content.js (250ms) hace piso en el tiempo minimo detectable aunque la
-    // espera SEA compartida, asi que un batch tarda ~1 intervalo de polling
-    // (~250-350ms observado) mientras que uno secuencial (click, esperar
-    // TODO el ciclo, click, esperar TODO el ciclo...) tardaria ~2 ciclos
-    // completos (>=500ms). El umbral de abajo cae comodo en el medio.
-    const umbralSecuencial = delay + 300;
-    assert.ok(
-      transcurrido < umbralSecuencial,
-      `si Likert1 y Likert2 se esperaran uno por uno tardaria bastante mas de ${umbralSecuencial}ms; tardo ${transcurrido}ms, lo que confirma que se esperaron juntos`
-    );
+    // Reloj/eventos controlados: ambos clicks deben ocurrir antes de que el
+    // primer input asincronico sea creado. Esta propiedad demuestra batching
+    // sin depender de la velocidad de la maquina de CI.
+    const events = Array.from(window.__testAsyncEventOrder);
+    const firstCreation = events.findIndex((event) => event.startsWith('created:'));
+    const clickEvents = events.filter((event) => event.startsWith('click:'));
+    assert.equal(clickEvents.length, 2);
+    assert.ok(firstCreation >= 2, `los clicks deben agruparse antes de esperar: ${events.join(', ')}`);
   });
 
   test('una pregunta ya respondida no se vuelve a tocar', async () => {
@@ -258,5 +268,132 @@ describe('fillUnansweredFormInputs contra las variantes reales de Google Forms',
     const window = buildDom();
     const found = window.findNextPageButton(window.document.getElementById('mockForm'));
     assert.equal(found, null);
+  });
+
+  test('cubre texto, parrafo, lista, casilla, cuadricula, fecha, hora y obligatorios', async () => {
+    const window = buildDom();
+    const form = window.document.createElement('form');
+    form.innerHTML = `
+      <div role="listitem" data-required="true"><input name="entry.1" type="text" required></div>
+      <div role="listitem"><textarea name="entry.2"></textarea></div>
+      <div role="listitem"><select name="entry.3"><option value="">Elegir</option><option value="A">A</option></select></div>
+      <div role="listitem"><label><input name="entry.4" type="checkbox" value="Sí"> Sí</label></div>
+      <div role="listitem"><label><input name="entry.5" type="radio" value="1"> Fila 1 / Columna 1</label></div>
+      <div role="listitem"><label><input name="entry.6" type="radio" value="2"> Fila 2 / Columna 2</label></div>
+      <div role="listitem"><input name="entry.7" type="date"></div>
+      <div role="listitem"><input name="entry.8" type="time"></div>
+    `;
+    window.document.body.appendChild(form);
+
+    const result = await window.fillUnansweredFormInputs(form);
+
+    assert.equal(result.missingRequired.length, 0);
+    assert.equal(result.filled, 8);
+    assert.ok(form.querySelector('[name="entry.1"]').value);
+    assert.ok(form.querySelector('[name="entry.2"]').value);
+    assert.equal(form.querySelector('[name="entry.3"]').value, 'A');
+    assert.equal(form.querySelector('[name="entry.4"]').checked, true);
+    assert.equal(form.querySelector('[name="entry.5"]').checked, true);
+    assert.equal(form.querySelector('[name="entry.6"]').checked, true);
+    assert.equal(form.querySelector('[name="entry.7"]').value, '2026-01-15');
+    assert.equal(form.querySelector('[name="entry.8"]').value, '10:00');
+  });
+
+  test('captura y combina paginas, y calcula un hash estructural reproducible', async () => {
+    const window = buildDom();
+    const first = window.document.getElementById('mockForm');
+    first.action = 'https://docs.google.com/forms/d/e/form-multipage/formResponse';
+    first.querySelector('[name="entry.101483971"]').value = 'Femenino';
+    const firstSnapshot = window.createFormPageSnapshot(first);
+    await window.persistMultiPageSnapshot(firstSnapshot);
+
+    const second = window.document.createElement('form');
+    second.action = first.action;
+    second.innerHTML = '<label>Edad <input name="entry.202" value="25"></label>';
+    const secondSnapshot = window.createFormPageSnapshot(second);
+    const capture = await window.persistMultiPageSnapshot(secondSnapshot);
+    assert.equal(capture.pages.length, 2);
+    const merged = window.mergeCapturedPayload(capture.pages);
+    assert.equal(merged['entry.101483971'], 'Femenino');
+    assert.equal(merged['entry.202'], '25');
+
+    const structure = window.buildCapturedStructure(capture.pages);
+    const firstHash = await window.hashStableValue(structure);
+    const secondHash = await window.hashStableValue(structure);
+    assert.match(firstHash, /^[a-f0-9]{64}$/);
+    assert.equal(firstHash, secondHash);
+  });
+
+  test('separa recorridos condicionales y deriva selectores sin mezclar ramas', async () => {
+    const window = buildDom();
+    const formId = 'conditional-form';
+    const rootA = {
+      formId,
+      pageKey: `${formId}:root`,
+      payload: { 'entry.10': 'Empresa', fvv: '1', pageHistory: '0' },
+      fields: [{ entry: 'entry.10', question: 'Tipo', type: 'radio', options: ['Empresa', 'Persona'] }],
+      terminal: false,
+    };
+    const companyEnd = {
+      formId,
+      pageKey: `${formId}:company`,
+      payload: { 'entry.20': 'RUC 123', fvv: '1', fbzx: 'company-token', pageHistory: '0,1' },
+      fields: [{ entry: 'entry.20', question: 'RUC', type: 'text', options: [] }],
+      terminal: true,
+    };
+    await window.persistMultiPageSnapshot(rootA);
+    await window.persistMultiPageSnapshot(companyEnd);
+
+    // El usuario vuelve al inicio y elige la otra respuesta. Esto debe abrir
+    // un fork, no actualizar la primera pagina dentro del recorrido Empresa.
+    const rootB = {
+      ...rootA,
+      payload: { 'entry.10': 'Persona', fvv: '1', pageHistory: '0' },
+    };
+    await window.persistMultiPageSnapshot(rootB);
+    const personEnd = {
+      formId,
+      pageKey: `${formId}:person`,
+      payload: { 'entry.30': 'DNI 456', fvv: '1', fbzx: 'person-token', pageHistory: '0,2' },
+      fields: [{ entry: 'entry.30', question: 'DNI', type: 'text', options: [] }],
+      terminal: true,
+    };
+    const capture = await window.persistMultiPageSnapshot(personEnd);
+    const config = window.buildCapturedMultiPageConfig(capture);
+
+    assert.equal(config.routes.length, 2);
+    assert.deepEqual(JSON.parse(JSON.stringify(config.routes[0].when.all)), [{
+      field: 'entry.10',
+      operator: 'equals',
+      value: 'Empresa',
+    }]);
+    assert.deepEqual(JSON.parse(JSON.stringify(config.routes[1].when.all)), [{
+      field: 'entry.10',
+      operator: 'equals',
+      value: 'Persona',
+    }]);
+    assert.equal(config.routes[0].payload['entry.20'], 'RUC 123');
+    assert.equal(config.routes[0].payload['entry.30'], undefined);
+    assert.equal(config.routes[1].payload['entry.20'], undefined);
+    assert.equal(config.routes[1].payload['entry.30'], 'DNI 456');
+    assert.equal(config.routes[0].payload.pageHistory, '0,1');
+    assert.equal(config.routes[1].payload.pageHistory, '0,2');
+
+    const structure = window.buildCapturedStructure(capture);
+    assert.equal(structure.version, 2);
+    assert.equal(structure.routes.length, 2);
+    assert.notEqual(
+      await window.hashStableValue(structure),
+      await window.hashStableValue({ ...structure, routes: structure.routes.slice(0, 1) })
+    );
+  });
+
+  test('reconoce los controles de volver usados en captura guiada', () => {
+    const window = buildDom();
+    const button = window.document.createElement('div');
+    button.setAttribute('role', 'button');
+    button.textContent = 'Atrás';
+    window.document.body.appendChild(button);
+    assert.equal(window.isGoogleFormsPreviousTrigger(button), true);
   });
 });

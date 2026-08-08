@@ -3,6 +3,9 @@
 // JSON estructurado). Reutiliza el transporte de lib/titulos (mismo modelo,
 // mismo manejo de reasoning binario de GLM y de markup <tool_call> filtrado).
 import { callOpenRouter, stripToolCallMarkup, DEFAULT_MODEL } from "../titulos/openrouter.js";
+import {
+  errorLogFields, metrics, providerUsageFields, structuredLog,
+} from "../observability.js";
 
 const resolveCallConfig = (options = {}) => {
   const apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
@@ -99,19 +102,23 @@ export const requestAnalisis = async ({ systemPrompt, input, options = {} }) => 
       messages: attemptMessages, tools: undefined, model, apiKey, timeoutMs, maxTokens,
       reasoningEffort: "medium",
     });
-    // eslint-disable-next-line no-console
-    console.log(
-      `[matriz] analisis intento ${attempt}: finish_reason=${finishReason}, `
-      + `usage=${JSON.stringify(usage)}`,
-    );
+    metrics.increment("openrouter_requests_total", 1, { tool: "matriz", stage: "analysis" });
+    structuredLog("info", "openrouter.request_completed", {
+      tool: "matriz", stage: "analysis", attempt, finishReason,
+      ...providerUsageFields(usage),
+    });
     try {
       return parseAnalisis(stripToolCallMarkup(content));
     } catch (err) {
       lastFailure = err.message;
-      // eslint-disable-next-line no-console
-      console.error(
-        `[matriz] analisis intento ${attempt} fallido (${err.message}). Respuesta cruda:\n${String(content).slice(0, 1000)}`,
-      );
+      metrics.increment("openrouter_invalid_responses_total", 1, {
+        tool: "matriz", stage: "analysis",
+      });
+      structuredLog("warn", "openrouter.invalid_response", {
+        tool: "matriz", stage: "analysis", attempt,
+        responseLength: String(content ?? "").length,
+        ...errorLogFields(err),
+      });
       attemptMessages = [
         ...messages,
         ...(String(content ?? "").trim() ? [{ role: "assistant", content }] : []),
@@ -296,20 +303,24 @@ export const requestMatriz = async ({
     const webSearchRequests = usage?.server_tool_use_details?.web_search_requests
       ?? usage?.server_tool_use?.web_search_requests
       ?? null;
-    // eslint-disable-next-line no-console
-    console.log(
-      `[matriz] redaccion intento ${attempt}: finish_reason=${finishReason}, `
-      + `web_search_requests=${webSearchRequests ?? "n/a"}, usage=${JSON.stringify(usage)}`,
-    );
+    metrics.increment("openrouter_requests_total", 1, { tool: "matriz", stage: "draft" });
+    structuredLog("info", "openrouter.request_completed", {
+      tool: "matriz", stage: "draft", attempt, finishReason,
+      webSearchRequests, ...providerUsageFields(usage),
+    });
     try {
       const matriz = parseMatriz(stripToolCallMarkup(content), { descriptiva: analisis.descriptiva });
       return { matriz, content, webSearchRequests };
     } catch (err) {
       lastFailure = err.message;
-      // eslint-disable-next-line no-console
-      console.error(
-        `[matriz] redaccion intento ${attempt} fallido (${err.message}). Respuesta cruda:\n${String(content).slice(0, 2000)}`,
-      );
+      metrics.increment("openrouter_invalid_responses_total", 1, {
+        tool: "matriz", stage: "draft",
+      });
+      structuredLog("warn", "openrouter.invalid_response", {
+        tool: "matriz", stage: "draft", attempt,
+        responseLength: String(content ?? "").length,
+        ...errorLogFields(err),
+      });
       // Glitch de busqueda escrito como texto (visto en titulos): si hay
       // pre-busqueda del sistema, el reintento va SIN herramienta y con la
       // orden de redactar con lo ya disponible.

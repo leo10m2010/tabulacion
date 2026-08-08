@@ -1,5 +1,12 @@
 # Roadmap de TesisHub
 
+> **Archivo historico, no fuente operativa.** Conserva decisiones y estimaciones
+> de julio de 2026 que ya fueron reemplazadas (por ejemplo Postgres en Render,
+> PayPal/USD, cuotas Forms por corrida y retencion indefinida). La fuente actual
+> para despliegue es `docs/PRODUCTION_RUNBOOK.md`: Neon sigue como base,
+> Taypi/PEN es la pasarela, Forms cobra por respuesta, R2 retiene 30 dias y el
+> plan Institucion permanece oculto hasta implementar organizaciones y roles.
+
 Acordado el 2026-07-18. Cada fase funciona por sí sola y deja valor aunque se pare ahí. El orden respeta las dependencias reales (no empezar una fase sin la anterior salvo que se indique).
 
 ## Ya hecho (base para todo lo demás)
@@ -17,7 +24,7 @@ Acordado el 2026-07-18. Cada fase funciona por sí sola y deja valor aunque se p
 - **Eliminación de la propia cuenta** (`DELETE /auth/me`): requisito de la política de datos de Google y del RGPD, no una cortesía. Se confirma escribiendo el correo (no la contraseña: quien entró con Google no conoce la suya). Guarda solo un hash del correo borrado para no regalar otra cuota gratuita a quien borre y vuelva a registrarse.
 - **Herramientas bloqueadas visibles**: candado en la barra lateral y aviso dentro de la herramienta, en vez de esconderlas.
 - **Correcciones**: la generación del Excel salió a un worker (ya no degrada el servidor ni lo tumba por falta de memoria); race que hacía que un cambio de contraseña respondiera 200 sin cambiar nada; límite de login evadible rotando el correo; 0 vulnerabilidades en backend y Forms.
-- **CI en GitHub Actions** (Node 20, igual que Render) y chequeo de tipos en el build del frontend.
+- **CI en GitHub Actions** (Node 24 LTS, igual que Render) y chequeo de tipos en el build del frontend.
 
 ## Bloqueado por no tener dominio propio
 

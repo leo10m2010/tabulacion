@@ -4,6 +4,7 @@ import {
   baremoPorDefecto,
   contarItems,
   desdeEditor,
+  indicesItemsInversos,
   instrumentoATabConfig,
   matrizAInstrumento,
   tieneContenido,
@@ -60,6 +61,13 @@ describe("aEditor / desdeEditor", () => {
       ...dims.flatMap((d) => d.indicadores.flatMap((i) => i.items.map((it) => it.id))),
     ];
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("conserva solo las posiciones inversas marcadas explicitamente", () => {
+    const variable = { ...INSTRUMENTO.variables[0], itemsInversos: [2, 4] };
+    const dims = aEditor(variable);
+    expect(indicesItemsInversos(dims)).toEqual([2, 4]);
+    expect(desdeEditor(dims)).toEqual(variable.dimensiones);
   });
 
   it("una variable ausente da una estructura vacía, no revienta", () => {
@@ -197,6 +205,16 @@ describe("instrumentoATabConfig", () => {
     const { config } = instrumentoATabConfig(sinBaremo, conBaremoPrevio);
     expect(config.escala).toBe("3");
     expect(config.porcentaje).toEqual(["46", "35", "19"]);
+  });
+
+  it("traslada los items inversos aunque la variable todavia no tenga baremo", () => {
+    const instrumento: Instrumento = {
+      ...INSTRUMENTO,
+      variables: [{ ...INSTRUMENTO.variables[0], baremo: [], itemsInversos: [2, 4] }],
+    };
+    const { config, estructuraV1 } = instrumentoATabConfig(instrumento, base);
+    expect(config.items_inversos_v1).toEqual([2, 4]);
+    expect(indicesItemsInversos(estructuraV1)).toEqual([2, 4]);
   });
 
   it("un instrumento vacío no rompe el asistente", () => {

@@ -99,10 +99,13 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser, proyecto, onPr
   // pero una petición de polling ya en vuelo resuelve igual.
   const aliveRef = useRef(true);
 
-  useEffect(() => () => {
-    aliveRef.current = false;
-    if (pollRef.current) window.clearTimeout(pollRef.current);
-    if (docxUrlRef.current) URL.revokeObjectURL(docxUrlRef.current);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      if (pollRef.current) window.clearTimeout(pollRef.current);
+      if (docxUrlRef.current) URL.revokeObjectURL(docxUrlRef.current);
+    };
   }, []);
 
   // Cronómetro de la espera (solo mientras el job corre).
@@ -196,7 +199,7 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser, proyecto, onPr
     setEligiendo(titulo);
     try {
       const { proyecto: actualizado } = await api.actualizarProyecto(
-        apiBaseUrl, authToken, proyecto.id, { titulo },
+        apiBaseUrl, authToken, proyecto.id, { titulo, version: proyecto.version },
       );
       onProyectoActualizado?.(actualizado);
     } catch (err) {
@@ -357,7 +360,14 @@ export function TitulosSection({ apiBaseUrl, authToken, authUser, proyecto, onPr
                   </span>
                   <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtElapsed(elapsed)}</span>
                 </div>
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-primary/15">
+                <div
+                  role="progressbar"
+                  aria-label="Progreso de la generación de títulos"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progreso}
+                  className="mt-3 h-1.5 overflow-hidden rounded-full bg-primary/15"
+                >
                   <motion.div
                     className="h-full rounded-full bg-primary"
                     animate={{ width: `${progreso}%` }}

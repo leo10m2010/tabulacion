@@ -5,7 +5,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui
 import { Input } from "../ui/input";
 import { HierarchyEditor, ListEditorField } from "../wizard-fields";
 import * as api from "../../lib/api";
-import { aEditor, baremoPorDefecto, contarItems, desdeEditor } from "../../lib/instrumento";
+import {
+  aEditor,
+  baremoPorDefecto,
+  contarItems,
+  desdeEditor,
+  indicesItemsInversos,
+} from "../../lib/instrumento";
 import type { DimensionDef, Instrumento, InstrumentoNivel, Proyecto } from "../../lib/types";
 
 // Editor del instrumento de un proyecto.
@@ -76,12 +82,13 @@ export function InstrumentoEditor({ apiBaseUrl, authToken, proyecto, onGuardado,
         nombre,
         dimensiones: desdeEditor(estructuras[i] ?? []),
         baremo: baremos[i] ?? [],
+        itemsInversos: indicesItemsInversos(estructuras[i] ?? []),
       })),
     };
     setGuardando(true);
     try {
       const { proyecto: actualizado } = await api.actualizarProyecto(
-        apiBaseUrl, authToken, proyecto.id, { instrumento },
+        apiBaseUrl, authToken, proyecto.id, { instrumento, version: proyecto.version },
       );
       onGuardado(actualizado);
       setGuardado(true);

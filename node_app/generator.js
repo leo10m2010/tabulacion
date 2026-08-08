@@ -19,6 +19,7 @@
 //   lib/quasi-experimental.js configuracion, simulacion y analisis del diseño
 //   lib/quasi-sheets.js       las hojas del workbook cuasiexperimental
 import fs from "fs";
+import crypto from "node:crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { CHART_THEMES, normalizeConfig } from "./lib/config.js";
@@ -73,6 +74,12 @@ const buildChartsPreview = (sheetCharts) => sheetCharts
   }))
   .filter((s) => s.charts.length > 0);
 
+const withGenerationSeed = (rawConfig) => ({
+  ...rawConfig,
+  seed: String(rawConfig?.seed ?? rawConfig?.semilla ?? "").trim()
+    || crypto.randomBytes(16).toString("hex"),
+});
+
 // Serializa el workbook y aplica el post-procesado OOXML. Se recibe el objeto
 // "built" completo para poder liberar el DOM del workbook antes del
 // post-procesado, lo que reduce el pico de memoria (importante en
@@ -117,15 +124,17 @@ const generateQuasiArtifacts = async (rawConfig) => {
     chartsPreview,
     tema: cfg.tema,
     diseno: "cuasiexperimental",
+    seed: cfg.seed,
   };
 };
 
 export const generateArtifacts = async (rawConfig) => {
-  if (isQuasiExperimentalConfig(rawConfig)) {
-    return generateQuasiArtifacts(rawConfig);
+  const seededConfig = withGenerationSeed(rawConfig);
+  if (isQuasiExperimentalConfig(seededConfig)) {
+    return generateQuasiArtifacts(seededConfig);
   }
 
-  const cfg = normalizeConfig(rawConfig);
+  const cfg = normalizeConfig(seededConfig);
   const warnings = [...cfg.warnings];
 
   let base = null;
@@ -155,6 +164,7 @@ export const generateArtifacts = async (rawConfig) => {
     chartsPreview,
     tema: cfg.tema,
     diseno: "correlacional",
+    seed: cfg.seed,
   };
 };
 
@@ -170,6 +180,7 @@ export const generateAndWriteFiles = async (config, opts = {}) => {
     correlation: result.correlation,
     quasiExperimental: result.quasiExperimental,
     diseno: result.diseno,
+    seed: result.seed,
     warnings: result.warnings,
     outputPath,
     baseCsvPath,
