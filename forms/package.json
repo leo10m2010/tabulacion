@@ -1,13 +1,18 @@
 {
   "name": "tutorica-forms",
-  "version": "1.0.0",
+  "version": "1.6.0",
   "private": true,
   "description": "Servicio de llenado de Google Forms (Tutorica Forms): backend + extension de Chrome, autenticado con las claves de API de TesisTab",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "worker": "node worker.js",
+    "build:extension": "node scripts/build-extension.js",
     "tesistab:smoke": "node tesistab-smoke-test.js",
-    "test": "node --test tests/tesistab-api.test.js tests/tesistab-aislamiento.test.js tests/submit-xss.test.js tests/inspect-google-response.test.js tests/extension-fill-widgets.test.js"
+    "test": "node --test tests/tesistab-api.test.js tests/tesistab-aislamiento.test.js tests/submit-xss.test.js tests/inspect-google-response.test.js tests/extension-fill-widgets.test.js tests/multipage-routes.test.js"
   },
   "license": "MIT",
   "dependencies": {
@@ -15,6 +20,7 @@
     "express": "^4.18.2"
   },
   "devDependencies": {
-    "jsdom": "^30.0.0"
+    "jsdom": "^30.0.0",
+    "jszip": "^3.10.1"
   }
 }

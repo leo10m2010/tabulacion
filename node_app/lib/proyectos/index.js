@@ -95,6 +95,18 @@ export const normalizarInstrumento = (raw) => {
       fallar(`"${nombre}" tiene ${totalItems} ítems; el máximo es ${MAX_ITEMS_POR_VARIABLE}.`);
     }
 
+    const inversosRaw = Array.isArray(v?.itemsInversos)
+      ? v.itemsInversos
+      : (Array.isArray(v?.items_inversos) ? v.items_inversos : []);
+    const itemsInversos = inversosRaw.map((value) => Number(value));
+    if (itemsInversos.some((value) => !Number.isInteger(value) || value < 1 || value > totalItems)) {
+      fallar(`Los ítems inversos de "${nombre}" deben ser posiciones enteras entre 1 y ${totalItems}.`);
+    }
+    if (new Set(itemsInversos).size !== itemsInversos.length) {
+      fallar(`Los ítems inversos de "${nombre}" no pueden repetirse.`);
+    }
+    itemsInversos.sort((a, b) => a - b);
+
     // Baremo: niveles con su rango y el porcentaje de personas que debe caer
     // en cada uno. El porcentaje NO es decorativo: la simulacion lo respeta
     // (ver lib/stats.js), asi que se valida que sume 100.
@@ -124,7 +136,7 @@ export const normalizarInstrumento = (raw) => {
       }
     }
 
-    return { nombre, dimensiones, baremo, totalItems };
+    return { nombre, dimensiones, baremo, itemsInversos, totalItems };
   });
 
   return { escala, variables };
@@ -158,6 +170,7 @@ export const crearProyecto = ({ userId, nombre, instrumento }) => {
   return {
     id: crypto.randomUUID(),
     userId,
+    version: 1,
     nombre: nombreLimpio,
     // El titulo definitivo, el que el usuario ELIGE entre las propuestas. Es
     // la entrada del paso siguiente (la matriz de consistencia parte de el),

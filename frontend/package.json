@@ -2,6 +2,9 @@
   "name": "tabulacion-frontend",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

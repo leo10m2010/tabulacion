@@ -1,112 +1,155 @@
-# Blueprint de Render (sin Docker: Render ejecuta Node directo).
-# Crear el servicio desde el dashboard de Render: New -> Blueprint -> este repo.
-#
-# Un solo servicio web: la API de tabulacion (node_app) monta dentro el
-# servicio Tutorica Forms (forms/) en el mismo proceso. El build instala las
-# dependencias de ambos paquetes.
-#
-# PERSISTENCIA (actual): los usuarios viven en Postgres (Neon), no en el disco
-# del contenedor. Da igual que el disco sea efimero: las cuentas, sus usos y
-# sus claves ttab_ sobreviven a deploys, reinicios y suspensiones. Lo controla
-# DATABASE_URL; sin ella el servidor cae a un archivo JSON efimero, que solo
-# sirve para desarrollo local.
-#
-# El bloque `disk` de abajo quedo como alternativa historica (disco persistente
-# de Render, plan de pago). Con Postgres ya NO hace falta.
+# Infraestructura de produccion. API y worker se construyen desde el mismo
+# commit; CI debe pasar antes del auto-deploy. Neon es la unica base de datos
+# y R2 el unico almacen de artefactos en produccion.
 services:
   - type: web
     name: tabulacion-api
     runtime: node
-    plan: free
+    branch: main
+    region: oregon
+    plan: starter
+    numInstances: 1
     buildCommand: npm ci --omit=dev --prefix node_app && npm ci --omit=dev --prefix forms
+    preDeployCommand: npm run deploy:preflight:api --prefix node_app && npm run db:migrate --prefix node_app
     startCommand: node node_app/server.js
-    # La generacion del Excel corre en un worker aparte (node_app/lib/generation/),
-    # asi que ya NO bloquea el event loop: el healthcheck HTTP vuelve a ser
-    # seguro (antes mataba el proceso a mitad de una generacion).
     healthCheckPath: /health
-    autoDeploy: true
-    # disk:
-    #   name: tabulacion-data
-    #   mountPath: /var/data
-    #   sizeGB: 1
+    autoDeployTrigger: checksPass
     envVars:
       - key: NODE_VERSION
-        value: "20"
-      # Contenedor de 512 MB: limitar el heap fuerza GC agresivo y evita
-      # que el pico de memoria de la generacion mate el proceso. El worker de
-      # generacion hereda este mismo presupuesto (a proposito: fijarle un
-      # techo propio resulto contraproducente, ver lib/generation/run.js).
+        value: "24"
+      - key: NPM_CONFIG_ENGINE_STRICT
+        value: "true"
+      - key: NODE_ENV
+        value: production
       - key: NODE_OPTIONS
         value: "--max-old-space-size=400"
-      # Generaciones de Excel simultaneas. Cada una corre en su propio worker
-      # con su propio heap, asi que subirlo multiplica la memoria: con 512 MB
-      # de contenedor, dejar 1. Las peticiones extra esperan en cola (hasta
-      # GENERATION_MAX_QUEUED) en vez de bloquear el servidor.
-      - key: GENERATION_MAX_CONCURRENT
-        value: "1"
+      - key: STORE_AUTO_MIGRATE
+        value: "false"
+      - key: DATABASE_URL
+        sync: false
       - key: AUTH_REQUIRED
         value: "true"
-      # Secretos: definirlos en el dashboard de Render (sync: false hace que
-      # Render los pida al crear el servicio; nunca van al repositorio).
       - key: AUTH_TOKEN_SECRET
+        sync: false
+      - key: AUTH_TOKEN_TTL_SECONDS
+        value: "86400"
+      - key: REGISTRATION_ENABLED
+        value: "false"
+      - key: GOOGLE_CLIENT_ID
         sync: false
       - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
-      # Clave de API fija del admin para la extension Tutorica Forms (formato
-      # ttab_ + 43 caracteres aleatorios). Sin disco persistente users.json se
-      # borra en cada reinicio; esta variable restaura la clave al arrancar.
-      - key: ADMIN_API_KEY
-        sync: false
-      # Dominio del frontend en Vercel (+ localhost para desarrollo).
+      - key: PUBLIC_BASE_URL
+        value: https://tabulacion-api.onrender.com
       - key: CORS_ORIGIN
-        value: http://localhost:5173,https://tabulacion.vercel.app
-      # Forms valida las claves en proceso; permite a la extension desde
-      # cualquier origen (la clave es el control de acceso real).
+        value: https://tabulacion.vercel.app,http://localhost:5173,chrome-extension://kdppbednjfajcjogdajmagfabidfjmem
       - key: CORS_ALLOWED_ORIGINS
-        value: "*"
-      # Almacen de usuarios en Postgres (Neon). Es lo que hace que las cuentas,
-      # sus usos y sus claves ttab_ sobrevivan a los deploys: el disco del plan
-      # gratis es efimero y se borraba en cada uno. Se define en el dashboard.
-      # Sin esta variable el servidor cae al archivo JSON efimero.
-      - key: DATABASE_URL
-        sync: false
-      # Almacenamiento de archivos en Cloudflare R2 (Fase 5 del roadmap).
-      # Definidas ya en el dashboard, pero TODAVIA SIN USAR: no hay nada que
-      # guardar hasta que exista el objeto Proyecto (Fase 4) que le de dueño y
-      # sitio a cada archivo. El endpoint se deriva del account id.
+        value: https://tabulacion.vercel.app,http://localhost:5173,chrome-extension://kdppbednjfajcjogdajmagfabidfjmem
+      - key: CHROME_EXTENSION_ID
+        value: kdppbednjfajcjogdajmagfabidfjmem
+      - key: GENERATION_MAX_CONCURRENT
+        value: "1"
+      - key: GENERATION_MAX_QUEUED
+        value: "20"
+      - key: TESISTAB_RUN_JOBS_INLINE
+        value: "false"
+      - key: MAX_BODY_BYTES
+        value: "4194304"
+      - key: RESULT_TTL_SECONDS
+        value: "900"
       - key: R2_ACCOUNT_ID
         sync: false
       - key: R2_ENDPOINT
         sync: false
-      # Credenciales del cliente S3. Cuando se implemente, el token debe ser
-      # del tipo "Object Read & Write" acotado al bucket, NO "Admin": un token
-      # admin filtrado permite borrar buckets enteros.
+      - key: R2_BUCKET
+        sync: false
       - key: R2_ACCESS_KEY_ID
         sync: false
       - key: R2_SECRET_ACCESS_KEY
         sync: false
-      # Token de la API de Cloudflare (distinto de las claves S3 de arriba).
-      - key: R2_API_TOKEN
+      - key: ARTIFACT_RETENTION_DAYS
+        value: "30"
+      - key: ARTIFACT_SIGNED_URL_SECONDS
+        value: "300"
+      - key: TAYPI_PUBLIC_KEY
         sync: false
-      # - key: USER_STORE_PATH
-      #   value: /var/data/users.json
-      - key: AUTH_TOKEN_TTL_SECONDS
-        value: "86400"
-      - key: RESULT_TTL_SECONDS
-        value: "900"
-      - key: MAX_BODY_BYTES
-        value: "4194304"
-      # Tabulacion Descriptiva (IA): clave de OpenRouter (se define en el
-      # dashboard). El modelo y el timeout tienen defaults en el codigo
-      # (z-ai/glm-5.2, 300 s); se declaran aqui para poder cambiarlos sin
-      # tocar el codigo.
+      - key: TAYPI_SECRET_KEY
+        sync: false
+      - key: TAYPI_WEBHOOK_SECRET
+        sync: false
+      - key: TAYPI_SANDBOX
+        value: "true"
+      - key: TAYPI_TIMEOUT_MS
+        value: "10000"
+      - key: FORMS_RESPONSE_PRICE_CENTS
+        sync: false
+      # Interruptor de seguridad. Solo se cambia a true despues de completar
+      # el runbook y las attestations externas de Neon, R2, Render y dominio.
+      - key: COMMERCIAL_LAUNCH_ENABLED
+        value: "false"
+      - key: NEON_BACKUP_CONFIRMED
+        sync: false
+      - key: NEON_BACKUP_REFERENCE
+        sync: false
+      - key: NEON_STAGING_BRANCH_CONFIRMED
+        sync: false
+      - key: R2_BUCKET_SCOPE_CONFIRMED
+        sync: false
+      - key: R2_LIFECYCLE_CONFIRMED
+        sync: false
+      - key: RENDER_REQUIRED_CHECKS_CONFIRMED
+        sync: false
+      - key: RENDER_STARTER_SERVICES_CONFIRMED
+        sync: false
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
         value: z-ai/glm-5.2
-      # 10 min: la generacion real con N=60 tarda ~4 min; con N altos escala
-      # casi linealmente con las filas.
       - key: OPENROUTER_TIMEOUT_MS
         value: "600000"
+
+  - type: worker
+    name: tabulacion-forms-worker
+    runtime: node
+    branch: main
+    region: oregon
+    plan: starter
+    numInstances: 1
+    buildCommand: npm ci --omit=dev --prefix node_app && npm ci --omit=dev --prefix forms
+    # La migracion se ejecuta una sola vez en el pre-deploy del API. El worker
+    # espera en modo read-only a que esa version de schema quede confirmada.
+    startCommand: npm run deploy:preflight:worker --prefix node_app && npm run db:wait-schema --prefix node_app && node forms/worker.js
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NPM_CONFIG_ENGINE_STRICT
+        value: "true"
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=400"
+      - key: DATABASE_URL
+        sync: false
+      - key: STORE_AUTO_MIGRATE
+        value: "false"
+      - key: TESISTAB_WORKER_MODE
+        value: "true"
+      - key: TESISTAB_RUN_JOBS_INLINE
+        value: "false"
+      - key: TESISTAB_JOB_BATCH_SIZE
+        value: "100"
+      - key: TESISTAB_JOB_LEASE_MS
+        value: "30000"
+      - key: FORMS_WORKER_ADAPTER
+        value: node_app/forms-worker-adapter.js
+      - key: SCHEMA_WAIT_TIMEOUT_SECONDS
+        value: "600"
+      - key: CHROME_EXTENSION_ID
+        value: kdppbednjfajcjogdajmagfabidfjmem
+      # Aunque el worker no publica HTTP, Forms valida esta configuracion al
+      # cargar para impedir que un despliegue vuelva a habilitar comodines.
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://tabulacion.vercel.app,http://localhost:5173,chrome-extension://kdppbednjfajcjogdajmagfabidfjmem

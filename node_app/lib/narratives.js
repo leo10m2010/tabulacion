@@ -1,5 +1,5 @@
 // Narrativas (interpretaciones automaticas) que acompanan cada tabla/figura.
-// Con base simulada se redactan con los porcentajes reales; sin datos se
+// Con base generada se redactan con los porcentajes reales; sin datos se
 // emite un texto guia para que el tesista complete.
 
 // Exportados: la tabulacion descriptiva (lib/descriptiva/compute.js) redacta

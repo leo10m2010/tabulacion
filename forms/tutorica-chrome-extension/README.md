@@ -10,7 +10,7 @@ autentica con la clave de API del usuario (`ttab_...`, se genera en TesisTab > I
 ## Cómo funciona
 
 1. El content script se inyecta en `docs.google.com/forms/*` y muestra un panel.
-2. Al iniciar una corrida captura los campos `entry.*`, completa los que falten y
+2. Al iniciar un envío captura los campos `entry.*`, completa los que falten y
    aplica el perfil configurado (Likert, distribuciones, demografía).
 3. Crea un job en el backend (`POST /api/tesistab/submit`); el backend envía las
    N respuestas a Google Forms con la espera configurada.
@@ -27,7 +27,21 @@ autentica con la clave de API del usuario (`ttab_...`, se genera en TesisTab > I
 - Tarjeta visual de conexión (Conectado / Sin conexión); la URL del backend y
   la clave manual quedan ocultas dentro de "Diagnóstico técnico".
 - Tokens de texto `{{i}}` y `{{rand}}`, y modo de aleatorización automática.
-- Diálogo de confirmación antes de cada corrida.
+- Confirmación obligatoria de que el formulario es propio o autorizado.
+- Pausa, reanudación, cancelación y progreso por respuestas.
+- Captura guiada multipágina con recorridos condicionales independientes.
+
+## Formularios con secciones condicionales
+
+Avanza normalmente con **Siguiente**. La extensión guarda cada página antes de
+que Google reemplace el DOM. Para incluir otra alternativa, llega a la última
+página, pulsa **Atrás**, vuelve al punto de decisión y recorre la otra rama. Al
+iniciar se mostrará cuántos recorridos completos se capturaron.
+
+Las rutas se identifican por su secuencia de páginas y por las respuestas de
+la página donde se separan. Sus campos y tokens de navegación se envían como
+unidades independientes: una respuesta nunca combina preguntas exclusivas de
+dos ramas. Si solo se captura un recorrido, se usa como ruta de respaldo.
 
 ## Instalación en desarrollo (Load unpacked)
 
@@ -47,10 +61,12 @@ ver `tesishub-forms-extension.zip`.
 - Primera fila: cabeceras con los nombres de campo de Google (`entry.123456`).
 - Cada fila siguiente es un perfil de respuesta.
 
-## Límite por corrida
+## Capacidad de respuestas
 
-El máximo de envíos por corrida se define en `content/content.js`
-(`MAX_UI_SUBMISSIONS`) y en el backend (`TESISTAB_MAX_SUBMISSIONS_PER_JOB`).
+La extensión no impone un máximo fijo. El backend valida la cantidad positiva
+contra el saldo de respuestas de la cuenta y procesa trabajos grandes en lotes
+de 100. `TESISTAB_MAX_SUBMISSIONS_PER_JOB` puede configurarse únicamente como
+freno operativo de una instalación.
 
 ## Licencia
 

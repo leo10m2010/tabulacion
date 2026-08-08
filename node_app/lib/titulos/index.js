@@ -14,6 +14,7 @@ import {
   findNonDocumentUrls,
 } from "./verify.js";
 import { gatherSearchContext, gatherTargetedSearchContext, braveUrlCheck } from "./websearch.js";
+import { errorLogFields, metrics, structuredLog } from "../observability.js";
 
 // Limpieza final del contenido: quita markup de tool_call filtrado como texto
 // (defensa en profundidad: requestTitulos ya lo hace, pero esta funcion
@@ -25,8 +26,7 @@ export const cleanTitulosContent = (content) => {
   const text = stripToolCallMarkup(content);
   const match = text.match(TITULO_MARKER_RE);
   if (!match) {
-    // eslint-disable-next-line no-console
-    console.warn("[titulos] no se encontro el marcador **TÍTULO 1** en la respuesta de la IA; se entrega el contenido tal cual.");
+    structuredLog("warn", "titulos.marker_missing", { fallback: "raw_content" });
     return text;
   }
   return text.slice(match.index).trim();
@@ -179,17 +179,13 @@ const verifyContentSources = async (contenido, { provenance, websearchOptions, r
       continue;
     }
     // Secuencial a proposito (limite de 1 consulta/seg del plan gratis).
-    // eslint-disable-next-line no-await-in-loop
     const found = await braveUrlCheck(url, websearchOptions);
     if (found === true) reales.push(url);
     else if (found === false) inventadas.push(url);
     else noVerificables.push(url);
   }
   if (sospechosas.length > 0) {
-    // eslint-disable-next-line no-console
-    console.log(
-      `[titulos] ${sospechosas.length} URL(s) tras muro anti-bot resueltas por procedencia/Brave.`,
-    );
+    structuredLog("info", "titulos.antibot_sources_resolved", { count: sospechosas.length });
   }
 
   return { reales, inventadas, noVerificables, prohibidas, listados };
@@ -221,8 +217,10 @@ export const generateTitulos = async (payload, options = {}) => {
   try {
     searchContext = await gatherSearchContext(datos, repositoryDomain, options.websearch ?? {});
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(`[titulos] pre-busqueda fallo (se continua sin ella): ${err.message}`);
+    metrics.increment("search_fallbacks_total", 1, { tool: "titulos", stage: "prefetch" });
+    structuredLog("warn", "search.batch_failed", {
+      tool: "titulos", stage: "prefetch", ...errorLogFields(err),
+    });
   }
 
   // Flujo en dos etapas (solo con pre-busqueda): la Etapa 1 elige las
@@ -248,12 +246,15 @@ export const generateTitulos = async (payload, options = {}) => {
         );
         if (targeted) fullSearchContext = `${searchContext}\n\n${targeted}`;
       } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn(`[titulos] busqueda dirigida fallo (se continua con la generica): ${err.message}`);
+        metrics.increment("search_fallbacks_total", 1, { tool: "titulos", stage: "targeted" });
+        structuredLog("warn", "search.batch_failed", {
+          tool: "titulos", stage: "targeted", ...errorLogFields(err),
+        });
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn(`[titulos] seleccion de variables fallo (se usa el flujo clasico): ${err.message}`);
+      structuredLog("warn", "titulos.selection_failed", {
+        fallback: "classic", ...errorLogFields(err),
+      });
       seleccion = null;
     }
   }
@@ -282,8 +283,9 @@ export const generateTitulos = async (payload, options = {}) => {
     });
   } catch (err) {
     if (!seleccion) throw err;
-    // eslint-disable-next-line no-console
-    console.warn(`[titulos] etapa de desarrollo fallo (${err.message}); se reintenta con el flujo clasico.`);
+    structuredLog("warn", "titulos.draft_failed", {
+      fallback: "classic", ...errorLogFields(err),
+    });
     seleccion = null;
     primerIntento = await requestTitulos({
       systemPrompt,
@@ -314,12 +316,12 @@ export const generateTitulos = async (payload, options = {}) => {
   });
 
   if (inventadas.length > 0 || prohibidas.length > 0 || listados.length > 0) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[titulos] verificacion de fuentes detecto ${inventadas.length} URL(s) inventada(s)/fuera de `
-      + `resultados, ${prohibidas.length} de fuentes prohibidas y ${listados.length} de listados; `
-      + `reintentando con correccion: ${[...inventadas, ...prohibidas, ...listados].join(", ")}`,
-    );
+    structuredLog("warn", "titulos.sources_rejected", {
+      inventedCount: inventadas.length,
+      prohibitedCount: prohibidas.length,
+      listingCount: listados.length,
+      action: "retry",
+    });
 
     const correctionMessages = [
       { role: "system", content: systemPrompt },
@@ -361,8 +363,9 @@ export const generateTitulos = async (payload, options = {}) => {
     }
   }
 
-  // eslint-disable-next-line no-console
-  console.log(`[titulos] verificacion de fuentes: ${reales.length} reales, ${noVerificables.length} no verificables`);
+  structuredLog("info", "titulos.sources_verified", {
+    verifiedCount: reales.length, unverifiableCount: noVerificables.length,
+  });
 
   // La portada del Word usa `datos` (con el anio ya resuelto) para no
   // mostrar el campo vacio cuando el cliente no indico anio.

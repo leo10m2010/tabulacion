@@ -15,10 +15,21 @@
 // no (desarrollo local y pruebas, que asi no necesitan base de datos).
 import fs from "fs";
 import path from "path";
+import { runStoreMigrations, storeTables, verifyStoreMigrations } from "../store/migrations.js";
+import { errorLogFields, structuredLog } from "../observability.js";
+import { acquireStorePool, releaseStorePool } from "../store/db.js";
 
 const DATABASE_URL = String(process.env.DATABASE_URL ?? "").trim();
 
 let backend = null;
+
+export class ProjectVersionConflictError extends Error {
+  constructor(current = null) {
+    super("El proyecto cambio en otra sesion. Recarga los datos antes de guardar.");
+    this.name = "ProjectVersionConflictError";
+    this.current = current;
+  }
+}
 
 // ── Backend: archivo JSON ───────────────────────────────────────────────────
 const backendArchivo = (rutaBase) => {
@@ -30,8 +41,7 @@ const backendArchivo = (rutaBase) => {
       const parsed = JSON.parse(fs.readFileSync(ruta, "utf-8"));
       return Array.isArray(parsed) ? parsed : [];
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(`[proyectos] proyectos.json ilegible (${err.message}); se ignora.`);
+      structuredLog("error", "projects.local_store_unreadable", errorLogFields(err));
       return [];
     }
   };
@@ -44,7 +54,12 @@ const backendArchivo = (rutaBase) => {
 
   // Los proyectos guardados antes de que existiera el progreso no lo traen.
   // Se rellena al leer para que nadie aguas abajo tenga que comprobarlo.
-  const conProgreso = (p) => (p ? { ...p, progreso: p.progreso ?? {}, titulo: p.titulo ?? "" } : p);
+  const conProgreso = (p) => (p ? {
+    ...p,
+    progreso: p.progreso ?? {},
+    titulo: p.titulo ?? "",
+    version: Number.isInteger(p.version) && p.version > 0 ? p.version : 1,
+  } : p);
 
   return {
     async init() { fs.mkdirSync(path.dirname(ruta), { recursive: true }); },
@@ -60,13 +75,19 @@ const backendArchivo = (rutaBase) => {
     async contarDeUsuario(userId) {
       return leer().filter((p) => p.userId === userId).length;
     },
-    async guardar(proyecto) {
+    async guardar(proyecto, expectedVersion = null) {
       const lista = leer();
       const i = lista.findIndex((p) => p.id === proyecto.id);
-      if (i >= 0) lista[i] = proyecto;
+      if (i >= 0) {
+        const actual = conProgreso(lista[i]);
+        if (expectedVersion !== null && actual.version !== expectedVersion) {
+          throw new ProjectVersionConflictError(actual);
+        }
+        lista[i] = { ...proyecto, version: actual.version + 1 };
+      }
       else lista.push(proyecto);
       escribir(lista);
-      return proyecto;
+      return conProgreso(i >= 0 ? lista[i] : proyecto);
     },
     // Crea SOLO si el usuario no llego al limite de su plan, contando y
     // escribiendo en el mismo tramo sincrono (sin ningun `await` en medio):
@@ -104,14 +125,9 @@ const backendArchivo = (rutaBase) => {
 
 // ── Backend: Postgres ───────────────────────────────────────────────────────
 const backendPostgres = async () => {
-  const { default: pg } = await import("pg");
-  const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 4, idleTimeoutMillis: 10_000 });
+  const pool = await acquireStorePool();
 
-  const prefijo = String(process.env.STORE_TABLE_PREFIX ?? "").trim();
-  if (prefijo && !/^[a-z_][a-z0-9_]*$/i.test(prefijo)) {
-    throw new Error("STORE_TABLE_PREFIX solo admite letras, numeros y guion bajo.");
-  }
-  const TABLA = `${prefijo}proyectos`;
+  const TABLA = storeTables.projects;
 
   const fila = (r) => ({
     id: r.id,
@@ -120,33 +136,21 @@ const backendPostgres = async () => {
     titulo: r.titulo ?? "",
     instrumento: r.instrumento,
     progreso: r.progreso ?? {},
+    version: Number(r.version ?? 1),
     createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
     updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : r.updated_at,
   });
 
   return {
     async init() {
-      // El instrumento va como JSONB: su forma va a cambiar mientras el
-      // producto madura, y asi no hace falta migrar el esquema cada vez.
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${TABLA} (
-          id          TEXT PRIMARY KEY,
-          user_id     TEXT NOT NULL,
-          nombre      TEXT NOT NULL,
-          instrumento JSONB NOT NULL DEFAULT '{}'::jsonb,
-          created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-        );
-        CREATE INDEX IF NOT EXISTS ${TABLA}_user_idx ON ${TABLA} (user_id, updated_at DESC);
-      `);
-      // Añadida despues de la primera version: las tablas ya creadas en Neon
-      // no la tienen, y IF NOT EXISTS deja el CREATE de arriba sin efecto.
-      await pool.query(
-        `ALTER TABLE ${TABLA} ADD COLUMN IF NOT EXISTS progreso JSONB NOT NULL DEFAULT '{}'::jsonb`,
-      );
-      await pool.query(
-        `ALTER TABLE ${TABLA} ADD COLUMN IF NOT EXISTS titulo TEXT NOT NULL DEFAULT ''`,
-      );
+      if (process.env.NODE_ENV === "production"
+        && !new Set(["1", "true", "yes", "on"]).has(
+          String(process.env.STORE_AUTO_MIGRATE ?? "false").trim().toLowerCase(),
+        )) {
+        await verifyStoreMigrations(pool);
+      } else {
+        await runStoreMigrations(pool);
+      }
     },
     async listarDeUsuario(userId) {
       const r = await pool.query(
@@ -162,21 +166,22 @@ const backendPostgres = async () => {
       const r = await pool.query(`SELECT count(*)::int n FROM ${TABLA} WHERE user_id = $1`, [userId]);
       return r.rows[0].n;
     },
-    async guardar(proyecto) {
-      await pool.query(
-        `INSERT INTO ${TABLA} (id, user_id, nombre, titulo, instrumento, progreso, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
-         ON CONFLICT (id) DO UPDATE
-           SET nombre = EXCLUDED.nombre,
-               titulo = EXCLUDED.titulo,
-               instrumento = EXCLUDED.instrumento,
-               progreso = EXCLUDED.progreso,
-               updated_at = EXCLUDED.updated_at`,
+    async guardar(proyecto, expectedVersion = null) {
+      const expected = expectedVersion ?? proyecto.version;
+      const result = await pool.query(
+        `UPDATE ${TABLA}
+            SET nombre=$3, titulo=$4, instrumento=$5::jsonb, progreso=$6::jsonb,
+                version=version+1, updated_at=$7
+          WHERE id=$1 AND user_id=$2 AND version=$8
+          RETURNING *`,
         [proyecto.id, proyecto.userId, proyecto.nombre, proyecto.titulo ?? "",
           JSON.stringify(proyecto.instrumento), JSON.stringify(proyecto.progreso ?? {}),
-          proyecto.createdAt, proyecto.updatedAt],
+          proyecto.updatedAt, expected],
       );
-      return proyecto;
+      if (!result.rows[0]) {
+        throw new ProjectVersionConflictError(await this.obtener(proyecto.id));
+      }
+      return fila(result.rows[0]);
     },
     // Version transaccional de "contar y guardar": sin esto, dos peticiones
     // concurrentes del mismo usuario pueden ejecutar su SELECT count(*) antes
@@ -202,11 +207,12 @@ const backendPostgres = async () => {
           return { ok: false, actuales };
         }
         await client.query(
-          `INSERT INTO ${TABLA} (id, user_id, nombre, titulo, instrumento, progreso, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
+          `INSERT INTO ${TABLA}
+             (id, user_id, nombre, titulo, instrumento, progreso, version, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9)`,
           [proyecto.id, proyecto.userId, proyecto.nombre, proyecto.titulo ?? "",
             JSON.stringify(proyecto.instrumento), JSON.stringify(proyecto.progreso ?? {}),
-            proyecto.createdAt, proyecto.updatedAt],
+            proyecto.version ?? 1, proyecto.createdAt, proyecto.updatedAt],
         );
         await client.query("COMMIT");
         return { ok: true, actuales: actuales + 1 };
@@ -225,7 +231,7 @@ const backendPostgres = async () => {
       const r = await pool.query(`DELETE FROM ${TABLA} WHERE user_id = $1`, [userId]);
       return r.rowCount;
     },
-    async cerrar() { await pool.end(); },
+    async cerrar() { await releaseStorePool(); },
   };
 };
 
@@ -238,7 +244,7 @@ export const initProyectos = async (rutaBase) => {
 export const listarProyectos = (userId) => backend.listarDeUsuario(userId);
 export const obtenerProyecto = (id) => backend.obtener(id);
 export const contarProyectos = (userId) => backend.contarDeUsuario(userId);
-export const guardarProyecto = (p) => backend.guardar(p);
+export const guardarProyecto = (p, expectedVersion = null) => backend.guardar(p, expectedVersion);
 // Crea un proyecto solo si el usuario no llego al limite de su plan; el
 // conteo y el guardado son atomicos entre si (ver comentarios de cada
 // backend). Devuelve { ok: false } sin escribir nada si ya esta en el limite.

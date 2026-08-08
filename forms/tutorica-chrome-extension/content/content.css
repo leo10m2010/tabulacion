@@ -168,6 +168,31 @@
   word-break: break-word;
 }
 
+#tesistab-qa-confirm-dialog .tesistab-qa-authorization {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 16px;
+  padding: 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+#tesistab-qa-confirm-dialog .tesistab-qa-authorization.is-required {
+  border-color: hsl(var(--danger));
+  background: hsl(var(--danger) / 0.08);
+}
+
+#tesistab-qa-confirm-dialog .tesistab-qa-authorization input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: hsl(var(--primary));
+}
+
 #tesistab-qa-confirm-dialog .tesistab-qa-confirm-actions {
   display: flex;
   justify-content: flex-end;
@@ -213,6 +238,10 @@
   flex-direction: column;
   gap: 6px;
   width: 220px;
+  max-height: calc(100dvh - 64px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px;
   border-radius: 14px;
   background: hsl(var(--card));
@@ -435,6 +464,7 @@
 }
 
 #tesistab-qa-actions button {
+  min-height: 36px;
   border: 1px solid hsl(var(--border));
   border-radius: 8px;
   padding: 8px 10px;
@@ -484,6 +514,25 @@
 
 #tesistab-qa-actions .tesistab-qa-main-action.is-running {
   background: hsl(var(--primary));
+}
+
+#tesistab-qa-actions .tesistab-qa-job-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+#tesistab-qa-actions .tesistab-qa-job-controls[hidden] {
+  display: none;
+}
+
+#tesistab-qa-actions .tesistab-qa-job-controls button {
+  text-align: center;
+}
+
+#tesistab-qa-actions .tesistab-qa-job-controls .danger {
+  border-color: hsl(var(--danger) / 0.45);
+  color: hsl(var(--danger));
 }
 
 #tesistab-qa-actions .tesistab-qa-main-action.is-running:hover:not(:disabled) {

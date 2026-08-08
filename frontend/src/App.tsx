@@ -13,6 +13,9 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
+import { useRef } from "react";
+import { useCallback } from "react";
+import type { ReactNode } from "react";
 import { cn } from "./lib/utils";
 
 
@@ -33,6 +36,8 @@ import {
   resolveViewFromPath,
 } from "./lib/helpers";
 import { borrarTodosLosBorradores } from "./lib/wizard-draft";
+import { activeProjectStorageKey, clearSensitiveSessionStorage } from "./lib/session-storage";
+import { getFormsBalance } from "./lib/usage";
 // La landing y el acceso van en el bundle inicial: son la primera pantalla y
 // cargarlas aparte añadiría un viaje de red justo en la ruta crítica.
 import { LoginScreen } from "./components/LoginScreen";
@@ -90,10 +95,23 @@ function SectionSkeleton() {
   );
 }
 
+function PersistentSection({ active, children }: { active: boolean; children: ReactNode }) {
+  return (
+    <section hidden={!active} aria-hidden={!active}>
+      {children}
+    </section>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [appView, setAppView] = useState<AppView>(() => resolveViewFromPath());
   const [activeSection, setActiveSection] = useState<AppSection>("inicio");
+  // Una herramienta ya visitada permanece montada aunque se navegue a otra
+  // sección. Así sus trabajos siguen avanzando y el resultado no desaparece.
+  const [mountedSections, setMountedSections] = useState<Set<AppSection>>(
+    () => new Set(["inicio"]),
+  );
 
   // El override por localStorage es una comodidad de desarrollo; en produccion
   // manda siempre VITE_API_BASE_URL (un valor viejo guardado romperia la app).
@@ -107,8 +125,8 @@ export default function App() {
 
 
   // Configuración pública del servidor (métodos de acceso y planes). Se pide
-  // antes de iniciar sesión; si falla, la app sigue funcionando con el acceso
-  // por correo y sin botón de Google.
+  // antes de iniciar sesión. El registro público solo se ofrece con Google;
+  // el formulario de contraseña queda como acceso para cuentas manuales.
   const [googleClientId, setGoogleClientId] = useState<string>("");
   // A qué vino el usuario. La pantalla de acceso es la misma para entrar y para
   // crear cuenta (con Google son la misma acción), pero el énfasis cambia: sin
@@ -122,6 +140,10 @@ export default function App() {
   // pantalla de acceso como motivo para crear la cuenta; al venir del backend
   // no se desincronizan si cambian los presets.
   const [freePlan, setFreePlan] = useState<Record<string, number> | null>(null);
+  const [paymentsEnabled, setPaymentsEnabled] = useState(false);
+  const [formsTopupsEnabled, setFormsTopupsEnabled] = useState(false);
+  const [publicConfigStatus, setPublicConfigStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [publicConfigRefreshKey, setPublicConfigRefreshKey] = useState(0);
   // Mensaje de bienvenida tras crear la cuenta con Google. Sin esto, alguien
   // que acaba de entrar ve herramientas bloqueadas y cree que está roto.
   const [welcomeMessage, setWelcomeMessage] = useState<string | null>(null);
@@ -132,9 +154,7 @@ export default function App() {
   // Proyecto activo: el que usarán las herramientas cuando lean el instrumento.
   // Se recuerda entre visitas para no obligar a elegirlo cada vez.
   const [proyectoActivo, setProyectoActivo] = useState<Proyecto | null>(null);
-  const [proyectoActivoId, setProyectoActivoId] = useState<string | null>(
-    () => localStorage.getItem("proyectoActivoId"),
-  );
+  const [proyectoActivoId, setProyectoActivoId] = useState<string | null>(null);
 
   // Cuántas tesis tiene en total. El inicio lo necesita para saber si ofrecer
   // "cambiar de tesis" o "crear la primera".
@@ -143,8 +163,10 @@ export default function App() {
   const seleccionarProyecto = (p: Proyecto | null) => {
     setProyectoActivo(p);
     setProyectoActivoId(p?.id ?? null);
-    if (p) localStorage.setItem("proyectoActivoId", p.id);
-    else localStorage.removeItem("proyectoActivoId");
+    if (!authUser) return;
+    const key = activeProjectStorageKey(authUser.id);
+    if (p) localStorage.setItem(key, p.id);
+    else localStorage.removeItem(key);
   };
 
   // Marca un paso de la ruta como hecho en el proyecto activo.
@@ -168,14 +190,37 @@ export default function App() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(() => Boolean(localStorage.getItem("authToken")));
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authRefreshKey, setAuthRefreshKey] = useState(0);
+  const authUserRef = useRef<AuthUser | null>(null);
+  authUserRef.current = authUser;
+
+  const resetWorkspaceState = useCallback(() => {
+    clearSensitiveSessionStorage();
+    borrarTodosLosBorradores();
+    setProyectoActivo(null);
+    setProyectoActivoId(null);
+    setProyectosTotal(0);
+    setPlanDesde(null);
+    setWelcomeMessage(null);
+    setMountedSections(new Set(["inicio"]));
+    setActiveSection("inicio");
+  }, []);
+
+  const olvidarSesion = useCallback(() => {
+    resetWorkspaceState();
+    setAuthToken("");
+    setAuthUser(null);
+  }, [resetWorkspaceState]);
 
   const isAdmin = authUser?.role === "admin";
+  const authUserId = authUser?.id;
   // Una herramienta está bloqueada si al usuario no le quedan usos. Se sigue
   // mostrando (con candado) en vez de esconderla: enseñar lo que hay detrás del
   // plan de pago es justo lo que convierte, y esconderlo haría que el producto
   // pareciera más pobre de lo que es. Los admins tienen usos ilimitados.
   const isToolLocked = (id: AppSection) => {
     if (isAdmin || !authUser) return false;
+    if (id === "forms") return (getFormsBalance(authUser).available ?? Number.POSITIVE_INFINITY) <= 0;
     const usos = authUser.uses;
     if (!usos || !(id in usos)) return false;
     return (usos[id as keyof typeof usos] ?? 0) <= 0;
@@ -199,7 +244,25 @@ export default function App() {
       setAuthError(mensaje);
     });
     return () => api.setUnauthorizedHandler(null);
-  }, []);
+  }, [olvidarSesion]);
+
+  // El proyecto recordado pertenece a una cuenta concreta. La clave histórica
+  // global permitía que otra cuenta intentara cargarlo durante unos instantes.
+  useEffect(() => {
+    if (!authUserId) return;
+    setProyectoActivo(null);
+    setProyectoActivoId(localStorage.getItem(activeProjectStorageKey(authUserId)));
+  }, [authUserId]);
+
+  useEffect(() => {
+    if (!authUserId) return;
+    setMountedSections((current) => {
+      if (current.has(activeSection)) return current;
+      const next = new Set(current);
+      next.add(activeSection);
+      return next;
+    });
+  }, [activeSection, authUserId]);
 
   // Token ya vencido al abrir la app: se descarta aquí en vez de dejar que
   // falle la primera petición y el usuario vea un error técnico.
@@ -211,54 +274,85 @@ export default function App() {
       olvidarSesion();
       setAuthError("Tu sesión expiró. Vuelve a iniciar sesión para continuar.");
     }
-  }, []);
+  }, [olvidarSesion]);
 
   // Recupera el proyecto activo recordado. Si ya no existe (lo borró), se
   // olvida en silencio en vez de dejar la app apuntando a la nada.
   useEffect(() => {
-    if (!authToken || !authUser || !proyectoActivoId) return;
+    if (!authToken || !authUserId || !proyectoActivoId) return;
     let isMounted = true;
     api.obtenerProyecto(apiBaseUrl, authToken, proyectoActivoId)
       .then((r) => { if (isMounted) setProyectoActivo(r.proyecto); })
-      .catch(() => {
+      .catch((err) => {
         if (!isMounted) return;
-        setProyectoActivo(null);
-        setProyectoActivoId(null);
-        localStorage.removeItem("proyectoActivoId");
+        // Solo un 404 demuestra que el proyecto dejó de existir. Una caída
+        // temporal conserva la selección para reintentar después.
+        if (err instanceof api.ApiError && err.status === 404) {
+          setProyectoActivo(null);
+          setProyectoActivoId(null);
+          localStorage.removeItem(activeProjectStorageKey(authUserId));
+        }
       });
     return () => { isMounted = false; };
-  }, [apiBaseUrl, authToken, authUser, proyectoActivoId]);
+  }, [apiBaseUrl, authToken, authUserId, proyectoActivoId]);
 
   // Cuántas tesis hay. Se relee al volver al inicio o a la lista, que es cuando
   // el dato se usa y cuando pudo cambiar.
   useEffect(() => {
-    if (!authToken || !authUser) return;
+    if (!authToken || !authUserId) return;
     if (activeSection !== "inicio" && activeSection !== "proyectos") return;
     let isMounted = true;
     api.listarProyectos(apiBaseUrl, authToken)
       .then((r) => { if (isMounted) setProyectosTotal(r.proyectos.length); })
       .catch(() => {});
     return () => { isMounted = false; };
-  }, [apiBaseUrl, authToken, authUser, activeSection]);
+  }, [apiBaseUrl, authToken, authUserId, activeSection]);
 
   // Despierta la API apenas se abre la app: si el hosting suspende el servidor
   // por inactividad (arranque en frío), el login y la generación lo encuentran
   // ya caliente.
   useEffect(() => { api.pingHealth(apiBaseUrl); }, [apiBaseUrl]);
 
-  // Métodos de acceso disponibles. Se ignora el error a propósito: si /config
-  // no responde, simplemente no se ofrece Google y queda el acceso por correo.
+  // Métodos de acceso disponibles. Si /config no responde no se inventa un
+  // registro alternativo por correo: solo queda el acceso manual existente.
   useEffect(() => {
     let isMounted = true;
-    api.fetchPublicConfig(apiBaseUrl)
-      .then((cfg) => {
-        if (!isMounted) return;
-        setGoogleClientId(cfg.auth?.google?.enabled ? (cfg.auth.google.clientId ?? "") : "");
-        setFreePlan(cfg.planes?.[cfg.planPredeterminado] ?? null);
-      })
-      .catch(() => {});
-    return () => { isMounted = false; };
-  }, [apiBaseUrl]);
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    setPublicConfigStatus("loading");
+
+    const wait = (milliseconds: number) => new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        resolve();
+      }, milliseconds);
+      timers.add(timer);
+    });
+
+    const load = async () => {
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          const cfg = await api.fetchPublicConfig(apiBaseUrl);
+          if (!isMounted) return;
+          setGoogleClientId(cfg.auth?.google?.enabled ? (cfg.auth.google.clientId ?? "") : "");
+          setFreePlan(cfg.planes?.[cfg.planPredeterminado] ?? null);
+          setPaymentsEnabled(Boolean(cfg.capabilities?.taypiPayments));
+          setFormsTopupsEnabled(Boolean(cfg.capabilities?.formsTopups));
+          setPublicConfigStatus("ready");
+          return;
+        } catch {
+          if (!isMounted) return;
+          if (attempt < 3) await wait(750 * (2 ** attempt));
+        }
+      }
+      if (isMounted) setPublicConfigStatus("error");
+    };
+
+    void load();
+    return () => {
+      isMounted = false;
+      timers.forEach((timer) => clearTimeout(timer));
+    };
+  }, [apiBaseUrl, publicConfigRefreshKey]);
 
   useEffect(() => {
     const onPop = () => setAppView(resolveViewFromPath());
@@ -276,22 +370,43 @@ export default function App() {
   useEffect(() => {
     if (!authToken) { setAuthLoading(false); setAuthUser(null); return; }
     let isMounted = true;
-    setAuthLoading(true);
-    setAuthError(null);
+    const isInitialValidation = !authUserRef.current;
+    if (isInitialValidation) setAuthLoading(true);
     api.fetchMe(apiBaseUrl, authToken)
       .then((payload) => {
         if (!payload.user) throw new Error("Sesión inválida.");
         if (!isMounted) return;
         setAuthUser(payload.user);
+        setAuthError(null);
       })
       .catch((err) => {
         if (!isMounted) return;
-        setAuthToken(""); setAuthUser(null);
-        setAuthError(err instanceof Error ? err.message : "No se pudo validar la sesión.");
+        // Un 401 ya pasó por el handler central. Una caída de red o un 5xx no
+        // invalida credenciales ni borra el trabajo de la cuenta.
+        if (err instanceof api.ApiError && err.status === 401) return;
+        setAuthError("No pudimos conectar con el servidor. Tu sesión y tu trabajo siguen guardados; reintentaremos automáticamente.");
       })
-      .finally(() => { if (isMounted) setAuthLoading(false); });
+      .finally(() => { if (isMounted && isInitialValidation) setAuthLoading(false); });
     return () => { isMounted = false; };
-  }, [apiBaseUrl, authToken]);
+  }, [apiBaseUrl, authToken, authRefreshKey]);
+
+  // Mantiene cuotas y estado frescos sin bloquear la interfaz. Recuperar el
+  // foco o la conexión fuerza una lectura inmediata.
+  useEffect(() => {
+    if (!authToken) return;
+    const refresh = () => setAuthRefreshKey((value) => value + 1);
+    const onVisibility = () => { if (document.visibilityState === "visible") refresh(); };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", onVisibility);
+    const timer = window.setInterval(refresh, 60_000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(timer);
+    };
+  }, [authToken]);
 
 
   // ── Handlers ───────────────────────────────────────────────────────────────
@@ -303,6 +418,7 @@ export default function App() {
     try {
       const payload = await api.login(apiBaseUrl, email, password);
       if (!payload.token || !payload.user) throw new Error(payload.error ?? "Respuesta inválida del servidor.");
+      resetWorkspaceState();
       setAuthToken(payload.token);
       setAuthUser(payload.user);
       recordarSesion(email, payload.tokenExpiresAt);
@@ -322,13 +438,18 @@ export default function App() {
     try {
       const payload = await api.loginWithGoogle(apiBaseUrl, credential);
       if (!payload.token || !payload.user) throw new Error("Respuesta inválida del servidor.");
+      resetWorkspaceState();
       setAuthToken(payload.token);
       setAuthUser(payload.user);
       recordarSesion(payload.user.email, payload.tokenExpiresAt);
       if (payload.creado) {
         const usos = payload.user.uses ?? null;
         const incluidas = usos
-          ? NAV_TOOLS.filter((t) => (usos[t.id as keyof typeof usos] ?? 0) > 0).map((t) => t.label)
+          ? NAV_TOOLS.filter((t) => (
+            t.id === "forms"
+              ? (getFormsBalance(payload.user!).available ?? Number.POSITIVE_INFINITY) > 0
+              : (usos[t.id as keyof typeof usos] ?? 0) > 0
+          )).map((t) => t.label)
           : [];
         setWelcomeMessage(
           incluidas.length > 0
@@ -360,28 +481,18 @@ export default function App() {
     setAuthError(mensaje);
   };
 
-  // Todo lo que sabe el navegador de la sesión se toca aquí, para que no haya
-  // restos: el correo recordado sobrevivía a cerrar sesión y a eliminar la
-  // cuenta, y la app te saludaba con "Bienvenido de vuelta" y el correo de una
-  // cuenta que ya no existía.
   const recordarSesion = (email: string, expiraEn?: string) => {
     localStorage.setItem("loginEmail", email);
     if (expiraEn) localStorage.setItem("authExpiresAt", expiraEn);
     setAuthIntent("login");
   };
 
-  const olvidarSesion = () => {
-    localStorage.removeItem("authExpiresAt");
-    // El borrador del asistente lleva el instrumento completo de una tesis. No
-    // debe sobrevivir al cierre de sesión en un equipo compartido.
-    borrarTodosLosBorradores();
-    setAuthToken(""); setAuthUser(null);
-  };
-
   const handleLogout = () => {
+    const tokenToRevoke = authToken;
     olvidarSesion();
     setAuthError(null);
     setActiveSection("inicio");
+    if (tokenToRevoke) void api.logout(apiBaseUrl, tokenToRevoke).catch(() => undefined);
   };
 
 
@@ -420,6 +531,10 @@ export default function App() {
         intent={authIntent}
         onIntentChange={setAuthIntent}
         freePlan={freePlan}
+        publicConfigStatus={publicConfigStatus}
+        onRetryPublicConfig={() => setPublicConfigRefreshKey((value) => value + 1)}
+        hasPendingSession={Boolean(authToken)}
+        onRetrySession={() => setAuthRefreshKey((value) => value + 1)}
       />
     );
   }
@@ -611,10 +726,10 @@ export default function App() {
             <span className="font-bold">TesisHub</span>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={toggleTheme} className="rounded-lg p-2 text-muted-foreground hover:bg-accent">
+            <button onClick={toggleTheme} aria-label="Cambiar tema" className="min-h-11 min-w-11 rounded-lg p-2 text-muted-foreground hover:bg-accent">
               {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
-            <button onClick={handleLogout} className="rounded-lg p-2 text-muted-foreground hover:bg-danger/10 hover:text-danger">
+            <button onClick={handleLogout} aria-label="Cerrar sesión" className="min-h-11 min-w-11 rounded-lg p-2 text-muted-foreground hover:bg-danger/10 hover:text-danger">
               <LogOut className="h-4 w-4" />
             </button>
           </div>
@@ -624,8 +739,10 @@ export default function App() {
         <nav aria-label="Herramientas" className="sticky top-14 z-20 flex gap-1.5 overflow-x-auto border-b border-border/60 bg-card/80 px-3 py-2 backdrop-blur-xl md:hidden">
           {[
             { id: "inicio" as AppSection, label: "Inicio", icon: LayoutDashboard },
+            { id: "proyectos" as AppSection, label: "Mis tesis", icon: FolderOpen },
             ...NAV_TOOLS,
             ...(isAdmin ? [{ id: "usuarios" as AppSection, label: "Usuarios", icon: Users }] : []),
+            ...(!isAdmin ? [{ id: "planes" as AppSection, label: "Planes", icon: Sparkles }] : []),
             { id: "cuenta" as AppSection, label: "Cuenta", icon: UserRound },
           ].map((item) => (
             <button
@@ -633,7 +750,7 @@ export default function App() {
               onClick={() => setActiveSection(item.id)}
               aria-current={activeSection === item.id ? "page" : undefined}
               className={cn(
-                "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all active:scale-95",
+                "flex min-h-11 shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium transition-all active:scale-95",
                 activeSection === item.id
                   ? "bg-primary text-primary-foreground shadow-sm"
                   : "bg-muted text-muted-foreground",
@@ -647,6 +764,18 @@ export default function App() {
 
         {/* Content */}
         <main className="flex-1 overflow-auto px-4 py-6 md:px-10 md:py-9">
+          {authError && authUser && (
+            <div role="status" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
+              <span className="flex-1">{authError}</span>
+              <button
+                type="button"
+                onClick={() => setAuthRefreshKey((value) => value + 1)}
+                className="min-h-11 rounded-lg px-3 font-medium hover:bg-amber-500/10"
+              >
+                Reintentar
+              </button>
+            </div>
+          )}
 
           {/* Bienvenida tras crear la cuenta: dice qué herramientas incluye el
               plan gratuito, para que las bloqueadas no parezcan un error. */}
@@ -668,87 +797,111 @@ export default function App() {
               esqueleto con la forma del contenido, no una pantalla en blanco.
               El aviso en vivo hace que el cambio de sección también exista para
               quien navega con lector de pantalla. */}
-          <Suspense fallback={<SectionSkeleton />}>
+          <Suspense key={authUser?.id ?? "session"} fallback={<SectionSkeleton />}>
 
-          {activeSection === "proyectos" && authUser && (
-            <ProyectosSection
+          {(activeSection === "proyectos" || mountedSections.has("proyectos")) && authUser && (
+            <PersistentSection active={activeSection === "proyectos"}>
+              <ProyectosSection
               apiBaseUrl={apiBaseUrl}
               authToken={authToken}
               authUser={authUser}
               proyectoActivoId={proyectoActivoId}
               onSeleccionar={seleccionarProyecto}
-            />
+              />
+            </PersistentSection>
           )}
 
-          {activeSection === "planes" && authUser && (
-            <PlanesSection authUser={authUser} herramientaBloqueada={planDesde} />
+          {(activeSection === "planes" || mountedSections.has("planes")) && authUser && (
+            <PersistentSection active={activeSection === "planes"}>
+              <PlanesSection
+                apiBaseUrl={apiBaseUrl}
+                authToken={authToken}
+                authUser={authUser}
+                herramientaBloqueada={planDesde}
+                paymentsEnabled={paymentsEnabled}
+                formsTopupsEnabled={formsTopupsEnabled}
+              />
+            </PersistentSection>
           )}
 
           {/* ── Inicio (dashboard) ── */}
-          {activeSection === "inicio" && authUser && (
-            <HomeSection
+          {(activeSection === "inicio" || mountedSections.has("inicio")) && authUser && (
+            <PersistentSection active={activeSection === "inicio"}>
+              <HomeSection
               user={authUser}
               proyecto={proyectoActivo}
               proyectosTotal={proyectosTotal}
               onNavigate={setActiveSection}
-            />
+              />
+            </PersistentSection>
           )}
 
           {/* ── Tabulación Wizard ── */}
-          {activeSection === "tabulacion" && authUser && (
-            <TabulacionSection
+          {(activeSection === "tabulacion" || mountedSections.has("tabulacion")) && authUser && (
+            <PersistentSection active={activeSection === "tabulacion"}>
+              <TabulacionSection
               apiBaseUrl={apiBaseUrl}
               authToken={authToken}
               authUser={authUser}
               proyecto={proyectoActivo}
               onPasoHecho={marcarPasoActivo}
               onUpgrade={irAPlanes}
-            />
+              />
+            </PersistentSection>
           )}
 
           {/* ── Tabulación descriptiva (IA) ── */}
-          {activeSection === "descriptiva" && authUser && (
-            <DescriptivaSection
+          {(activeSection === "descriptiva" || mountedSections.has("descriptiva")) && authUser && (
+            <PersistentSection active={activeSection === "descriptiva"}>
+              <DescriptivaSection
               apiBaseUrl={apiBaseUrl}
               authToken={authToken}
               authUser={authUser}
               onPasoHecho={marcarPasoActivo}
               onUpgrade={irAPlanes}
-            />
+              />
+            </PersistentSection>
           )}
 
           {/* ── Confiabilidad (Alfa de Cronbach) ── */}
-          {activeSection === "confiabilidad" && authUser && (
-            <CronbachSection
+          {(activeSection === "confiabilidad" || mountedSections.has("confiabilidad")) && authUser && (
+            <PersistentSection active={activeSection === "confiabilidad"}>
+              <CronbachSection
               apiBaseUrl={apiBaseUrl}
               authToken={authToken}
               authUser={authUser}
               proyecto={proyectoActivo}
               onPasoHecho={marcarPasoActivo}
               onUpgrade={irAPlanes}
-            />
+              />
+            </PersistentSection>
           )}
 
           {/* ── Integraciones (clave de API + Tutorica Forms) ── */}
-          {activeSection === "forms" && authUser && (
-            <FormsSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+          {(activeSection === "forms" || mountedSections.has("forms")) && authUser && (
+            <PersistentSection active={activeSection === "forms"}>
+              <FormsSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} onUpgrade={irAPlanes} />
+            </PersistentSection>
           )}
 
           {/* ── Generador de Títulos de Investigación (IA) ── */}
-          {activeSection === "titulos" && authUser && (
-            <TitulosSection
+          {(activeSection === "titulos" || mountedSections.has("titulos")) && authUser && (
+            <PersistentSection active={activeSection === "titulos"}>
+              <TitulosSection
               apiBaseUrl={apiBaseUrl}
               authToken={authToken}
               authUser={authUser}
               proyecto={proyectoActivo}
               onProyectoActualizado={seleccionarProyecto}
               onUpgrade={irAPlanes}
-            />
+              />
+            </PersistentSection>
           )}
 
           {/* ── Matriz de Consistencia (IA) ── */}
-          {activeSection === "matriz" && authUser && (
-            <MatrizSection
+          {(activeSection === "matriz" || mountedSections.has("matriz")) && authUser && (
+            <PersistentSection active={activeSection === "matriz"}>
+              <MatrizSection
               apiBaseUrl={apiBaseUrl}
               authToken={authToken}
               authUser={authUser}
@@ -756,34 +909,46 @@ export default function App() {
               onProyectoActualizado={seleccionarProyecto}
               onPasoHecho={marcarPasoActivo}
               onUpgrade={irAPlanes}
-            />
+              />
+            </PersistentSection>
           )}
 
           {/* ── Humanizador de texto académico (IA) ── */}
-          {activeSection === "humanizador" && authUser && (
-            <HumanizadorSection
+          {(activeSection === "humanizador" || mountedSections.has("humanizador")) && authUser && (
+            <PersistentSection active={activeSection === "humanizador"}>
+              <HumanizadorSection
               apiBaseUrl={apiBaseUrl}
               authToken={authToken}
               authUser={authUser}
               onPasoHecho={marcarPasoActivo}
               onUpgrade={irAPlanes}
-            />
+              />
+            </PersistentSection>
           )}
 
           {/* ── Usuarios (admin) ── */}
-          {activeSection === "usuarios" && isAdmin && authUser && (
-            <UsersSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+          {(activeSection === "usuarios" || mountedSections.has("usuarios")) && isAdmin && authUser && (
+            <PersistentSection active={activeSection === "usuarios"}>
+              <UsersSection apiBaseUrl={apiBaseUrl} authToken={authToken} authUser={authUser} />
+            </PersistentSection>
           )}
 
           {/* ── Mi cuenta ── */}
-          {activeSection === "cuenta" && authUser && (
-            <AccountSection
+          {(activeSection === "cuenta" || mountedSections.has("cuenta")) && authUser && (
+            <PersistentSection active={activeSection === "cuenta"}>
+              <AccountSection
               apiBaseUrl={apiBaseUrl}
               authToken={authToken}
               authUser={authUser}
-              onTokenRefresh={setAuthToken}
+              googleClientId={googleClientId}
+              themeMode={themeMode}
+              onTokenRefresh={(token, expiresAt) => {
+                setAuthToken(token);
+                if (expiresAt) localStorage.setItem("authExpiresAt", expiresAt);
+              }}
               onAccountDeleted={handleAccountDeleted}
-            />
+              />
+            </PersistentSection>
           )}
 
           </Suspense>

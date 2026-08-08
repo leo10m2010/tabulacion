@@ -34,21 +34,31 @@ const repartoReal = (base, cfg, varIndex) => {
   return cuentas;
 };
 
+const assertDentroDeTolerancia = (cuentas, porcentajes, n) => {
+  porcentajes.forEach((porcentaje, i) => {
+    const p = porcentaje / 100;
+    const esperado = p * n;
+    const tolerancia = Math.max(1, Math.ceil(1.96 * Math.sqrt(n * p * (1 - p))));
+    assert.ok(
+      Math.abs(cuentas[i] - esperado) <= tolerancia,
+      `${cuentas[i]} queda fuera de ${esperado} +/- ${tolerancia}`,
+    );
+  });
+};
+
 describe("reparto del baremo", () => {
-  test("respeta EXACTAMENTE los porcentajes pedidos", () => {
-    const cfg = normalizeConfig({ ...RAW, muestra: "60" });
+  test("trata los porcentajes como objetivos con tolerancia", () => {
+    const cfg = normalizeConfig({ ...RAW, muestra: "60", seed: "baremo-tolerancia" });
     const { base } = generateBaseData(cfg);
-    // 46/35/19 sobre 60 -> 28/21/11
-    assert.deepEqual(repartoReal(base, cfg, 0), [28, 21, 11]);
-    assert.deepEqual(repartoReal(base, cfg, 1), [28, 21, 11]);
+    assertDentroDeTolerancia(repartoReal(base, cfg, 0), [46, 35, 19], 60);
+    assertDentroDeTolerancia(repartoReal(base, cfg, 1), [46, 35, 19], 60);
   });
 
   test("es estable entre corridas, no cuestion de suerte", () => {
     // Antes variaba de 17% a 40% en el primer nivel de una corrida a otra.
     for (let i = 0; i < 5; i += 1) {
-      const cfg = normalizeConfig({ ...RAW, muestra: "80" });
-      // 46/35/19 sobre 80 -> 37/28/15
-      assert.deepEqual(repartoReal(generateBaseData(cfg).base, cfg, 0), [37, 28, 15]);
+      const cfg = normalizeConfig({ ...RAW, muestra: "80", seed: `estable-${i}` });
+      assertDentroDeTolerancia(repartoReal(generateBaseData(cfg).base, cfg, 0), [46, 35, 19], 80);
     }
   });
 
@@ -61,8 +71,10 @@ describe("reparto del baremo", () => {
   });
 
   test("funciona con un reparto muy desigual", () => {
-    const cfg = normalizeConfig({ ...RAW, muestra: "100", porcentaje: ["5", "10", "85"] });
-    assert.deepEqual(repartoReal(generateBaseData(cfg).base, cfg, 0), [5, 10, 85]);
+    const cfg = normalizeConfig({
+      ...RAW, muestra: "100", porcentaje: ["5", "10", "85"], seed: "desigual",
+    });
+    assertDentroDeTolerancia(repartoReal(generateBaseData(cfg).base, cfg, 0), [5, 10, 85], 100);
   });
 
   test("sin porcentajes no fuerza nada (no rompe configuraciones antiguas)", () => {
@@ -102,7 +114,7 @@ describe("el ajuste del baremo NO rompe la correlacion", () => {
     const { base, control } = generateBaseData(cfg);
     assert.ok(control.obtenido < 0, `deberia ser negativa, fue ${control.obtenido}`);
     // Y el reparto del baremo se respeta igual.
-    assert.deepEqual(repartoReal(base, cfg, 0), [28, 21, 11]);
+    assertDentroDeTolerancia(repartoReal(base, cfg, 0), [46, 35, 19], 60);
     assert.ok(spearmanCorrelation !== undefined);
   });
 });

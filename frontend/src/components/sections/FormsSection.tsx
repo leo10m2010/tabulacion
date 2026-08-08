@@ -5,17 +5,19 @@ import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { createApiKey, getApiKeyInfo, revokeApiKey, type ApiKeyInfo } from "../../lib/api";
 import { formatDateTime } from "../../lib/helpers";
+import { getFormsBalance } from "../../lib/usage";
 import type { AuthUser } from "../../lib/types";
 
 // Sección Forms / Integraciones: clave de API para la extensión Tutorica
 // Forms. Autocontenida: App la monta cuando la sección está activa, por eso
 // carga el estado de la clave en el mount.
-export function FormsSection({ apiBaseUrl, authToken, authUser }: {
+export function FormsSection({ apiBaseUrl, authToken, authUser, onUpgrade }: {
   apiBaseUrl: string;
   authToken: string;
   authUser: AuthUser;
+  onUpgrade?: (tool?: string) => void;
 }) {
-  const usesLeft = authUser.role === "admin" ? null : (authUser.uses?.forms ?? authUser.formsUsesLeft ?? 0);
+  const formsBalance = getFormsBalance(authUser);
   const [apiKeyInfo, setApiKeyInfo] = useState<ApiKeyInfo | null>(null);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
   const [apiKeyBusy, setApiKeyBusy] = useState(false);
@@ -77,7 +79,7 @@ export function FormsSection({ apiBaseUrl, authToken, authUser }: {
     <div className="step-enter mx-auto max-w-3xl space-y-6">
       <div>
         <h2 className="font-display text-2xl font-bold tracking-tight">Forms</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Rellena tus Google Forms; cada corrida consume 1 uso de Forms.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Rellena tus Google Forms usando tu saldo de respuestas.</p>
       </div>
 
       <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
@@ -94,7 +96,9 @@ export function FormsSection({ apiBaseUrl, authToken, authUser }: {
               </CardDescription>
             </div>
             <Badge>
-              {usesLeft === null ? "Usos ilimitados (admin)" : `${usesLeft} uso${usesLeft === 1 ? "" : "s"} disponible${usesLeft === 1 ? "" : "s"}`}
+              {formsBalance.available === null
+                ? "Respuestas ilimitadas (admin)"
+                : `${formsBalance.available.toLocaleString("es-PE")} respuesta${formsBalance.available === 1 ? "" : "s"} disponible${formsBalance.available === 1 ? "" : "s"}`}
             </Badge>
           </div>
         </CardHeader>
@@ -102,13 +106,13 @@ export function FormsSection({ apiBaseUrl, authToken, authUser }: {
           <div className="rounded-xl border border-border bg-background/60 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold">Tu clave de API</p>
+                <p className="text-sm font-semibold">Conexión manual (opcional)</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {apiKeyInfo === null
                     ? "Cargando estado de tu clave..."
                     : apiKeyInfo.hasKey
                       ? `Clave activa terminada en ···${apiKeyInfo.last4} (creada el ${formatDateTime(apiKeyInfo.createdAt)})`
-                      : "Aún no tienes una clave. Genérala para conectar la extensión."}
+                      : "Puedes generar una clave si prefieres conectarla manualmente."}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -158,12 +162,13 @@ export function FormsSection({ apiBaseUrl, authToken, authUser }: {
                   </a>.
                 </>,
                 <>
-                  Abre la extensión e <strong className="text-foreground">inicia sesión</strong> con tu correo y
-                  contraseña de TesisHub: tu clave de API se configura sola. (También puedes pegar una clave
-                  manual en "Avanzado".)
+                  Pulsa <strong className="text-foreground">Vincular con TesisHub</strong> y copia el código que aparece.
                 </>,
                 <>
-                  Verifica que la tarjeta de conexión del popup diga{" "}
+                  Abre <strong className="text-foreground">Mi cuenta → Dispositivos de Forms</strong>, pega el código y aprueba la instalación.
+                </>,
+                <>
+                  Vuelve a la extensión y verifica que la tarjeta de conexión diga{" "}
                   <strong className="text-foreground">Conectado</strong>.
                 </>,
                 <>Abre tu encuesta de Google Forms y configura el llenado desde el panel de la extensión.</>,
@@ -179,10 +184,15 @@ export function FormsSection({ apiBaseUrl, authToken, authUser }: {
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Forms funciona por usos: cada corrida de llenado consume 1 uso, sin importar cuántas
-            respuestas envíe. Cuando se agoten, solicita una recarga al administrador. Los usos son
-            independientes de la suscripción de Tabulación: solo necesitas la cuenta activa.
+            Forms descuenta únicamente las respuestas confirmadas como enviadas. Puedes solicitar
+            cualquier cantidad cubierta por tu saldo; los trabajos grandes se procesan por lotes.
+            {formsBalance.reserved > 0 && ` Tienes ${formsBalance.reserved.toLocaleString("es-PE")} respuestas reservadas en trabajos activos.`}
           </p>
+          {formsBalance.available === 0 && onUpgrade && (
+            <Button variant="outline" onClick={() => onUpgrade("Forms")}>
+              Ampliar saldo de respuestas
+            </Button>
+          )}
         </CardContent>
       </Card>
     </div>

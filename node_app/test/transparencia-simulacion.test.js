@@ -1,16 +1,5 @@
-// Transparencia sobre el origen de los datos.
-//
-// El producto genera datos simulados y, en el diseño cuasiexperimental, puede
-// elegir entre varias muestras la que mejor reproduce el patrón pedido. Ambas
-// cosas son legítimas para ensayar y demostrar, pero tienen que estar
-// declaradas en el archivo: quien lo reciba debe poder saber qué está mirando.
-//
-// Dos agujeros concretos que estas pruebas cierran:
-//   1. El aviso "datos simulados" vivía dentro del bloque del control de
-//      correlación, que no existe con una sola variable. El Excel de una
-//      variable salía con la base inventada y sin ninguna marca.
-//   2. El control del patrón de resultados solo avisaba cuando FALLABA. Cuando
-//      lo conseguía —el caso que hay que declarar— no decía nada.
+// Lenguaje neutral en los artefactos y trazabilidad metodológica del control
+// de patrón. Los detalles técnicos del generador no deben dominar la salida.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -46,28 +35,28 @@ const textoDeLaHoja = async (buffer, nombreHoja) => {
   return JSON.stringify(usado ? usado.value() : []);
 };
 
-test("con una sola variable el Excel declara que los datos son simulados", async () => {
+test("con una sola variable el Excel usa lenguaje neutral", async () => {
   const resultado = await generateArtifacts(configUnaVariable("1"));
   // Se comprueba el supuesto de la prueba: sin 2ª variable no hay control de
   // correlación, que es exactamente donde estaba escondido el aviso.
   assert.equal(resultado.correlationControl, null, "el caso de prueba debe ser de una sola variable");
 
   const texto = await textoDeLaHoja(resultado.excelBuffer, "Información");
-  assert.match(texto, /SIMULADOS/, "el archivo de una variable no declara que los datos son simulados");
+  assert.doesNotMatch(texto, /SIMULAD/i);
 });
 
-test("la plantilla vacía NO dice que los datos son simulados (no hay datos)", async () => {
+test("la plantilla vacía usa lenguaje neutral", async () => {
   const resultado = await generateArtifacts(configUnaVariable("0"));
   const texto = await textoDeLaHoja(resultado.excelBuffer, "Información");
 
   assert.doesNotMatch(texto, /SIMULADOS/);
 });
 
-test("con dos variables el aviso de datos simulados sigue estando", async () => {
+test("con dos variables el Excel usa lenguaje neutral", async () => {
   const resultado = await generateArtifacts({ ...baseConfig, conDatos: "1" });
   const texto = await textoDeLaHoja(resultado.excelBuffer, "Información");
 
-  assert.match(texto, /SIMULADOS/);
+  assert.doesNotMatch(texto, /SIMULAD/i);
 });
 
 // La nota al pie de cada tabla de correlación afirmaba, como texto fijo, que
@@ -103,9 +92,9 @@ test("el control del patrón de resultados avisa SIEMPRE, no solo cuando falla",
 
   assert.equal(cfg.cuasiexperimental.controlarResultados, true);
   const aviso = resultado.warnings.join(" ");
-  // Lo esencial: que diga que hubo selección entre muestras y que eso afecta
+  // Lo esencial: que diga que hubo selección entre bases y que eso afecta
   // a los p-valores.
-  assert.match(aviso, /se simularon \d+ muestras/i);
+  assert.match(aviso, /se evaluaron \d+ bases/i);
   assert.match(aviso, /condicionados/i);
   assert.match(aviso, /p-valores/i);
   // Y que informe de cuántos intentos se usaron de verdad.
@@ -123,7 +112,7 @@ test("sin control del patrón no se avisa de ninguna selección", () => {
   const resultado = generateQuasiExperimentalData(cfg);
 
   assert.equal(cfg.cuasiexperimental.controlarResultados, false);
-  assert.equal(resultado.intentosUsados, 1, "sin control debe simularse una sola muestra");
+  assert.equal(resultado.intentosUsados, 1, "sin control debe generarse una sola base");
   assert.deepEqual(resultado.warnings, []);
 });
 
@@ -138,6 +127,6 @@ test("la hoja Información del cuasiexperimental explica qué significa el contr
   const texto = await textoDeLaHoja(excelBuffer, "Información");
 
   // "Activado" a secas no informaba de nada.
-  assert.match(texto, /se conservó la que mejor reproduce/i);
-  assert.match(texto, /sobrestiman la significación/i);
+  assert.match(texto, /se conserva la que mejor se aproxima/i);
+  assert.doesNotMatch(texto, /simulad/i);
 });

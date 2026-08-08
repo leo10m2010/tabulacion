@@ -2,12 +2,12 @@
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface EstructuraIndicador { nombre: string; items: number }
 export interface EstructuraDimension { nombre: string; indicadores: EstructuraIndicador[] }
-export type ConfigValue = string | string[] | number | boolean | null | undefined | EstructuraDimension[];
+export type ConfigValue = string | string[] | number | number[] | boolean | null | undefined | EstructuraDimension[];
 export type TabConfig = Record<string, ConfigValue>;
 export type TableCell = string | number | boolean | null;
 export type TableRows = TableCell[][];
 
-export interface ItemDef { id: string; nombre: string }
+export interface ItemDef { id: string; nombre: string; invertido?: boolean }
 export interface IndicadorDef { id: string; nombre: string; items: ItemDef[] }
 export interface DimensionDef { id: string; nombre: string; indicadores: IndicadorDef[] }
 
@@ -316,10 +316,19 @@ export interface AuthUser {
   createdAt: string;
   updatedAt: string;
   lastLoginAt: string | null;
-  // Usos por herramienta (1 uso = 1 generación/corrida; null = ilimitados,
-  // admins). formsUsesLeft/Used quedan como espejo legado de uses.forms.
+  passwordEnabled?: boolean;
+  googleLinked?: boolean;
+  // Usos por herramienta. En Forms, `uses.forms` representa respuestas
+  // disponibles; formsUsesLeft/Used quedan como espejo legado.
   uses?: Partial<Record<UseTool, number>> | null;
   usesConsumed?: Partial<Record<UseTool, number>>;
+  formsResponses?: number | {
+    available: number | null;
+    consumed?: number;
+    reserved?: number;
+    unit?: "response";
+  };
+  devices?: DeviceCredential[];
   formsUsesLeft?: number | null;
   formsUsesUsed?: number;
   generationsCount?: number;
@@ -328,6 +337,14 @@ export interface AuthUser {
   apiKeyLast4?: string | null;
   // Historial de actividad (solo llega en el listado del admin).
   activity?: { at: string; detail: string }[];
+}
+
+export interface DeviceCredential {
+  id: string;
+  name: string;
+  last4: string;
+  createdAt: string;
+  lastUsedAt: string | null;
 }
 
 export interface AuthLoginResponse {
@@ -365,6 +382,9 @@ export interface InstrumentoVariable {
   nombre: string;
   dimensiones: InstrumentoDimension[];
   baremo: InstrumentoNivel[];
+  // Posiciones 1-based dentro de la variable. Solo se invierten cuando el
+  // usuario las marca; nunca se infiere por palabras ni al azar.
+  itemsInversos?: number[];
   // Lo calcula el servidor al guardar; no se manda.
   totalItems?: number;
 }
@@ -391,4 +411,5 @@ export interface Proyecto {
   progreso: Partial<Record<PasoTesis, string>>;
   createdAt: string;
   updatedAt: string;
+  version?: number;
 }

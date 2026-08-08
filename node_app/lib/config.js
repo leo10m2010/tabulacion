@@ -4,6 +4,7 @@
 // ({ encuestados, escala: [...], variables: [{ dimensiones: [...] }] }).
 
 import { evaluarPresupuesto, mensajePresupuesto } from "./presupuesto.js";
+import { normalizeSeed } from "./random.js";
 
 export const MAX_MUESTRA = 2000;
 export const MAX_ITEMS_POR_VARIABLE = 60;
@@ -265,6 +266,9 @@ export const normalizeConfig = (raw, opciones = {}) => {
       nombre: String(v.nombre ?? "").trim() || `Variable ${vi + 1}`,
       niveles: (Array.isArray(v.niveles) && v.niveles.length >= 2 && v.niveles.map(String)) || (vi === 0 ? nivelesV1 : nivelesV2),
       baremoVariable: undefined,
+      itemsInversos: Array.isArray(v.itemsInversos)
+        ? v.itemsInversos
+        : (Array.isArray(v.items_inversos) ? v.items_inversos : []),
       itemNames: Array.isArray(v.nombre_items) ? v.nombre_items.map(String) : [],
       dimensiones: (v.dimensiones ?? []).map((d, di) => ({
         nombre: String(d.nombre ?? "").trim() || `Dimensión ${di + 1}`,
@@ -288,6 +292,9 @@ export const normalizeConfig = (raw, opciones = {}) => {
         niveles,
         baremoVariable: parseBaremoOverride(raw, vi === 0 ? "" : "_v2", niveles, `Variable ${vi + 1}`, avisosBaremo),
         baremoObjetivo: parseBaremoObjetivo(raw, vi === 0 ? "" : "_v2", niveles),
+        itemsInversos: Array.isArray(raw[`items_inversos_v${vi + 1}`])
+          ? raw[`items_inversos_v${vi + 1}`]
+          : [],
         itemNames: Array.isArray(raw[`nombre_items_v${vi + 1}`]) ? raw[`nombre_items_v${vi + 1}`].map(String) : [],
         dimensiones: buildVariableFromFlat(raw, vi + 1, fallbackItems),
       });
@@ -302,6 +309,16 @@ export const normalizeConfig = (raw, opciones = {}) => {
     if (total <= 0) {
       throw new Error(`Define el numero de items de la Variable ${vi + 1} antes de generar.`);
     }
+    const inversos = (variable.itemsInversos ?? []).map((value) => Number(value));
+    if (inversos.some((value) => !Number.isInteger(value) || value < 1 || value > total)) {
+      throw new Error(
+        `Los items inversos de la Variable ${vi + 1} deben ser posiciones enteras entre 1 y ${total}.`,
+      );
+    }
+    if (new Set(inversos).size !== inversos.length) {
+      throw new Error(`Los items inversos de la Variable ${vi + 1} no pueden repetirse.`);
+    }
+    variable.itemsInversos = inversos.sort((a, b) => a - b);
     // Cada dimension y cada indicador necesitan al menos un item.
     //
     // Solo se validaba el total de la variable, asi que una dimension vacia
@@ -446,5 +463,6 @@ export const normalizeConfig = (raw, opciones = {}) => {
     controlCorrelacion: !new Set(["0", "false", "no", "off"]).has(controlRaw),
     nivelCorrelacion: NIVELES_CORRELACION[nivelRaw] ? nivelRaw : "muy_alta",
     metodoCorrelacion: ["pearson", "spearman"].includes(metodoRaw) ? metodoRaw : "auto",
+    seed: normalizeSeed(raw.seed ?? raw.semilla),
   };
 };

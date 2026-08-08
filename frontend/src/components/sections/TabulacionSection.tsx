@@ -46,7 +46,7 @@ import {
   toStringValue,
   workbookToSheetRows,
 } from "../../lib/helpers";
-import { instrumentoATabConfig } from "../../lib/instrumento";
+import { indicesItemsInversos, instrumentoATabConfig } from "../../lib/instrumento";
 import { validarConfig } from "../../lib/wizard-validation";
 import { borrarBorrador, guardarBorrador, hayCambios, leerBorrador } from "../../lib/wizard-draft";
 import { TraerDelProyecto } from "../TraerDelProyecto";
@@ -185,9 +185,11 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
       nombre_dims_v1: estructuraV1.map((d) => d.nombre),
       items_por_dim_v1: estructuraV1.map((d) => String(d.indicadores.flatMap((i) => i.items).length)),
       nombre_items_v1: estructuraV1.flatMap((d) => d.indicadores.flatMap((i) => i.items.map((it) => it.nombre))),
+      items_inversos_v1: indicesItemsInversos(estructuraV1),
       nombre_dims_v2: estructuraV2.map((d) => d.nombre),
       items_por_dim_v2: estructuraV2.map((d) => String(d.indicadores.flatMap((i) => i.items).length)),
       nombre_items_v2: estructuraV2.flatMap((d) => d.indicadores.flatMap((i) => i.items.map((it) => it.nombre))),
+      items_inversos_v2: indicesItemsInversos(estructuraV2),
     }));
   }, [estructuraV1, estructuraV2]);
   // En el diseño cuasiexperimental la muestra total es la suma de ambos
@@ -733,7 +735,7 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
 
                             <div>
                               <p className="text-sm font-medium text-foreground">¿Controlar el patrón de resultados?</p>
-                              <FieldHint text="Activado: se simulan hasta 80 muestras y se conserva la que mejor reproduce el patrón esperado (grupos equivalentes al inicio, control estable y cambio del experimental según el efecto elegido). Como la muestra se elige por sus p-valores, esos p-valores sobrestiman la significación y no equivalen a los de una muestra única. Desactivado: una sola simulación, sin selección — es lo que debes usar si vas a reportar los p-valores. Función pensada para datos simulados, pruebas y demostraciones académicas." />
+                              <FieldHint text="Activado: se evalúan hasta 80 bases y se conserva la que mejor reproduce el patrón esperado (grupos comparables al inicio, control estable y cambio del experimental según el efecto elegido). Como la base se elige por sus p-valores, esos p-valores sobrestiman la significación y no equivalen a los de una muestra única. Desactivado: se genera una sola base, sin selección; usa esta opción si vas a reportar los p-valores." />
                               {getScalar("controlarResultados") !== "0" && (
                                 <p className="mt-2 flex items-start gap-2 rounded-lg border border-ambar/40 bg-ambar/10 p-2.5 text-xs text-foreground">
                                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ambar" />
@@ -882,9 +884,9 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
                     <div className="rounded-xl border border-border/80 bg-background/50 p-4">
                       <div className="mb-2 flex items-center gap-2.5">
                         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">3</span>
-                        <p className="text-base font-semibold text-foreground">¿Controlar la correlación de los datos simulados?</p>
+                        <p className="text-base font-semibold text-foreground">¿Controlar la correlación de la base?</p>
                       </div>
-                      <FieldHint text="Activado: eliges qué tan fuerte debe salir la relación entre tus variables. Desactivado: la correlación será el resultado natural de los datos. Función pensada para datos simulados, pruebas y demostraciones académicas." />
+                      <FieldHint text="Activado: eliges qué tan fuerte debe salir la relación entre tus variables. Desactivado: la correlación será el resultado natural de la base." />
                       <div className="mt-3 flex gap-2">
                         <button
                           onClick={() => setScalar("controlCorrelacion", "1")}
@@ -1397,7 +1399,7 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
                           ))}
                         </div>
                         <p className="mt-3 text-[11px] text-muted-foreground">
-                          Datos simulados: función pensada para pruebas, ensayos estadísticos y demostraciones académicas; no reemplaza datos reales. El detalle completo está en la hoja “Comparaciones” del Excel.
+                          Revisa el detalle completo de las comparaciones en la hoja “Comparaciones” del Excel.
                         </p>
                       </div>
                     )}
@@ -1440,7 +1442,7 @@ export function TabulacionSection({ apiBaseUrl, authToken, authUser, proyecto, o
                           </div>
                         </div>
                         <p className="mt-2 text-[11px] text-muted-foreground">
-                          Datos simulados: función pensada para pruebas, ensayos estadísticos y demostraciones académicas; no reemplaza datos reales.
+                          Revisa las distribuciones y los resultados antes de utilizar el archivo.
                         </p>
                       </div>
                     ) : result.correlation !== null && (

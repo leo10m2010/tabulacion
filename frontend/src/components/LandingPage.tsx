@@ -39,11 +39,10 @@ export function LandingPage({
   const [billingMode, setBillingMode] = useState<"monthly" | "yearly">("monthly");
   const reduce = useReducedMotion();
 
-  const CONTACT_EMAIL = "contacto@tutorica.com";
   // Planes, precios y contacto viven en lib/plans.ts: los comparte con la
   // página "Mejorar mi plan" de dentro de la app.
   const plans = PLANS;
-  const openWhatsApp = () => openWhatsAppPlan({ plan: "Plan Institución" });
+  const openWhatsApp = () => openWhatsAppPlan();
   const goToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
 
   const pasos = [
@@ -67,7 +66,7 @@ export function LandingPage({
     },
     {
       q: "¿Qué es Forms y cómo funciona?",
-      a: "Forms rellena tu encuesta de Google Forms automáticamente, con perfiles y distribuciones configurables, desde una extensión de Chrome conectada a tu cuenta. Como todas las herramientas, funciona por usos: cada corrida de llenado consume 1 uso de Forms.",
+      a: "Forms rellena tu encuesta de Google Forms automáticamente, con perfiles y distribuciones configurables, desde una extensión de Chrome conectada a tu cuenta. Cada respuesta confirmada se descuenta de tu saldo y puedes solicitar cualquier cantidad disponible.",
     },
     {
       q: "¿Cuánto tarda en generarse?",
@@ -83,7 +82,7 @@ export function LandingPage({
     },
     {
       q: "¿Cómo pago y qué pasa si tengo dudas?",
-      a: "Los planes funcionan por usos: cada plan carga una cuota de usos por herramienta (1 uso = 1 generación o corrida), en soles o dólares y con pago mensual o anual. Para el Plan Institución o cualquier consulta, escríbenos por WhatsApp o al correo del pie de página.",
+      a: "Los planes cargan usos por herramienta y un saldo de respuestas para Forms. Los pagos se procesan en soles (PEN), de forma mensual o anual. Si tienes dudas, escríbenos por WhatsApp.",
     },
   ];
   const [faqAbierta, setFaqAbierta] = useState<number | null>(0);
@@ -310,7 +309,7 @@ export function LandingPage({
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
                 <h2 className="font-display text-2xl font-bold tracking-tighter md:text-3xl">Planes y precios</h2>
-                <p className="mt-2 text-sm text-muted-foreground">Por usos: cada plan carga tu cuota de cada herramienta. En soles o dólares, mensual o anual.</p>
+                <p className="mt-2 text-sm text-muted-foreground">Por usos: cada plan carga tu cuota de cada herramienta. Pagos en soles (PEN), mensual o anual.</p>
               </div>
               <div className="inline-flex rounded-full border border-border bg-card p-1">
                 {(["monthly", "yearly"] as const).map((mode) => (
@@ -329,7 +328,7 @@ export function LandingPage({
             </div>
           </Reveal>
 
-          <div className="mt-8 grid gap-6 md:grid-cols-3">
+          <div className="mx-auto mt-8 grid max-w-4xl gap-6 md:grid-cols-2">
             {plans.map((plan, i) => (
               <Reveal key={plan.id} delay={i * 0.12}>
                 <motion.div
@@ -356,7 +355,7 @@ export function LandingPage({
                       {billingMode === "monthly" ? plan.priceMonthlyPen : plan.priceYearlyPen}
                     </span>
                     <span className="text-sm text-muted-foreground">
-                      / {billingMode === "monthly" ? "mes" : "año"} ({billingMode === "monthly" ? plan.priceMonthlyUsd : plan.priceYearlyUsd})
+                      / {billingMode === "monthly" ? "mes" : "año"}
                     </span>
                   </div>
                   <ul className="mt-6 space-y-2.5 text-sm">
@@ -371,19 +370,10 @@ export function LandingPage({
                     className="mt-7 w-full"
                     size="lg"
                     variant={plan.featured ? "default" : "outline"}
-                    onClick={plan.id === "institucion" ? openWhatsApp : () => onOpenApp("registro")}
+                    onClick={() => onOpenApp("registro")}
                   >
-                    {plan.id === "institucion" && <MessageCircle className="h-4 w-4" />}
                     {plan.cta}
                   </Button>
-                  {plan.id === "institucion" && (
-                    <p className="mt-3 text-center text-xs text-muted-foreground">
-                      o escríbenos a{" "}
-                      <a href={`mailto:${CONTACT_EMAIL}`} className="font-medium text-primary hover:underline">
-                        {CONTACT_EMAIL}
-                      </a>
-                    </p>
-                  )}
                 </motion.div>
               </Reveal>
             ))}
@@ -501,11 +491,6 @@ export function LandingPage({
                   <button onClick={openWhatsApp} className="text-muted-foreground hover:text-foreground">
                     WhatsApp +51 975 212 132
                   </button>
-                </li>
-                <li>
-                  <a href={`mailto:${CONTACT_EMAIL}`} className="text-muted-foreground hover:text-foreground">
-                    {CONTACT_EMAIL}
-                  </a>
                 </li>
                 <li>
                   <a href="/privacidad.html" className="text-muted-foreground hover:text-foreground">

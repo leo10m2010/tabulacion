@@ -22,6 +22,7 @@ import {
   TextRun,
   WidthType,
 } from "docx";
+import { errorLogFields, structuredLog } from "../observability.js";
 
 const AZUL_OSCURO = "1F3864";
 const GRIS_TEXTO = "595959";
@@ -349,8 +350,9 @@ export const buildTitulosDocx = async ({ contenido, input }) => {
     const body = blocks.flatMap((block, i) => buildTituloParagraphs(block, { pageBreakBefore: i > 0 }));
     children = [...cover, ...body.length > 0 ? body : [normalParagraph(String(contenido ?? ""))]];
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn("[titulos] fallo el parseo de markdown a docx, se entrega contenido crudo:", err);
+    structuredLog("warn", "document.fallback_used", {
+      tool: "titulos", format: "docx", ...errorLogFields(err),
+    });
     children = [new Paragraph({ children: [makeRun(String(contenido ?? ""))] })];
   }
 

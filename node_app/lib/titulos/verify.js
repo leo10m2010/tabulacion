@@ -2,6 +2,11 @@
 // las URLs citadas en los antecedentes y las verifica por HTTP para detectar
 // handles/URLs inventados por la IA. NUNCA se generan URLs; solo se valida
 // que las que la IA escribio realmente existan en el servidor remoto.
+import {
+  parsePublicHttpUrl,
+  publicUrlDispatcher,
+  resolvePublicAddresses,
+} from "../security/safe-url.js";
 
 // Regex tolerante para URLs http/https dentro de texto markdown/APA. Se
 // permite casi cualquier caracter no-espacio y luego se recorta la
@@ -135,15 +140,23 @@ export const findNonDocumentUrls = (urls) => urls.filter((url) => {
 // Hace un GET con timeout y sin seguir redirecciones (para distinguir 3xx
 // explicitamente). Devuelve { status, res } o { error } si hubo timeout o
 // error de red.
-const fetchWithTimeout = async (url, { timeoutMs, fetchImpl }) => {
+const fetchWithTimeout = async (url, { timeoutMs, fetchImpl, lookupImpl }) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    parsePublicHttpUrl(url);
+    const dispatcher = fetchImpl === globalThis.fetch
+      ? await publicUrlDispatcher(url, { lookupImpl })
+      : null;
+    if (fetchImpl !== globalThis.fetch && lookupImpl) {
+      await resolvePublicAddresses(url, lookupImpl);
+    }
     const res = await fetchImpl(url, {
       method: "GET",
       redirect: "manual",
       signal: controller.signal,
       headers: { "User-Agent": USER_AGENT },
+      ...(dispatcher ? { dispatcher } : {}),
     });
     return { status: res.status, res };
   } catch (err) {
@@ -186,11 +199,11 @@ const MAX_REDIRECTS = 3;
 // Las redirecciones se siguen manualmente (hasta MAX_REDIRECTS) porque un
 // 3xx NO prueba que el recurso exista: hdl.handle.net y varios DSpace
 // redirigen tambien handles rotos (a la portada o a una pagina de error).
-const classifyUrl = async (url, { timeoutMs, fetchImpl }) => {
+const classifyUrl = async (url, { timeoutMs, fetchImpl, lookupImpl }) => {
   let currentUrl = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
     // eslint-disable-next-line no-await-in-loop
-    const outcome = await fetchWithTimeout(currentUrl, { timeoutMs, fetchImpl });
+    const outcome = await fetchWithTimeout(currentUrl, { timeoutMs, fetchImpl, lookupImpl });
     if (outcome.error) return "noVerificable";
     const { status, res } = outcome;
 
@@ -261,6 +274,7 @@ export const verifyUrls = async (urls, options = {}) => {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
   const fetchImpl = options.fetchImpl ?? fetch;
+  const lookupImpl = options.lookupImpl;
 
   const reales = [];
   const inventadas = [];
@@ -268,7 +282,7 @@ export const verifyUrls = async (urls, options = {}) => {
   const sospechosas = [];
 
   await runWithConcurrency(urls, concurrency, async (url) => {
-    const clasificacion = await classifyUrl(url, { timeoutMs, fetchImpl });
+    const clasificacion = await classifyUrl(url, { timeoutMs, fetchImpl, lookupImpl });
     if (clasificacion === "real") reales.push(url);
     else if (clasificacion === "inventada") inventadas.push(url);
     else if (clasificacion === "sospechosa") sospechosas.push(url);

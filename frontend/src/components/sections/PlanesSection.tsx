@@ -1,10 +1,13 @@
-import { useState } from "react";
-import { Check, MessageCircle, Sparkles } from "lucide-react";
+import { useRef, useState } from "react";
+import { Check, CreditCard, Loader2, MessageCircle, Sparkles } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Input } from "../ui/input";
 import { USE_TOOLS } from "../../lib/constants";
 import { PLANS, openWhatsAppPlan } from "../../lib/plans";
 import { cn } from "../../lib/utils";
+import { getFormsBalance } from "../../lib/usage";
+import { createFormsTopupCheckout, createTaypiCheckout } from "../../lib/api";
 import type { AuthUser } from "../../lib/types";
 
 // Sección "Mejorar mi plan": los mismos planes y precios que la landing
@@ -13,24 +16,111 @@ import type { AuthUser } from "../../lib/types";
 // Mientras no exista la pasarela de pago (Fase 3 del roadmap), contratar es
 // escribir por WhatsApp. El mensaje va prerrellenado con el plan y la cuenta
 // para poder atender sin volver a preguntar.
-export function PlanesSection({ authUser, herramientaBloqueada }: {
+export function PlanesSection({
+  apiBaseUrl,
+  authToken,
+  authUser,
+  herramientaBloqueada,
+  paymentsEnabled,
+  formsTopupsEnabled = false,
+}: {
+  apiBaseUrl: string;
+  authToken: string;
   authUser: AuthUser;
   // Herramienta desde la que llegó, si vino desde un aviso de "sin usos".
   // Se cuela en el mensaje de WhatsApp: es la razón real por la que escribe.
   herramientaBloqueada?: string | null;
+  paymentsEnabled: boolean;
+  formsTopupsEnabled?: boolean;
 }) {
   const [anual, setAnual] = useState(false);
+  const [payingPlan, setPayingPlan] = useState<string | null>(null);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [topupResponses, setTopupResponses] = useState("500");
+  const [topupBusy, setTopupBusy] = useState(false);
+  const paymentKeys = useRef(new Map<string, string>());
+
+  const persistentPaymentKey = (purchaseKey: string) => `taypiCheckout:${authUser.id}:${purchaseKey}`;
+
+  const contratar = async (planId: string, planName: string) => {
+    if (!paymentsEnabled) {
+      openWhatsAppPlan({
+        plan: planName,
+        email: authUser.email,
+        herramienta: herramientaBloqueada ?? undefined,
+      });
+      return;
+    }
+    const billingCycle = anual ? "yearly" : "monthly";
+    const purchaseKey = `${planId}:${billingCycle}`;
+    const storageKey = persistentPaymentKey(purchaseKey);
+    const idempotencyKey = paymentKeys.current.get(purchaseKey)
+      ?? sessionStorage.getItem(storageKey)
+      ?? crypto.randomUUID();
+    paymentKeys.current.set(purchaseKey, idempotencyKey);
+    sessionStorage.setItem(storageKey, idempotencyKey);
+    setPayingPlan(planId);
+    setPaymentError(null);
+    try {
+      const checkout = await createTaypiCheckout(apiBaseUrl, authToken, {
+        plan: planId,
+        billingCycle,
+        idempotencyKey,
+      });
+      window.location.assign(checkout.checkoutUrl);
+    } catch (error) {
+      setPaymentError(error instanceof Error ? error.message : "No se pudo iniciar el pago.");
+      setPayingPlan(null);
+    }
+  };
+
+  const recargarForms = async () => {
+    const requestedResponses = Number(topupResponses);
+    setPaymentError(null);
+    if (!Number.isSafeInteger(requestedResponses) || requestedResponses < 1) {
+      setPaymentError("Escribe una cantidad entera de respuestas mayor que cero.");
+      return;
+    }
+    if (!formsTopupsEnabled) {
+      openWhatsAppPlan({
+        email: authUser.email,
+        herramienta: `Forms: ${requestedResponses} respuestas`,
+      });
+      return;
+    }
+    const purchaseKey = `forms:${requestedResponses}`;
+    const storageKey = persistentPaymentKey(purchaseKey);
+    const idempotencyKey = paymentKeys.current.get(purchaseKey)
+      ?? sessionStorage.getItem(storageKey)
+      ?? crypto.randomUUID();
+    paymentKeys.current.set(purchaseKey, idempotencyKey);
+    sessionStorage.setItem(storageKey, idempotencyKey);
+    setTopupBusy(true);
+    try {
+      const checkout = await createFormsTopupCheckout(apiBaseUrl, authToken, {
+        requestedResponses,
+        idempotencyKey,
+      });
+      window.location.assign(checkout.checkoutUrl);
+    } catch (error) {
+      setPaymentError(error instanceof Error ? error.message : "No se pudo iniciar la recarga.");
+      setTopupBusy(false);
+    }
+  };
 
   const usos = authUser.uses ?? {};
-  const conUsos = USE_TOOLS.filter((t) => (usos[t.id] ?? 0) > 0);
-  const sinUsos = USE_TOOLS.filter((t) => (usos[t.id] ?? 0) <= 0);
+  const saldo = (id: (typeof USE_TOOLS)[number]["id"]) => (
+    id === "forms" ? (getFormsBalance(authUser).available ?? Number.POSITIVE_INFINITY) : (usos[id] ?? 0)
+  );
+  const conUsos = USE_TOOLS.filter((t) => saldo(t.id) > 0);
+  const sinUsos = USE_TOOLS.filter((t) => saldo(t.id) <= 0);
 
   return (
     <div className="step-enter mx-auto max-w-5xl space-y-6">
       <div>
         <h2 className="font-display text-2xl font-bold tracking-tight">Mejorar mi plan</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Cada generación consume 1 uso de su herramienta. Amplía tu cuota cuando la necesites.
+          Cada generación consume 1 uso. Forms se descuenta por respuesta enviada.
         </p>
       </div>
 
@@ -47,6 +137,35 @@ export function PlanesSection({ authUser, herramientaBloqueada }: {
             {sinUsos.length > 0 && ` Sin usos: ${sinUsos.map((t) => t.label).join(", ")}.`}
           </CardDescription>
         </CardHeader>
+      </Card>
+
+      <Card className="rounded-2xl border-border/70 bg-card/95 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-base">Recargar respuestas de Forms</CardTitle>
+          <CardDescription>
+            Elige cualquier cantidad positiva. Solo las respuestas aceptadas consumen el saldo.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <label className="flex-1 space-y-1.5">
+            <span className="text-sm font-medium">Cantidad de respuestas</span>
+            <Input
+              type="number"
+              min="1"
+              step="1"
+              inputMode="numeric"
+              value={topupResponses}
+              onChange={(event) => setTopupResponses(event.target.value)}
+            />
+          </label>
+          <Button onClick={() => void recargarForms()} disabled={topupBusy || payingPlan !== null}>
+            {topupBusy
+              ? <><Loader2 className="h-4 w-4 animate-spin" />Abriendo pago…</>
+              : formsTopupsEnabled
+                ? <><CreditCard className="h-4 w-4" />Recargar con Taypi</>
+                : <><MessageCircle className="h-4 w-4" />Solicitar recarga</>}
+          </Button>
+        </CardContent>
       </Card>
 
       <div className="flex items-center justify-center gap-3">
@@ -73,7 +192,7 @@ export function PlanesSection({ authUser, herramientaBloqueada }: {
         </span>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="mx-auto grid max-w-3xl gap-4 md:grid-cols-2">
         {PLANS.map((plan) => {
           const actual = plan.id === authUser.plan;
           return (
@@ -100,9 +219,7 @@ export function PlanesSection({ authUser, herramientaBloqueada }: {
                   <span className="font-display text-2xl font-bold tracking-tight">
                     {anual ? plan.priceYearlyPen : plan.priceMonthlyPen}
                   </span>
-                  <span className="text-sm text-muted-foreground">
-                    {" "}/ {anual ? "año" : "mes"} ({anual ? plan.priceYearlyUsd : plan.priceMonthlyUsd})
-                  </span>
+                  <span className="text-sm text-muted-foreground"> {" "}/ {anual ? "año" : "mes"}</span>
                 </p>
               </CardHeader>
               <CardContent className="flex flex-1 flex-col justify-between gap-4">
@@ -117,14 +234,14 @@ export function PlanesSection({ authUser, herramientaBloqueada }: {
                 <Button
                   className="w-full"
                   variant={plan.featured ? "default" : "outline"}
-                  disabled={actual}
-                  onClick={() => openWhatsAppPlan({
-                    plan: plan.name,
-                    email: authUser.email,
-                    herramienta: herramientaBloqueada ?? undefined,
-                  })}
+                  disabled={payingPlan !== null}
+                  onClick={() => void contratar(plan.id, plan.name)}
                 >
-                  {actual ? "Tu plan actual" : (<><MessageCircle className="h-4 w-4" />Quiero este plan</>)}
+                  {payingPlan === plan.id
+                      ? (<><Loader2 className="h-4 w-4 animate-spin" />Abriendo pago…</>)
+                      : paymentsEnabled
+                        ? (<><CreditCard className="h-4 w-4" />{actual ? "Renovar con Taypi" : "Pagar con Taypi"}</>)
+                        : (<><MessageCircle className="h-4 w-4" />{actual ? "Renovar mi plan" : "Quiero este plan"}</>)}
                 </Button>
               </CardContent>
             </Card>
@@ -132,9 +249,24 @@ export function PlanesSection({ authUser, herramientaBloqueada }: {
         })}
       </div>
 
+      {paymentError && (
+        <p className="text-center text-sm text-destructive" role="alert">{paymentError}</p>
+      )}
       <p className="text-center text-xs text-muted-foreground">
-        Te escribimos por WhatsApp para coordinar el pago y activamos tu cuota el mismo día.
+        {paymentsEnabled
+          ? "Tu plan se activa cuando Taypi confirma el pago. Si necesitas ayuda, contáctanos por WhatsApp."
+          : "Te atendemos por WhatsApp para coordinar el pago y activar tu cuota."}
       </p>
+      {paymentsEnabled && (
+        <div className="text-center">
+          <Button
+            variant="ghost"
+            onClick={() => openWhatsAppPlan({ email: authUser.email, herramienta: herramientaBloqueada ?? "Forms" })}
+          >
+            <MessageCircle className="h-4 w-4" /> Ayuda o recarga de respuestas por WhatsApp
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

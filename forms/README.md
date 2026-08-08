@@ -1,55 +1,117 @@
 # TesisHub Forms
 
-Servicio de llenado automático de Google Forms para los suscriptores de TesisTab:
-backend Express + extensión de Chrome. Derivado del proyecto MIT (ver `LICENSE`), recortado a su núcleo de llenado y autenticado contra
-las claves de API de TesisTab.
+Backend compatible, extensión Chrome y worker de envíos autorizados a Google
+Forms.
 
-## Cómo corre
+## Producción
 
-En producción **se monta dentro de la API de TesisTab** (`node_app/server.js`):
-ambos comparten proceso y puerto. La API delega las rutas `/api/tesistab/*`,
-`/api/forms/*`, `/submit` y `/_submit` a esta app Express, y le inyecta un
-validador de claves en memoria (sin llamadas HTTP). La extensión usa la misma
-URL que la API: `https://tabulacion-api.onrender.com`.
+La superficie HTTP se monta en `node_app/server.js`, pero la ejecución vive en
+el servicio `tabulacion-forms-worker`. El API valida, reserva saldo y crea el
+job. El worker reclama jobs desde Neon con leases, conserva cursor e intentos y
+liquida la reserva. Reiniciar Render o cerrar Chrome no elimina el trabajo.
 
-Standalone (desarrollo/tests) también funciona: `node server.js` levanta su
-propio servidor en `PORT`.
+El API público es `https://tabulacion-api.onrender.com`. En producción se debe
+configurar `CORS_ALLOWED_ORIGINS` con Vercel, localhost autorizado y el origen
+`chrome-extension://` exacto; `*` se rechaza.
 
-## Autenticación
+## Identidad de la extensión
 
-Cada request a `/api/tesistab/*` y `/api/forms/*` exige una clave en `X-API-Key`:
+Cada instalación solicita un código y secreto efímeros. El usuario aprueba el
+código desde su sesión web Google y la extensión recibe una credencial propia.
+Revocar un dispositivo no invalida los demás.
 
-- **Claves de usuario** (`ttab_...`): se generan en TesisTab → Forms. Montado en
-  la API, se validan en memoria contra la lista de usuarios; standalone, contra
-  `POST /integrations/validate-key` (caché de 5 minutos). Si la suscripción
-  venció, responde 401 con un mensaje claro.
-- **`TESISTAB_API_KEY`** (env, opcional): llave maestra de desarrollo.
-- **`TESISTAB_VALIDATION=off`** (env): modo local/tests, sin validación remota.
+En standalone también se admite validación contra
+`POST /integrations/validate-key`. `TESISTAB_VALIDATION=off` queda reservado a
+desarrollo y tests.
 
-## Variables de entorno (modo standalone)
+## Cuota por respuestas
 
-| Variable | Default | Notas |
-|---|---|---|
-| `PORT` | `5000` | |
-| `TESISTAB_API_URL` | `https://tabulacion-api.onrender.com` | API de TesisTab |
-| `SERVICE_SHARED_SECRET` | *(vacío)* | Debe coincidir con el de la API de TesisTab |
-| `TESISTAB_VALIDATION` | *(activada)* | `off` para desarrollo/tests |
-| `TESISTAB_API_KEY` | *(vacío)* | Llave maestra opcional |
+No existe un máximo fijo de 200/250. El límite efectivo es el saldo reservado:
+
+- `reserve(apiKey, requested, meta)` reserva todo al crear.
+- `settle(apiKey, reservationId, outcome)` consume aceptadas y devuelve fallidas
+  o canceladas.
+- `release(apiKey, reservationId, meta)` libera una creación que no llegó a
+  convertirse en job.
+- Las respuestas inciertas permanecen reservadas para reconciliación.
+
+Los jobs grandes se dividen en lotes internos de 100. La API muestra
+solicitadas, aceptadas, fallidas, pendientes, reservadas, porcentaje y lotes.
+
+## API
+
+- `POST /api/forms/jobs` o el adaptador `/api/tesistab/submit`.
+- `GET /api/forms/jobs/:id` y listados por propietario.
+- `POST .../:id/pause`, `/resume` y `/cancel`.
+- El endpoint legado de cuerpos completos permanece limitado por TTL y cantidad
+  mientras dura la compatibilidad.
+
+La creación exige `ownOrAuthorized: true`, URL permitida, entero positivo,
+estructura y `idempotencyKey`. Se respeta `Retry-After`; los `429/5xx` usan
+backoff. CAPTCHA, bloqueo, formulario cerrado o estructura incompatible
+detienen el trabajo con diagnóstico, sin evasión.
+
+### Rutas condicionales multipágina
+
+La extensión envía recorridos completos y separados en `config.multiPage`.
+Cada ruta conserva sus propios `entry.*`, `pageHistory`, `partialResponse` y
+tokens de navegación; el servidor nunca aplana dos ramas. El contrato v1 es:
+
+```json
+{
+  "version": 1,
+  "guidedCapture": true,
+  "routes": [{
+    "id": "route-1",
+    "fallback": true,
+    "when": {
+      "all": [{ "field": "entry.10", "operator": "equals", "value": "Empresa" }]
+    },
+    "payload": {
+      "entry.10": "Empresa",
+      "entry.20": "RUC 123",
+      "pageHistory": "0,1"
+    },
+    "pages": [{ "pageKey": "inicio", "entries": ["entry.10"] }]
+  }]
+}
+```
+
+Solo se admiten campos `entry.N` y tokens conocidos de Google Forms. Hay un
+máximo de 20 rutas, 50 páginas por ruta y 16 condiciones. El backend crea un
+perfil por respuesta, evalúa las condiciones sobre ese perfil y selecciona un
+único recorrido. El GET del job expone cantidad y campos selectores, no los
+payloads capturados.
+
+Los adaptadores `/api/forms` y `/api/forms/submit` anuncian `Deprecation` y
+`Sunset`. La fecha se configura con `LEGACY_API_SUNSET_AT` (RFC 3339); el valor
+por defecto es `2026-09-07T00:00:00Z`.
 
 ## Desarrollo
 
 ```bash
-npm install
-TESISTAB_VALIDATION=off npm start   # backend en http://localhost:5000
+npm ci
 npm test
+TESISTAB_VALIDATION=off npm start
+npm run build:extension
 ```
 
-## Extensión de Chrome
+El ZIP se genera en `dist/` a partir de `tutorica-chrome-extension/`. CI ejecuta
+las pruebas, comprueba la versión del manifiesto y publica ese ZIP como artefacto.
 
-Publicada en la Chrome Web Store:
-<https://chromewebstore.google.com/detail/tutorica-forms/kdppbednjfajcjogdajmagfabidfjmem>
+## Worker
 
-El código fuente está en `tutorica-chrome-extension/`; para desarrollo se carga
-descomprimida desde `chrome://extensions` (modo desarrollador).
-El usuario pega su clave de TesisTab en el popup; el backend por defecto ya es
-`https://tabulacion-api.onrender.com`.
+Variables principales:
+
+| Variable | Valor de producción |
+|---|---|
+| `TESISTAB_WORKER_MODE` | `true` |
+| `TESISTAB_RUN_JOBS_INLINE` | `false` |
+| `FORMS_WORKER_ADAPTER` | `node_app/forms-worker-adapter.js` |
+| `TESISTAB_JOB_BATCH_SIZE` | `100` |
+| `TESISTAB_JOB_LEASE_MS` | `30000` |
+| `LEGACY_API_SUNSET_AT` | fecha RFC 3339 del retiro del adaptador legado |
+| `DATABASE_URL` | endpoint pooled de Neon |
+
+El almacenamiento JSON es solo fallback standalone. En producción, si no se
+inyecta un repositorio durable, la API de jobs responde `503`.

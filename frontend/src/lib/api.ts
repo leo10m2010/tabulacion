@@ -21,6 +21,7 @@ import type {
   TemplateInfo,
   TitulosJobResponse,
   TitulosStartResponse,
+  DeviceCredential,
 } from "./types";
 
 interface RequestOptions {
@@ -35,10 +36,23 @@ interface RequestOptions {
 // comparando el texto en español, que es frágil y solo se hacía en un sitio.
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  readonly code?: string;
+  readonly field?: string;
+  readonly retryable?: boolean;
+  readonly requestId?: string;
+  constructor(status: number, message: string, details: {
+    code?: string;
+    field?: string;
+    retryable?: boolean;
+    requestId?: string;
+  } = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = details.code;
+    this.field = details.field;
+    this.retryable = details.retryable;
+    this.requestId = details.requestId;
   }
 }
 
@@ -60,9 +74,18 @@ async function request<T>(apiBaseUrl: string, path: string, options: RequestOpti
     },
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
-  const payload = (await res.json().catch(() => ({}))) as T & { error?: string };
+  const payload = (await res.json().catch(() => ({}))) as T & {
+    error?: string | { message?: string };
+    message?: string;
+    code?: string;
+    field?: string;
+    retryable?: boolean;
+    requestId?: string;
+  };
   if (!res.ok) {
-    const mensaje = payload.error ?? `Error HTTP ${res.status}`;
+    const mensaje = typeof payload.error === "string"
+      ? payload.error
+      : payload.error?.message ?? payload.message ?? `Error HTTP ${res.status}`;
     // 401 = el servidor no reconoce esta sesión (expiró, se cambió la
     // contraseña o se borró la cuenta). No tiene sentido que cada pantalla lo
     // resuelva por su cuenta: se cierra la sesión aquí, una sola vez.
@@ -71,7 +94,12 @@ async function request<T>(apiBaseUrl: string, path: string, options: RequestOpti
     if (res.status === 401 && options.token && onUnauthorized) {
       onUnauthorized("Tu sesión expiró. Vuelve a iniciar sesión para continuar.");
     }
-    throw new ApiError(res.status, mensaje);
+    throw new ApiError(res.status, mensaje, {
+      code: payload.code,
+      field: payload.field,
+      retryable: payload.retryable,
+      requestId: payload.requestId,
+    });
   }
   return payload;
 }
@@ -94,6 +122,10 @@ export interface PublicConfig {
   planPredeterminado: string;
   herramientas: { id: string; label: string }[];
   planes: Record<string, Record<string, number>>;
+  capabilities?: Record<string, boolean>;
+  quotaUnit?: Partial<Record<string, string>>;
+  formsResponses?: Record<string, number>;
+  paymentCurrency?: "PEN";
 }
 
 export const fetchPublicConfig = (apiBaseUrl: string) =>
@@ -112,8 +144,55 @@ export const loginWithGoogle = (apiBaseUrl: string, credential: string) =>
     body: { credential },
   });
 
+export const linkGoogleIdentity = (
+  apiBaseUrl: string,
+  token: string,
+  currentPassword: string,
+  credential: string,
+) => request<{ ok?: boolean; user: AuthUser }>(apiBaseUrl, "/auth/link-google", {
+  method: "POST",
+  token,
+  body: { currentPassword, credential },
+});
+
 export const fetchMe = (apiBaseUrl: string, token: string) =>
   request<{ user?: AuthUser }>(apiBaseUrl, "/auth/me", { token });
+
+export const logout = (apiBaseUrl: string, token: string) =>
+  request<{ ok?: boolean }>(apiBaseUrl, "/auth/logout", { method: "POST", token });
+
+export const createTaypiCheckout = (
+  apiBaseUrl: string,
+  token: string,
+  purchase: { plan: string; billingCycle: "monthly" | "yearly"; idempotencyKey: string },
+) => request<{
+  paymentId: string;
+  status: "pending";
+  checkoutUrl: string;
+  expiresAt?: string | null;
+}>(apiBaseUrl, "/payments/taypi/checkout", {
+  method: "POST",
+  token,
+  body: purchase,
+});
+
+export const createFormsTopupCheckout = (
+  apiBaseUrl: string,
+  token: string,
+  purchase: { requestedResponses: number; idempotencyKey: string },
+) => request<{
+  paymentId: string;
+  status: "pending";
+  checkoutUrl: string;
+  expiresAt?: string | null;
+  requestedResponses: number;
+  amount: string;
+  currency: "PEN";
+}>(apiBaseUrl, "/payments/taypi/forms-topup", {
+  method: "POST",
+  token,
+  body: purchase,
+});
 
 // El cambio de contraseña invalida las sesiones anteriores y devuelve un
 // token fresco para que la sesión actual continúe.
@@ -145,8 +224,8 @@ export const generateTabulacion = (apiBaseUrl: string, token: string, config: Ta
     body: { config, responseMode: "inline" },
   });
 
-// Prueba de confiabilidad (Alfa de Cronbach): Excel de una hoja con datos
-// simulados de alta consistencia interna.
+// Prueba de confiabilidad (Alfa de Cronbach): Excel de una hoja con una base
+// de alta consistencia interna.
 export interface CronbachConfig {
   variable: string;
   encuestados: number;
@@ -241,7 +320,7 @@ export const obtenerProyecto = (apiBaseUrl: string, token: string, id: string) =
 
 export const actualizarProyecto = (
   apiBaseUrl: string, token: string, id: string,
-  cambios: { nombre?: string; titulo?: string; instrumento?: Instrumento },
+  cambios: { nombre?: string; titulo?: string; instrumento?: Instrumento; version?: number },
 ) => request<{ proyecto: Proyecto }>(apiBaseUrl, `/proyectos/${id}`, {
   method: "PATCH", token, body: cambios,
 });
@@ -310,3 +389,36 @@ export const createApiKey = (apiBaseUrl: string, token: string) =>
 
 export const revokeApiKey = (apiBaseUrl: string, token: string) =>
   request<{ ok?: boolean }>(apiBaseUrl, "/auth/api-key", { method: "DELETE", token });
+
+export const approveDevicePairing = (apiBaseUrl: string, token: string, userCode: string) =>
+  request<{ ok?: boolean; pairingId: string; deviceName: string; status: string }>(
+    apiBaseUrl,
+    "/auth/device-pairings/approve",
+    { method: "POST", token, body: { userCode } },
+  );
+
+export const listDevices = (apiBaseUrl: string, token: string) =>
+  request<{ ok?: boolean; devices: DeviceCredential[] }>(apiBaseUrl, "/auth/devices", { token });
+
+export const revokeDevice = (apiBaseUrl: string, token: string, deviceId: string) =>
+  request<{ ok?: boolean }>(apiBaseUrl, `/auth/devices/${encodeURIComponent(deviceId)}`, {
+    method: "DELETE",
+    token,
+  });
+
+export interface SessionInfo {
+  id: string;
+  current: boolean;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+}
+
+export const listSessions = (apiBaseUrl: string, token: string) =>
+  request<{ ok?: boolean; sessions: SessionInfo[] }>(apiBaseUrl, "/auth/sessions", { token });
+
+export const revokeOtherSessions = (apiBaseUrl: string, token: string) =>
+  request<{ ok?: boolean; revoked: number }>(apiBaseUrl, "/auth/sessions/revoke-others", {
+    method: "POST",
+    token,
+  });

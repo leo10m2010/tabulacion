@@ -34,6 +34,9 @@ before(async () => {
       USER_STORE_PATH: path.join(tmpDir, "users.json"),
       ADMIN_EMAIL,
       ADMIN_PASSWORD,
+      // El registro público por contraseña está desactivado por defecto. Esta
+      // suite cubre únicamente el adaptador legado en un entorno local.
+      REGISTRATION_ENABLED: "true",
       REGISTER_MAX_PER_IP: String(MAX_POR_IP),
     },
     stdio: ["ignore", "pipe", "pipe"],

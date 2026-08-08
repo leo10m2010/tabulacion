@@ -56,7 +56,7 @@ const interpretacionAlfa = (alpha: number) => {
 
 // Sección Confiabilidad: prueba de Alfa de Cronbach por variable. Toma el
 // nombre de la variable, sus dimensiones con la cantidad de ítems y el N de
-// encuestados, y genera un Excel de una sola hoja con datos simulados de alta
+// encuestados, y genera un Excel de una sola hoja con una base de alta
 // consistencia interna y las fórmulas vivas (VARP, COUNT y el α en celda).
 export function CronbachSection({ apiBaseUrl, authToken, authUser, proyecto, onPasoHecho, onUpgrade }: {
   apiBaseUrl: string;
@@ -164,7 +164,7 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser, proyecto, onP
       <div>
         <h2 className="font-display text-2xl font-bold tracking-tight">Prueba de confiabilidad</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Alfa de Cronbach por variable, con datos simulados de alta consistencia interna en una sola hoja de Excel.
+          Alfa de Cronbach por variable, con una base de alta consistencia interna en una sola hoja de Excel.
         </p>
       </div>
 
@@ -255,7 +255,7 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser, proyecto, onP
 
           <div>
             <span className="text-sm font-medium text-foreground">Nivel de alfa deseado</span>
-            <FieldHint text="La simulación ajusta la consistencia entre ítems para que el α de Cronbach caiga en el rango elegido." />
+            <FieldHint text="El generador ajusta la consistencia entre ítems para que el α de Cronbach caiga en el rango elegido." />
             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
               {ALPHA_LEVELS.map((lvl) => {
                 const selected = nivelAlfa === lvl.id;
@@ -340,7 +340,7 @@ export function CronbachSection({ apiBaseUrl, authToken, authUser, proyecto, onP
                 </div>
               </div>
               <p className="mt-2 text-[11px] text-muted-foreground">
-                Datos simulados: función pensada para pruebas, ensayos estadísticos y demostraciones académicas; no reemplaza datos reales.
+                Revisa la matriz de respuestas y el cálculo del alfa antes de utilizar el archivo.
               </p>
             </div>
 

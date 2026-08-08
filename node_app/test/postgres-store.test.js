@@ -79,7 +79,14 @@ const listarUsuarios = async (token) => {
 const limpiarTablas = async () => {
   const { default: pg } = await import("pg");
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-  await pool.query(`DROP TABLE IF EXISTS ${PREFIJO}users, ${PREFIJO}pending_uses, ${PREFIJO}deleted_accounts, ${PREFIJO}proyectos`);
+  const tables = await pool.query(
+    "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() AND tablename LIKE $1",
+    [`${PREFIJO}%`],
+  );
+  for (const { tablename } of tables.rows) {
+    if (!/^[a-z_][a-z0-9_]*$/i.test(tablename)) throw new Error("Nombre de tabla de prueba invalido");
+    await pool.query(`DROP TABLE IF EXISTS ${tablename} CASCADE`);
+  }
   await pool.end();
 };
 
@@ -130,6 +137,24 @@ describe("almacen en Postgres", { skip: HAY_DB ? false : "sin DATABASE_URL" }, (
     // Y su contraseña sigue sirviendo (no solo el registro, tambien el hash).
     const suSesion = await login(email, "ClaveTesista123!");
     assert.equal(suSesion.status, 200, "puede iniciar sesion tras el reinicio");
+
+    const { default: pg } = await import("pg");
+    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+    const normalized = await pool.query(
+      `SELECT email, role, plan, password_hash, profile, data
+         FROM ${PREFIJO}users WHERE id=$1`,
+      [tesista.id],
+    );
+    await pool.end();
+    assert.equal(normalized.rows[0].email, email);
+    assert.equal(normalized.rows[0].role, "user");
+    assert.ok(normalized.rows[0].password_hash);
+    assert.equal(normalized.rows[0].data.email, undefined,
+      "JSONB no duplica identidad autoritativa");
+    assert.equal(normalized.rows[0].data.uses, undefined,
+      "JSONB no duplica saldos autoritativos");
+    assert.deepEqual(normalized.rows[0].data, normalized.rows[0].profile,
+      "data es solo el adaptador temporal del perfil variable");
   });
 
   test("no se escribe users.json cuando hay Postgres", () => {
@@ -235,10 +260,10 @@ describe("almacen en Postgres", { skip: HAY_DB ? false : "sin DATABASE_URL" }, (
     const { default: pg } = await import("pg");
     const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
     await pool.query(
-      `UPDATE ${PREFIJO}users
-       SET data = jsonb_set(data, '{uses,descriptiva}', to_jsonb($2::int))
-       WHERE id = $1`,
-      [antes.id, antes.uses.descriptiva - 1],
+      `UPDATE ${PREFIJO}entitlement_balances
+          SET available = available - 1, consumed = consumed + 1
+        WHERE user_id = $1 AND tool = 'descriptiva'`,
+      [antes.id],
     );
     await pool.query(
       `INSERT INTO ${PREFIJO}pending_uses (job_id, user_id, tool) VALUES ($1, $2, $3)`,

@@ -21,6 +21,7 @@ import {
   VerticalAlign,
   WidthType,
 } from "docx";
+import { errorLogFields, structuredLog } from "../observability.js";
 
 const AZUL_OSCURO = "1F3864";
 const GRIS_TEXTO = "595959";
@@ -231,8 +232,9 @@ export const buildMatrizDocx = async ({ matriz }) => {
   try {
     children = [...buildTitleParagraphs(matriz), buildMatrizTable(matriz)];
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn("[matriz] fallo el armado de la tabla del docx, se entrega contenido crudo:", err);
+    structuredLog("warn", "document.fallback_used", {
+      tool: "matriz", format: "docx", ...errorLogFields(err),
+    });
     children = [new Paragraph({ children: [makeRun(JSON.stringify(matriz, null, 2))] })];
   }
 

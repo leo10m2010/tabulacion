@@ -55,7 +55,7 @@ function VignetteForms({ reduce }: { reduce: boolean }) {
             {!reduce && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />}
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
           </span>
-          Corrida en curso
+          Envío en curso
         </span>
       </div>
       <div className="mt-5 space-y-4">
@@ -89,13 +89,13 @@ function VignetteForms({ reduce }: { reduce: boolean }) {
         <span className="font-mono tabular-nums">
           Respuesta <span className="font-semibold"><AnimatedNumber value={24} /></span> de 30
         </span>
-        <span className="text-xs text-muted-foreground">1 uso = 1 corrida</span>
+        <span className="text-xs text-muted-foreground">Solo descuentan las enviadas</span>
       </div>
     </div>
   );
 }
 
-// ── Viñeta Confiabilidad: el α con su semáforo (datos de una corrida real) ──
+// ── Viñeta Confiabilidad: el α con su semáforo ──────────────────────────────
 function VignetteAlfa({ reduce }: { reduce: boolean }) {
   const alpha = 0.963;
   // La barra del semáforo representa el rango 0.50 a 1.00.
@@ -138,7 +138,7 @@ function VignetteAlfa({ reduce }: { reduce: boolean }) {
         Calculado en celda con fórmulas vivas: cambia un dato y el α se recalcula.
       </p>
       <div className="mt-5 border-t border-border pt-4">
-        <p className="text-xs text-muted-foreground">Tú eliges el nivel objetivo de la simulación:</p>
+        <p className="text-xs text-muted-foreground">Tú eliges el nivel objetivo de los resultados:</p>
         <div className="mt-2 flex flex-wrap gap-2">
           {[["Excelente", "0.90 a 0.97", true], ["Bueno", "0.80 a 0.89", false], ["Aceptable", "0.70 a 0.79", false]].map(([nombre, rango, activo]) => (
             <span

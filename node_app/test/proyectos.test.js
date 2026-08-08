@@ -210,6 +210,28 @@ describe("validación del instrumento", () => {
     assert.match(r.body.error, /entre 0 y 100/);
   });
 
+  test("los items inversos se normalizan y persisten por posicion", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "inversos@test.local");
+    const instrumento = JSON.parse(JSON.stringify(INSTRUMENTO));
+    instrumento.variables[0].itemsInversos = [2];
+    const r = await api("POST", "/proyectos", token, { nombre: "Con inversos", instrumento });
+    assert.equal(r.status, 201);
+    assert.deepEqual(r.body.proyecto.instrumento.variables[0].itemsInversos, [2]);
+  });
+
+  test("los items inversos fuera de rango o repetidos se rechazan", async () => {
+    const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const token = await crearUsuario(admin, "inversos-invalidos@test.local");
+    for (const itemsInversos of [[3], [1, 1]]) {
+      const instrumento = JSON.parse(JSON.stringify(INSTRUMENTO));
+      instrumento.variables[0].itemsInversos = itemsInversos;
+      const r = await api("POST", "/proyectos", token, { nombre: "Invalido", instrumento });
+      assert.equal(r.status, 400);
+      assert.match(r.body.error, /inversos/i);
+    }
+  });
+
   test("se rechaza pasarse del máximo de ítems", async () => {
     const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
     const token = await crearUsuario(admin, "muchos@test.local");

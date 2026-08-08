@@ -21,6 +21,7 @@ export function TextDropZone({
   example,
   fileNote,
   minHeightClass = "min-h-[240px]",
+  ariaLabel = "Texto de entrada",
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -34,6 +35,7 @@ export function TextDropZone({
   example?: { label: string; text: string };
   fileNote: string;
   minHeightClass?: string;
+  ariaLabel?: string;
 }) {
   const reduce = useReducedMotion() ?? false;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -64,6 +66,7 @@ export function TextDropZone({
       <input
         ref={fileInputRef}
         type="file"
+        aria-label="Seleccionar archivo Word"
         accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         className="hidden"
         onChange={(e) => {
@@ -95,6 +98,7 @@ export function TextDropZone({
               </p>
             </div>
             <button
+              type="button"
               onClick={onClearFile}
               className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
             >
@@ -122,6 +126,7 @@ export function TextDropZone({
                   Pegar texto
                 </span>
                 <button
+                  type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={disabled}
                   className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:opacity-50"
@@ -143,8 +148,9 @@ export function TextDropZone({
               onChange={(e) => onChange(e.target.value)}
               disabled={disabled}
               placeholder={placeholder}
+              aria-label={ariaLabel}
               className={cn(
-                "block w-full resize-y bg-transparent px-4 py-3 font-mono text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-60",
+                "block w-full resize-y bg-transparent px-4 py-3 font-mono text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60",
                 minHeightClass,
               )}
             />
@@ -154,6 +160,7 @@ export function TextDropZone({
               <p className="text-[11px] text-muted-foreground">{footerHint}</p>
               {example && value.trim().length === 0 && (
                 <button
+                  type="button"
                   onClick={() => {
                     onChange(example.text);
                     textareaRef.current?.focus();

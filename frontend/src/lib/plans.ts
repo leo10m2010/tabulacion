@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Building2, GraduationCap, UserRound } from "lucide-react";
+import { GraduationCap, UserRound } from "lucide-react";
 
 // Fuente única de los planes de pago: la consumen la sección "Planes y precios"
 // de la landing y la página "Mejorar mi plan" de dentro de la app.
@@ -17,8 +17,6 @@ export interface Plan {
   name: string;
   audience: string;
   icon: LucideIcon;
-  priceMonthlyUsd: string;
-  priceYearlyUsd: string;
   priceMonthlyPen: string;
   priceYearlyPen: string;
   description: string;
@@ -35,8 +33,6 @@ export const PLANS: Plan[] = [
     name: "Plan Esencial",
     audience: "Para empezar",
     icon: UserRound,
-    priceMonthlyUsd: "USD 15",
-    priceYearlyUsd: "USD 150",
     priceMonthlyPen: "S/ 49",
     priceYearlyPen: "S/ 490",
     description: "Para trabajos académicos puntuales o para probar el sistema en serio.",
@@ -45,7 +41,7 @@ export const PLANS: Plan[] = [
       "3 bases descriptivas con IA",
       "3 generaciones de títulos y 1 matriz",
       "5 humanizaciones de texto",
-      "2 corridas de Forms",
+      "500 respuestas de Forms",
     ],
     cta: "Avanzar mi tesis",
     featured: false,
@@ -55,8 +51,6 @@ export const PLANS: Plan[] = [
     name: "Plan Tesista",
     audience: "Tesistas y asesores",
     icon: GraduationCap,
-    priceMonthlyUsd: "USD 29",
-    priceYearlyUsd: "USD 290",
     priceMonthlyPen: "S/ 109",
     priceYearlyPen: "S/ 1,090",
     description: "La cuota completa para sacar adelante una tesis de principio a fin.",
@@ -65,38 +59,18 @@ export const PLANS: Plan[] = [
       "10 bases descriptivas y 10 generaciones de títulos",
       "5 matrices de consistencia",
       "30 humanizaciones de texto",
-      "10 corridas de Forms",
+      "2,500 respuestas de Forms",
     ],
     cta: "Avanzar mi tesis",
     featured: true,
-  },
-  {
-    id: "institucion",
-    name: "Plan Institución",
-    audience: "Universidades y consultoras",
-    icon: Building2,
-    priceMonthlyUsd: "USD 129",
-    priceYearlyUsd: "USD 1,290",
-    priceMonthlyPen: "S/ 485",
-    priceYearlyPen: "S/ 4,850",
-    description: "Para equipos que gestionan múltiples tesis con control administrativo.",
-    highlights: [
-      "Hasta 20 cuentas, cada una con cuota Tesista",
-      "Panel de administrador",
-      "Recargas por herramienta para el equipo",
-      "Soporte prioritario",
-    ],
-    cta: "Contáctanos",
-    featured: false,
-    contactOnly: true,
   },
 ];
 
 export const CONTACT_WHATSAPP = "51975212132"; // +51 975 212 132
 
-// Mientras no exista la pasarela de pago (Fase 3 del roadmap), contratar es
-// escribir por WhatsApp. El mensaje va prerrellenado con el contexto que hace
-// falta para atender sin preguntar de nuevo: qué plan y desde qué cuenta.
+// WhatsApp permanece como soporte y respaldo cuando Taypi no está habilitado.
+// El mensaje va prerrellenado con el contexto necesario para atender sin
+// preguntar de nuevo: qué plan y desde qué cuenta.
 export const openWhatsAppPlan = (opts: { plan?: string; email?: string; herramienta?: string } = {}) => {
   const partes = [
     opts.plan ? `Hola, me interesa el ${opts.plan} de TesisHub.` : "Hola, quiero ampliar mi plan de TesisHub.",

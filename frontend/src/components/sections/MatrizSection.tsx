@@ -120,10 +120,13 @@ export function MatrizSection({ apiBaseUrl, authToken, authUser, proyecto, onPro
   // pero una petición de polling ya en vuelo resuelve igual.
   const aliveRef = useRef(true);
 
-  useEffect(() => () => {
-    aliveRef.current = false;
-    if (pollRef.current) window.clearTimeout(pollRef.current);
-    if (docxUrlRef.current) URL.revokeObjectURL(docxUrlRef.current);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      if (pollRef.current) window.clearTimeout(pollRef.current);
+      if (docxUrlRef.current) URL.revokeObjectURL(docxUrlRef.current);
+    };
   }, []);
 
   // Cronómetro de la espera (solo mientras el job corre).
@@ -226,7 +229,7 @@ export function MatrizSection({ apiBaseUrl, authToken, authUser, proyecto, onPro
     const instrumento = matrizAInstrumento(matriz.variables, proyecto.instrumento.escala);
     try {
       const { proyecto: actualizado } = await api.actualizarProyecto(
-        apiBaseUrl, authToken, proyecto.id, { instrumento },
+        apiBaseUrl, authToken, proyecto.id, { instrumento, version: proyecto.version },
       );
       onProyectoActualizado?.(actualizado);
       setGuardadoProyecto("listo");
@@ -375,7 +378,14 @@ export function MatrizSection({ apiBaseUrl, authToken, authUser, proyecto, onPro
                   </span>
                   <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtElapsed(elapsed)}</span>
                 </div>
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-primary/15">
+                <div
+                  role="progressbar"
+                  aria-label="Progreso de la matriz"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progreso}
+                  className="mt-3 h-1.5 overflow-hidden rounded-full bg-primary/15"
+                >
                   <motion.div
                     className="h-full rounded-full bg-primary"
                     animate={{ width: `${progreso}%` }}

@@ -10,6 +10,7 @@ import {
 import { buildMatrizDocx } from "./docx.js";
 import { normalizeUrlForMatch, findBannedSourceUrls, extractReferenceUrls } from "../titulos/verify.js";
 import { gatherCustomSearchContext, braveUrlCheck } from "../titulos/websearch.js";
+import { errorLogFields, metrics, structuredLog } from "../observability.js";
 
 const MAX_TEXT_LENGTH = 200;
 const MAX_TITULO_LENGTH = 300;
@@ -107,7 +108,6 @@ const verifyDimensionSources = async (matriz, { provenance, requireProvenance, w
     if (prohibidas.includes(url)) continue;
     if (provenance.has(normalizeUrlForMatch(url))) continue;
     // Secuencial a proposito (limite de 1 consulta/seg del plan gratis).
-    // eslint-disable-next-line no-await-in-loop
     const found = await braveUrlCheck(url, websearchOptions);
     if (found === true) continue;
     // Sin herramienta, toda URL fuera de los resultados entregados es
@@ -138,11 +138,9 @@ export const generateMatriz = async (payload, options = {}) => {
     input: datos,
     options,
   });
-  // eslint-disable-next-line no-console
-  console.log(
-    `[matriz] analisis: ${analisis.variables.length} variable(s), nivel=${analisis.nivel}, `
-    + `enfoque=${analisis.enfoque}, diseno=${analisis.diseno}`,
-  );
+  structuredLog("info", "matriz.analysis_completed", {
+    variableCount: analisis.variables.length,
+  });
 
   // Busqueda dirigida de dimensiones por el SISTEMA (URLs reales por
   // construccion). Si falla o no hay claves, se sigue sin ella: la Etapa 2
@@ -156,8 +154,10 @@ export const generateMatriz = async (payload, options = {}) => {
       options.websearch ?? {},
     );
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(`[matriz] busqueda de dimensiones fallo (se continua sin ella): ${err.message}`);
+    metrics.increment("search_fallbacks_total", 1, { tool: "matriz", stage: "dimensions" });
+    structuredLog("warn", "search.batch_failed", {
+      tool: "matriz", stage: "dimensions", ...errorLogFields(err),
+    });
   }
 
   const redaccionSystemPrompt = buildRedaccionSystemPrompt();
@@ -185,12 +185,11 @@ export const generateMatriz = async (payload, options = {}) => {
   });
 
   if (inventadas.length > 0 || prohibidas.length > 0) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[matriz] verificacion de fuentes detecto ${inventadas.length} URL(s) inventada(s) y `
-      + `${prohibidas.length} prohibida(s); reintentando con correccion: `
-      + `${[...inventadas, ...prohibidas].join(", ")}`,
-    );
+    structuredLog("warn", "matriz.sources_rejected", {
+      inventedCount: inventadas.length,
+      prohibitedCount: prohibidas.length,
+      action: "retry",
+    });
 
     // El reintento correctivo SIEMPRE lleva la herramienta de busqueda
     // (necesita encontrar reemplazos reales) y razonamiento medium. Por eso

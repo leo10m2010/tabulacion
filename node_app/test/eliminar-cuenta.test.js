@@ -36,6 +36,7 @@ before(async () => {
       USER_STORE_PATH: path.join(tmpDir, "users.json"),
       ADMIN_EMAIL,
       ADMIN_PASSWORD,
+      REGISTRATION_ENABLED: "true",
       REGISTER_MAX_PER_IP: "50",
     },
     stdio: ["ignore", "pipe", "pipe"],

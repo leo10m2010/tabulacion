@@ -89,7 +89,7 @@ export function GoogleSignInButton({ clientId, themeMode, onCredential, onError,
           shape: "pill",
           logo_alignment: "center",
           locale: "es",
-          width: 320,
+          width: Math.min(320, contenedor.current.parentElement?.clientWidth ?? 320),
         });
       })
       .catch(() => {
@@ -106,7 +106,7 @@ export function GoogleSignInButton({ clientId, themeMode, onCredential, onError,
     return (
       <p className="rounded-xl border border-border/70 bg-muted/40 p-3 text-xs text-muted-foreground">
         No se pudo cargar el acceso con Google (puede que lo bloquee una extensión del navegador).
-        Puedes entrar con tu correo y contraseña.
+        Si tienes una cuenta manual creada por el administrador, puedes entrar con correo y contraseña.
       </p>
     );
   }
@@ -117,7 +117,7 @@ export function GoogleSignInButton({ clientId, themeMode, onCredential, onError,
       // Centrado: el botón de Google se pinta con un ancho fijo en píxeles.
       style={{ display: "flex", justifyContent: "center", minHeight: 44 }}
     >
-      <div ref={contenedor} />
+      <div ref={contenedor} className="max-w-full overflow-hidden" />
     </div>
   );
 }

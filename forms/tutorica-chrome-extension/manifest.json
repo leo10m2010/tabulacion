@@ -1,8 +1,9 @@
 {
   "name": "TesisHub Forms",
-  "description": "Herramienta de pruebas y QA: genera respuestas de prueba en tus propios Google Forms para validar lógica, baremos y tabulación.",
-  "version": "1.4.0",
+  "description": "Automatiza respuestas en tus propios Google Forms con perfiles, distribuciones y control de progreso.",
+  "version": "1.6.0",
   "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAobQxXhNqCfiCWSZPovnGe0TLj6090FxwGPpoq03arZYRaAJ+mk9tku8hJBnh88CSNTVgK6VlpTa6ciWj8MgejcwbI2+YXMjcpPBi8O8UOWsNhs9K7dxcM4thMVttYKMowOQYwK2J6E4v2l5i37isloY6z5RFGgr01CQM7YEW59no+RPDSJE31P+2815N6MhUj6bxL3a4G0Qh5pCcncHNAtiWMhbDoeyHiwlbVEoQIITyGU++TirxUJv37+11VdWFxa99PSVcmrQrMoyPVbGUdk3oqaSmMUar5RPBTuz7AarOIOZE14sUdx8wiobVJVxuvBmf5SbEGKqqnUUMqxZStwIDAQAB",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",

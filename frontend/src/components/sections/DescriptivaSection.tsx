@@ -102,10 +102,13 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser, onPasoHech
   // pero una petición de polling ya en vuelo resuelve igual.
   const aliveRef = useRef(true);
 
-  useEffect(() => () => {
-    aliveRef.current = false;
-    if (xlsxUrlRef.current) URL.revokeObjectURL(xlsxUrlRef.current);
-    if (pollRef.current) window.clearTimeout(pollRef.current);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      if (xlsxUrlRef.current) URL.revokeObjectURL(xlsxUrlRef.current);
+      if (pollRef.current) window.clearTimeout(pollRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -247,7 +250,7 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser, onPasoHech
           </span>
         </div>
         <p className="mt-1 max-w-[62ch] text-sm text-muted-foreground">
-          Pega tu cuestionario y recibe el Excel con la base simulada, frecuencias y porcentajes
+          Pega tu cuestionario y recibe el Excel con la base de respuestas, frecuencias y porcentajes
           por ítem, y la clasificación por baremo o aciertos cuando corresponde.
         </p>
       </div>
@@ -326,7 +329,7 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser, onPasoHech
                   </div>
                   <div>
                     <span className="text-sm font-medium">Nivel de preponderancia</span>
-                    <FieldHint text="Qué tan marcada debe verse la problemática medida en los resultados simulados." />
+                    <FieldHint text="Qué tan marcada debe verse la problemática medida en los resultados." />
                     <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                       {NIVELES.map((lvl) => {
                         const selected = nivel === lvl.id;
@@ -384,7 +387,14 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser, onPasoHech
                   </span>
                   <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtElapsed(elapsed)}</span>
                 </div>
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-primary/15">
+                <div
+                  role="progressbar"
+                  aria-label="Progreso de la tabulación descriptiva"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progreso}
+                  className="mt-3 h-1.5 overflow-hidden rounded-full bg-primary/15"
+                >
                   <motion.div
                     className="h-full rounded-full bg-primary"
                     animate={{ width: `${progreso}%` }}
@@ -461,7 +471,7 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser, onPasoHech
                     </p>
                   </div>
                   <div>
-                    <p className="text-[11px] text-muted-foreground">Encuestados simulados</p>
+                    <p className="text-[11px] text-muted-foreground">Encuestados</p>
                     <p className="font-mono text-lg font-semibold tabular-nums">
                       <AnimatedNumber value={result.resumen.nEncuestados} />
                     </p>
@@ -474,7 +484,7 @@ export function DescriptivaSection({ apiBaseUrl, authToken, authUser, onPasoHech
                   </div>
                 </div>
                 <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-                  Datos simulados con fines de prueba y demostración académica; no reemplazan datos reales.
+                  Revisa la base, los baremos y los resultados antes de utilizar el archivo.
                 </p>
               </div>
 

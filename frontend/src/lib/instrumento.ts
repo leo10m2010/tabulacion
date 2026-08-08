@@ -9,16 +9,27 @@ import type { DimensionDef, Instrumento, InstrumentoVariable, TabConfig } from "
 // pierda el foco al reordenar. Estas dos funciones traducen entre ambas, para
 // poder reutilizar ese editor en vez de escribir un segundo.
 
-export const aEditor = (variable: InstrumentoVariable | undefined): DimensionDef[] =>
-  (variable?.dimensiones ?? []).map((d) => ({
+export const aEditor = (variable: InstrumentoVariable | undefined): DimensionDef[] => {
+  const inversos = new Set(variable?.itemsInversos ?? []);
+  let index = 0;
+  return (variable?.dimensiones ?? []).map((d) => ({
     id: eid(),
     nombre: d.nombre,
     indicadores: (d.indicadores ?? []).map((ind) => ({
       id: eid(),
       nombre: ind.nombre,
-      items: (ind.items ?? []).map((nombre) => ({ id: eid(), nombre })),
+      items: (ind.items ?? []).map((nombre) => {
+        index += 1;
+        return { id: eid(), nombre, invertido: inversos.has(index) };
+      }),
     })),
   }));
+};
+
+export const indicesItemsInversos = (dims: DimensionDef[]) => dims
+  .flatMap((d) => d.indicadores.flatMap((ind) => ind.items))
+  .map((item, index) => (item.invertido ? index + 1 : null))
+  .filter((index): index is number => index !== null);
 
 export const desdeEditor = (dims: DimensionDef[]) =>
   dims.map((d) => ({
@@ -117,6 +128,7 @@ export const instrumentoATabConfig = (
     const items = contarItems(dims);
     if (items > 0) config[sufijo ? "itemv2" : "item"] = String(items);
     config[sufijo ? "dimensiones_v2" : "dimensiones"] = String(dims.length);
+    config[`items_inversos_v${sufijo ? "2" : "1"}`] = [...(v.itemsInversos ?? [])];
 
     // Sin baremo guardado no se inventa uno: se deja el que ya tuviera el
     // asistente y el usuario lo recalcula ahí, que es donde está el botón.

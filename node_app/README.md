@@ -1,109 +1,73 @@
-# Backend Node (Generador + API)
+# Backend de TesisHub
 
-Este módulo tiene dos modos:
+API Node y motores de generación. Requiere Node 24 LTS en local, CI y Render.
 
-- `generate`: genera archivos locales (`Tabulacion_generada.xlsx` y `Tabulacion_base.csv`).
-- `api`: expone endpoints HTTP para un frontend externo (por ejemplo, Vercel).
-
-## Requisitos
-
-- Node.js 18+. El Excel se genera completo por código (no requiere plantilla ni Excel instalado).
-
-## Instalación
+## Comandos
 
 ```bash
-cd node_app
-npm install
-```
-
-## Uso local (CLI)
-
-```bash
-npm run generate                       # usa ../Tabulacion.json
-node index.js mi-config.json salida.xlsx
-npm run plantilla                      # base vacía para ingreso manual
-```
-
-Resultado:
-
-- `Tabulacion_generada.xlsx` (o la ruta indicada)
-- `Tabulacion_base.csv`
-
-## API HTTP
-
-```bash
+npm ci
 npm run api
-```
-
-Variables de entorno: ver la tabla completa en el `README.md` de la raíz (incluye `AUTH_TOKEN_SECRET`, `ADMIN_EMAIL`/`ADMIN_PASSWORD`, rate limiting, etc.).
-
-## Tests
-
-```bash
+npm run generate
+npm run plantilla
+npm run lint
 npm test
+npm run db:inventory
+npm run db:migrate
+npm run test:db
 ```
 
-### Endpoints
+`generate` usa `../Tabulacion.json`; `plantilla` conserva la estructura pero
+deja la base vacía para ingreso manual.
 
-- `GET /health`
-- `POST /auth/login`, `GET /auth/me`, `POST /auth/change-password` (self-service: `currentPassword` + `newPassword`)
-- `GET|POST /auth/users`, `PATCH|DELETE /auth/users/:id` (solo admin). `POST` acepta `formsUses` iniciales; `PATCH` acepta `email`, `role`, `plan`, `status`, `password` (reset), `subscriptionDays`/`subscriptionDaysDelta` y `formsUses`/`formsUsesDelta`.
-- `DELETE /auth/users/:id/api-key` (solo admin): revoca la clave de la extensión de un usuario.
-- `GET /auth/users/backup` y `POST /auth/users/restore` (solo admin): exportar/restaurar el almacén completo de usuarios (con disco efímero en el hosting es el respaldo de cuentas, claves y usos).
-- **Acceso desacoplado**: el login solo exige cuenta activa. `POST /generate` exige suscripción vigente (Tabulación va por días); Forms va por usos y funciona aunque la suscripción esté vencida. El listado de admin incluye `activity` (últimos 20 eventos por usuario: recargas, corridas de Forms, Excel generados, cambios de cuenta).
-- `GET /template-info` (límites del generador y temas de gráficos disponibles)
-- `POST /generate` (autenticado)
-- `GET /results/:id`, `GET /results/:id/xlsx`, `GET /results/:id/csv`, `DELETE /results/:id`
+## Persistencia
 
-### `POST /generate`
+Neon PostgreSQL es obligatorio en producción. `schema_migrations` controla el
+DDL; el proceso productivo no crea ni altera tablas al arrancar. El backend de
+archivo queda limitado a desarrollo y pruebas locales.
 
-Requiere `Authorization: Bearer <token>` (obtenido en `/auth/login`). Puedes enviar el JSON de configuración directo, o dentro de `{ "config": { ... } }`. La respuesta incluye `correlation` (`null` con 1 variable) y `warnings`.
+Tablas principales: `users`, `identities`, `sessions`, `device_credentials`,
+`projects`, `entitlement_balances`, `entitlement_ledger`, `jobs`, `job_batches`,
+`artifacts`, `payments` y `audit_events`. Los saldos se reservan, consumen,
+devuelven y acreditan dentro de transacciones.
 
-Opcional:
+## Endpoints relevantes
 
-- `responseMode: "links"` (default): devuelve links temporales de descarga.
-- `responseMode: "inline"`: devuelve `excelBase64` + `baseCsv` en la misma respuesta, más `chartsPreview` (datos de cada gráfico por hoja, para renderizar la vista previa), `tema` y `correlationControl`.
-- `config.tema`: tema de color de los gráficos del Excel (`clasico`, `powerbi`, `ejecutivo`, `esmeralda`, `atardecer`, `monocromo`; default `clasico`). Los temas disponibles se listan en `GET /template-info`.
-- `config.controlCorrelacion`: `"1"` (default) controla la correlación de los datos simulados; `"0"` la deja como resultado natural.
-- `config.nivelCorrelacion`: nivel objetivo cuando el control está activado — `muy_alta` (±0.90-1.00, default), `alta` (±0.70-0.89), `moderada` (±0.40-0.69), `baja` (±0.20-0.39), `muy_baja` (±0.01-0.19), `nula` (≈0). El signo lo define `relacionversa` (directa/inversa); los niveles se listan en `GET /template-info`.
-- `config.metodoCorrelacion`: `auto` (default: la prueba de normalidad del Excel decide entre Pearson y Spearman), `spearman` o `pearson` (fuerzan el método en las hojas Relaciones/Correlación con narrativa justificada; con `pearson` los datos se generan con distribuciones compatibles con normalidad). La verificación del objetivo usa Spearman en `auto`/`spearman` y Pearson en `pearson`. La respuesta incluye `correlationControl` con: activo, nivel, dirección, método, correlación obtenida, rango esperado y si cumple; el mismo resumen se escribe en la hoja "Información" del Excel. Función pensada para datos simulados (pruebas y demostraciones académicas).
+- `GET /config`, `/health`, `/ready` y `/metrics` (admin).
+- `POST /auth/google`, `/auth/login`, `/auth/logout` y `GET /auth/me`.
+- Emparejamiento `/auth/device-pairings` y revocación `/auth/devices/:id`.
+- CRUD `/proyectos` con control optimista por `version`.
+- `POST /generate`: acepta `seed` e `idempotencyKey`; devuelve la semilla.
+- `/artifacts/:id[/download]`: exige propietario o administrador.
+- `/payments/taypi/checkout` y `/payments/taypi/webhook`.
+- Rutas `/api/forms/*`, montadas desde `../forms`.
 
-Ejemplo:
+El registro por email está desactivado en `/config`. `/auth/register` existe
+solo como adaptador local temporal cuando `REGISTRATION_ENABLED=true`; nunca se
+habilita en producción.
 
-```json
-{
-  "config": {
-    "muestra": "289",
-    "item": "18",
-    "itemv2": "9",
-    "respuesta": "5",
-    "relacionversa": "0",
-    "nommuestra": "Ganadores"
-  },
-  "responseMode": "links"
-}
-```
+## Generador
 
-## Ejemplo frontend (Vercel)
+El Excel se construye por código con fórmulas y gráficos. La base usa un modelo
+latente reproducible: rasgo general, factores por dimensión, parámetros por
+ítem, ruido, inversión y conversión ordinal. Frecuencias, porcentajes, niveles,
+correlación, alfa y efectos se calculan desde las filas resultantes.
 
-```js
-const apiBase = "https://tu-api.com";
+Opciones principales:
 
-const loginRes = await fetch(`${apiBase}/auth/login`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ email, password }),
-});
-const { token } = await loginRes.json();
+- `config.seed` o `config.semilla`: reproducibilidad.
+- `config.controlCorrelacion`: orienta el rango objetivo.
+- `config.nivelCorrelacion`: `muy_alta`, `alta`, `moderada`, `baja`,
+  `muy_baja` o `nula`.
+- `config.metodoCorrelacion`: `auto`, `spearman` o `pearson`.
+- `responseMode`: `links` usa R2 en producción; `inline` conserva el contrato
+  para desarrollo y compatibilidad.
 
-const generateRes = await fetch(`${apiBase}/generate`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-  body: JSON.stringify({ config }),
-});
-const data = await generateRes.json();
+El campo interno histórico `datos_simulados` se conserva únicamente como
+contrato de compatibilidad entre el orquestador y el generador.
 
-console.log("r =", data.correlation, data.warnings);
-window.open(data.links.xlsx, "_blank");
-```
+## Producción
 
+Variables imprescindibles: `DATABASE_URL` pooled con SSL,
+`AUTH_TOKEN_SECRET`, `PUBLIC_BASE_URL`, CORS explícito, `R2_BUCKET` y
+credenciales S3 limitadas al bucket. Taypi solo se habilita cuando existen sus
+tres secretos. `/ready` valida Neon, R2 y capacidad de cola.

@@ -1,11 +1,14 @@
 name: CI
 
-# Los 188 tests del backend no servian de mucho si nadie los ejecutaba: aqui
-# corren en cada push y en cada pull request.
+permissions:
+  contents: read
+
+# La suite completa del backend corre en cada push y en cada pull request.
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # Un push nuevo cancela la corrida anterior de la misma rama.
 concurrency:
@@ -16,16 +19,33 @@ jobs:
   api:
     name: API (node_app)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tesishub
+          POSTGRES_PASSWORD: tesishub_ci
+          POSTGRES_DB: tesishub_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tesishub -d tesishub_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           # La misma version que usa Render (ver render.yaml): que CI pruebe
           # lo que de verdad corre en produccion.
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: node_app/package-lock.json
       - run: npm ci
+        working-directory: node_app
+      - run: npm run deploy:validate-blueprint
         working-directory: node_app
       # node_app/server.js monta el servicio Forms EN EL MISMO PROCESO
       # (require("../forms/server.js")), asi que necesita sus dependencias para
@@ -36,34 +56,51 @@ jobs:
         working-directory: forms
       - run: npm run lint
         working-directory: node_app
-      # Sin DATABASE_URL, el almacen usa el backend de archivo y las pruebas
-      # contra Postgres se saltan solas. No hace falta una base de datos.
+      # La suite general usa el backend local para conservar sus pruebas de
+      # compatibilidad; debajo corre una segunda suite contra PostgreSQL real.
       - run: npm test
         working-directory: node_app
+      # Suite transaccional contra PostgreSQL real. Usa un contenedor aislado
+      # de CI; nunca DATABASE_URL de producción ni una rama Neon productiva.
+      - run: npm run test:db
+        working-directory: node_app
+        env:
+          DATABASE_URL: postgresql://tesishub:tesishub_ci@127.0.0.1:5432/tesishub_ci
+          STORE_TABLE_PREFIX: ci_
+          NODE_ENV: test
 
   forms:
     name: Forms
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: forms/package-lock.json
       - run: npm ci
         working-directory: forms
       - run: npm test
         working-directory: forms
+      - run: npm run build:extension
+        working-directory: forms
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tesishub-forms-extension
+          path: forms/dist/tesishub-forms-extension-*.zip
+          if-no-files-found: error
 
   frontend:
     name: Frontend (tipos + pruebas + build)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
@@ -82,14 +119,12 @@ jobs:
   auditoria:
     name: Vulnerabilidades
     runs-on: ubuntu-latest
-    # Informativo: no debe bloquear un despliegue por una vulnerabilidad
-    # aparecida en una dependencia ajena de un dia para otro.
-    continue-on-error: true
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
       - run: npm audit --omit=dev
         working-directory: node_app
       - run: npm audit --omit=dev

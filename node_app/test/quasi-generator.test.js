@@ -43,6 +43,25 @@ test("detecta y normaliza el diseño cuasiexperimental", () => {
   assert.equal(cfg.variables[0].totalItems, 12);
 });
 
+test("el diseño cuasiexperimental es reproducible y compara cambios entre grupos", () => {
+  const seeded = { ...raw, seed: "cuasi-reproducible", nExperimental: 12, nControl: 12 };
+  const prepared = prepareQuasiExperimentalRawConfig(seeded);
+  const cfg = normalizeQuasiExperimentalConfig(seeded, normalizeConfig(prepared));
+  const first = generateQuasiExperimentalData(cfg);
+  const second = generateQuasiExperimentalData(cfg);
+
+  assert.deepEqual(second.experimental, first.experimental);
+  assert.deepEqual(second.control, first.control);
+  assert.match(first.analysis.primaryEffect.name, /cambio Experimental vs\. cambio Control/);
+  assert.match(first.analysis.primaryEffect.name, /Interacción grupo × tiempo/);
+  assert.equal(first.analysis.ancova.test, "ancova");
+  assert.equal(first.analysis.ancova.adjustedMeans.experimental - first.analysis.ancova.adjustedMeans.control,
+    first.analysis.ancova.estimate);
+  assert.equal(first.analysis.ancova.confidenceInterval.length, 2);
+  assert.match(first.analysis.baseline.name, /Comparación inicial/);
+  assert.doesNotMatch(first.analysis.baseline.hypotheses.nula, /equivalentes al inicio/i);
+});
+
 test("rechaza grupos invalidos y muestras excesivas", () => {
   assert.throws(
     () => prepareQuasiExperimentalRawConfig({ ...raw, nExperimental: 1 }),
@@ -97,6 +116,37 @@ test("genera grupos coherentes: escala respetada, totales y cambio", () => {
   });
 });
 
+test("el cuasiexperimental conserva respuestas inversas y corrige todos los puntajes", async () => {
+  const inverseRaw = {
+    ...raw,
+    seed: "cuasi-inversos",
+    nExperimental: 5,
+    nControl: 5,
+    controlarResultados: false,
+    items_inversos_v1: [2],
+  };
+  const prepared = prepareQuasiExperimentalRawConfig(inverseRaw);
+  const cfg = normalizeQuasiExperimentalConfig(inverseRaw, normalizeConfig(prepared));
+  const data = generateQuasiExperimentalData(cfg);
+  const first = data.experimental[0];
+  const manualPre = first.pre.reduce((sum, value, index) => (
+    sum + (index === 1 ? 6 - value : value)
+  ), 0);
+  assert.equal(first.preTotal, manualPre);
+
+  const csv = buildQuasiExperimentalCsv(data, cfg);
+  const csvRow = csv.split("\n")[1].split(",");
+  const csvPreTotal = Number(csvRow[2 + 12 + 6]);
+  assert.equal(csvPreTotal, manualPre);
+
+  const result = await generateArtifacts(inverseRaw);
+  const workbook = await XlsxPopulate.fromDataAsync(result.excelBuffer);
+  const gePre = workbook.sheet("GE Pretest");
+  assert.match(String(gePre.cell("E3").value()), /\(R\)$/);
+  assert.match(String(gePre.cell("P4").formula()), /\(6-E4\)/);
+  assert.match(String(gePre.cell("V4").formula()), /\(6-E4\)/);
+});
+
 test("efecto grande con mejora: GE sube significativamente", () => {
   const rawGrande = { ...raw, efectoIntervencion: "grande", controlarResultados: true };
   const prepared = prepareQuasiExperimentalRawConfig(rawGrande);
@@ -137,7 +187,7 @@ test("analisis: normalidad de diferencias en pares e hipotesis completas", () =>
     assert.ok(["t_independiente_welch", "mann_whitney"].includes(comparison.test));
   });
   // Cada comparacion informa hipotesis, alpha, decision, efecto e interpretacion.
-  [baseline, ...comparisons].forEach((comparison) => {
+  [data.analysis.primaryEffect, data.analysis.ancova, baseline, ...comparisons].forEach((comparison) => {
     assert.match(comparison.hypotheses.nula, /^H₀/);
     assert.match(comparison.hypotheses.alterna, /^H₁/);
     assert.equal(comparison.alpha, 0.05);
@@ -146,6 +196,7 @@ test("analisis: normalidad de diferencias en pares e hipotesis completas", () =>
     assert.ok(Number.isFinite(comparison.effectSize));
     assert.ok(comparison.interpretation.length > 30);
     assert.ok(comparison.testLabel.length > 5);
+    assert.equal(comparison.confidenceInterval.length, 2);
   });
 });
 
@@ -257,7 +308,7 @@ test("conDatos=0 deja plantilla vacia con formulas listas", async () => {
   assert.equal(gePre.cell("D4").value(), undefined);
   assert.match(String(gePre.cell("V4").formula()), /SUM\(D4:O4\)/);
   const comparaciones = workbook.sheet("Comparaciones");
-  assert.match(String(comparaciones.cell("A3").value()), /sin datos simulados/);
+  assert.match(String(comparaciones.cell("A3").value()), /sin registros/);
 });
 
 test("baremo del ejemplo: 12 items escala 1-5 => 12-27 / 28-43 / 44-60", async () => {

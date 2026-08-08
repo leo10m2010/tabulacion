@@ -129,6 +129,7 @@ function crearJob(baseUrl, apiKey, label) {
       formUrl: FORM_URL,
       payload: { 'entry.1': 'x', fvv: '1', fbzx: 'token' },
       count: 1,
+      ownOrAuthorized: true,
       delayMs: 700,
       jitterMs: 0,
       label,

@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "Genera el Excel de tabulacion completo por codigo (formulas y graficos) con xlsx-populate + jszip",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "type": "module",
   "scripts": {
     "generate": "node index.js",
@@ -10,20 +13,31 @@
     "api": "node server.js",
     "start": "node server.js",
     "test": "node --test",
-    "test:db": "node --env-file=.env --test test/postgres-store.test.js",
+    "test:db": "node --test test/postgres-store.test.js test/postgres-transactions.test.js",
+    "db:migrate": "node lib/store/migrate-cli.js",
+    "db:inventory": "node lib/store/migrate-cli.js --dry-run",
+    "db:wait-schema": "node lib/store/wait-schema-cli.js",
+    "deploy:preflight:api": "node lib/deployment/preflight-cli.js --role=api",
+    "deploy:preflight:worker": "node lib/deployment/preflight-cli.js --role=worker",
+    "deploy:preflight:commercial": "node lib/deployment/preflight-cli.js --role=api --commercial",
+    "deploy:validate-blueprint": "node scripts/validate-render.js",
     "lint": "eslint ."
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1098.0",
+    "@aws-sdk/s3-request-presigner": "^3.1098.0",
     "docx": "^9.7.1",
     "google-auth-library": "^10.9.1",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
     "pg": "^8.22.0",
+    "undici": "^6.28.0",
     "xlsx-populate": "^1.21.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.8.0",
-    "globals": "^17.7.0"
+    "globals": "^17.7.0",
+    "yaml": "^2.8.1"
   }
 }

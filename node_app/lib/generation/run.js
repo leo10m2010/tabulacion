@@ -43,6 +43,14 @@ export class GenerationBusyError extends Error {
 let running = 0;
 const queue = [];
 
+export const getGenerationQueueStatus = () => ({
+  running,
+  queued: queue.length,
+  maxConcurrent: MAX_CONCURRENT,
+  maxQueued: MAX_QUEUED,
+  accepting: running < MAX_CONCURRENT || queue.length < MAX_QUEUED,
+});
+
 const acquire = () => new Promise((resolve, reject) => {
   if (running < MAX_CONCURRENT) {
     running += 1;

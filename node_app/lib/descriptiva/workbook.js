@@ -76,7 +76,7 @@ const addBaseSheet = (sheet, data, plan) => {
   sheet.cell(1, 1).value(`BASE DE DATOS — ${data.metadata.titulo_estudio}`);
   sheet.row(1).height(24);
   sheet.cell(2, 1).style(ST_NOTE).value(
-    `${N} encuestados simulados · instrumento ${data.metadata.tipo_instrumento} · datos con fines academicos, no provienen de una recoleccion real.`,
+    `${N} encuestados · instrumento ${data.metadata.tipo_instrumento}.`,
   );
 
   // Encabezados: fila de codigos (id) y fila con el texto de la pregunta.
@@ -201,7 +201,7 @@ const addResultsSheet = (sheet, data, plan, baseRange) => {
   row += 1;
   sheet.range(row, C0, row, C0 + 6).merged(true).style(ST_NOTE);
   sheet.cell(row, C0).value(
-    `N = ${N} encuestados simulados · frecuencia y porcentaje por ítem calculados sobre la hoja "${BASE_SHEET}".`,
+    `N = ${N} encuestados · frecuencia y porcentaje por ítem calculados sobre la hoja "${BASE_SHEET}".`,
   );
   row += 2;
 

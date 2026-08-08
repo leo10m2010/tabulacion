@@ -9,6 +9,7 @@ import {
   Paragraph,
   TextRun,
 } from "docx";
+import { errorLogFields, structuredLog } from "../observability.js";
 
 const FONT = "Calibri";
 const SIZE_BASE = 22; // 11pt
@@ -30,8 +31,9 @@ export const buildHumanizadorDocx = async ({ texto }) => {
       ? parrafos.map(textParagraph)
       : [textParagraph(String(texto ?? ""))];
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn("[humanizador] fallo el armado del docx, se entrega texto crudo:", err);
+    structuredLog("warn", "document.fallback_used", {
+      tool: "humanizador", format: "docx", ...errorLogFields(err),
+    });
     children = [textParagraph(String(texto ?? ""))];
   }
 
