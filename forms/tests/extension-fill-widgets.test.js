@@ -260,3 +260,54 @@ describe('fillUnansweredFormInputs contra las variantes reales de Google Forms',
     assert.equal(found, null);
   });
 });
+
+// Regression: actual September 2026 DOM, hidden answers live outside questions.
+test('ARIA controls: activates the control and finds asynchronously stored answers outside the question', async () => {
+  const window = buildDom();
+  const form = window.document.querySelector('form');
+  form.innerHTML = '<div role="listitem"><div class="geS5n"><div role="heading">Opinion</div><input name="entry.42_sentinel" type="hidden"><label for="qa-radio"><div id="qa-radio" role="radio" data-value="Neutro" aria-checked="false">Neutro</div></label><label><div role="radio" data-value="De acuerdo">De acuerdo</div></label></div></div><div id="answers"></div>';
+  for (const option of form.querySelectorAll('[role="radio"]')) {
+    option.addEventListener('click', () => window.setTimeout(() => {
+      form.querySelector('#answers').innerHTML = '<input type="hidden" name="entry.42">';
+      form.querySelector('[name="entry.42"]').value = option.dataset.value;
+    }, 20));
+  }
+  try {
+    const result = await window.fillUnansweredFormInputs(form);
+    assert.equal(result.filled, 1);
+    assert.equal(result.missingRequired.length, 0);
+    const again = await window.fillUnansweredFormInputs(form);
+    assert.equal(again.filled, 0);
+    assert.equal(again.missingRequired.length, 0);
+    assert.deepEqual(Array.from(window.collectEntryOptions(form).get('entry.42'), x=>x.value), ['Neutro','De acuerdo']);
+    assert.equal(window.collectQuestionTextByEntry(form).get('entry.42'), 'Opinion');
+    assert.equal(window.resolveLikertScore('Neutro'), 3);
+    assert.equal(window.resolveLikertScore('Strongly agree'), 5);
+    assert.equal(window.resolveLikertScore('5'), 5);
+  } finally { window.close(); }
+});
+
+test('grid rows remain independent and existing hidden inputs may synchronize asynchronously', async () => {
+  const window = buildDom();
+  const form = window.document.querySelector('form');
+  form.innerHTML = '<div role="listitem"><div role="heading">Grid</div>' +
+    [71,72].map(id => '<input type="hidden" name="entry.'+id+'_sentinel"><div role="radiogroup"><div role="radio" data-value="Row '+id+'">Row '+id+'</div></div>').join('') +
+    '</div><div>' + [71,72].map(id=>'<input type="hidden" name="entry.'+id+'">').join('') + '</div>';
+  let clicks = 0;
+  for (const [index, control] of [...form.querySelectorAll('[role="radio"]')].entries()) {
+    control.addEventListener('click', () => {
+      clicks++;
+      window.setTimeout(()=>{form.querySelector('[name="entry.'+(71+index)+'"]').value=control.dataset.value;},20);
+    });
+  }
+  try {
+    const result = await window.fillUnansweredFormInputs(form);
+    assert.equal(result.filled, 2);
+    assert.equal(result.missingRequired.length, 0);
+    assert.equal(clicks, 2);
+    for(const id of [71,72]) {
+      assert.equal(form.querySelector('[name="entry.'+id+'"]').value, 'Row '+id);
+      assert.deepEqual(Array.from(window.collectEntryOptions(form).get('entry.'+id),x=>x.value),['Row '+id]);
+    }
+  } finally {window.close();}
+});

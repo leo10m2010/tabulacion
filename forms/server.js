@@ -40,7 +40,7 @@ const TESISTAB_ALLOWED_HOSTS = (process.env.TESISTAB_ALLOWED_HOSTS || 'docs.goog
   .filter(Boolean);
 // LIMIT: ajusta este valor para cambiar el maximo por corrida (extension + API TESISTAB)
 const TESISTAB_MAX_SUBMISSIONS_PER_JOB = Number(
-  process.env.TESISTAB_MAX_SUBMISSIONS_PER_JOB || 250
+  process.env.TESISTAB_MAX_SUBMISSIONS_PER_JOB || 1000
 );
 const TESISTAB_MIN_DELAY_MS = Number(process.env.TESISTAB_MIN_DELAY_MS || 500);
 const TESISTAB_MAX_DELAY_MS = Number(process.env.TESISTAB_MAX_DELAY_MS || 60_000);
@@ -343,7 +343,11 @@ app.post('/api/tesistab/submit', async (req, res) => {
     const requestedDelayMs = Number(delayMs);
     const requestedJitterMs = Number(jitterMs);
 
-    const safeCount = clamp(requestedCount, 1, TESISTAB_MAX_SUBMISSIONS_PER_JOB);
+    if (!Number.isSafeInteger(requestedCount) || requestedCount < 1 || requestedCount > TESISTAB_MAX_SUBMISSIONS_PER_JOB) {
+      sendApiError(res, 400, 'invalid_count', 'count must be an integer between 1 and ' + TESISTAB_MAX_SUBMISSIONS_PER_JOB, req.requestId);
+      return;
+    }
+    const safeCount = requestedCount;
     const safeDelayMs = Number.isFinite(requestedDelayMs)
       ? clamp(requestedDelayMs, TESISTAB_MIN_DELAY_MS, TESISTAB_MAX_DELAY_MS)
       : TESISTAB_MIN_DELAY_MS;
@@ -797,6 +801,15 @@ function applySmartProfileValue(key, value, smartProfile, smartRuntime, profileT
     return fromRuntime;
   }
 
+  const options = smartProfile.entryMeta?.[entryKey]?.options || [];
+  if (options.length) {
+    const scored = options.map((option) => ({ value: option, score: resolveLikertScore(option) }))
+      .filter((option) => option.score > 0);
+    if (!scored.length) return currentValue;
+    const target = pickLikertScoreByProfile(profileType || smartProfile.type || 'favorable');
+    scored.sort((a, b) => Math.abs(a.score - target) - Math.abs(b.score - target));
+    return scored[0].value;
+  }
   const score = resolveLikertScore(currentValue);
   if (score > 0) {
     const target = pickLikertScoreByProfile(profileType || smartProfile.type || 'favorable');
@@ -1540,12 +1553,12 @@ function resolveLikertScore(value) {
   if (
     text.includes('ni de acuerdo ni en desacuerdo') ||
     text.includes('ni en desacuerdo ni de acuerdo') ||
-    text.includes('neutral')
+    text.includes('neutral') || text === 'neutro'
   ) {
     return 3;
   }
 
-  if (text === 'de acuerdo' || text.includes('agree')) {
+  if (text === 'de acuerdo' || text === 'agree') {
     return 4;
   }
 
@@ -2298,6 +2311,7 @@ if (require.main === module) {
 // `const formsApp = require("../forms/server.js")` y usa formsApp COMO la
 // app de Express directamente (montada en el mismo proceso) — cambiar el
 // export a un objeto rompería esa integracion en produccion. Solo para tests.
+app.buildAttemptPayload = buildAttemptPayload;
 app.inspectGoogleResponse = inspectGoogleResponse;
 app.inferReturnedFormMessage = inferReturnedFormMessage;
 

@@ -34,7 +34,7 @@ const DEFAULT_SETTINGS = {
   hasSeenPanelTutorial: false,
 };
 // LIMITE: ajusta este valor para limitar maximo desde la extension.
-const MAX_UI_SUBMISSIONS = 250;
+const MAX_UI_SUBMISSIONS = 1000;
 
 let settings = { ...DEFAULT_SETTINGS };
 let csvRows = [];
@@ -1910,6 +1910,13 @@ function collectEntryOptions(form) {
     });
   });
 
+  for (const group of collectEntryGroups(form).values()) {
+    for (const option of group.options || []) {
+      const control = option.matches('[data-value]') ? option : option.querySelector('[data-value]');
+      const value = control?.getAttribute('data-value');
+      if (value && value !== '__other_option__') put(group.name, value);
+    }
+  }
   return map;
 }
 
@@ -1917,7 +1924,7 @@ function collectQuestionTextByEntry(form) {
   const map = new Map();
 
   form.querySelectorAll('[name^="entry."]').forEach((element) => {
-    const name = element.getAttribute('name');
+    const name = (element.getAttribute('name') || '').replace(/_sentinel$/, '');
     if (!/^entry\.\d+$/.test(name || '') || map.has(name)) {
       return;
     }
@@ -1932,6 +1939,7 @@ function collectQuestionTextByEntry(form) {
 }
 
 function extractQuestionText(element) {
+  if (!(element instanceof HTMLElement)) return '';
   const container = element.closest('[role="listitem"], .Qr7Oae, .geS5n');
   if (!container) {
     return '';
@@ -1997,6 +2005,7 @@ function pickLikertValue(options, targetScore, fallbackValue) {
 }
 
 function resolveLikertScore(value) {
+  if (/^[1-5]$/.test(String(value).trim())) return Number(value);
   const text = normalizeText(value);
   if (!text) {
     return 0;
@@ -2016,13 +2025,13 @@ function resolveLikertScore(value) {
 
   if (
     text.includes('ni de acuerdo ni en desacuerdo') ||
-    text.includes('neutral') ||
+    text.includes('neutral') || text === 'neutro' ||
     text.includes('ni en desacuerdo ni de acuerdo')
   ) {
     return 3;
   }
 
-  if (text === 'de acuerdo' || text.includes('agree')) {
+  if (text === 'de acuerdo' || text === 'agree') {
     return 4;
   }
 
@@ -2389,13 +2398,13 @@ async function fillUnansweredFormInputs(form) {
       continue;
     }
 
-    if (group.asyncCreate) {
+    if (group.options?.length) {
       const candidates = (group.options || []).filter((label) => isElementInteractable(label));
       if (!candidates.length) {
         reportMissing(group);
         continue;
       }
-      candidates[Math.floor(Math.random() * candidates.length)].click();
+      clickWidgetOption(candidates[Math.floor(Math.random() * candidates.length)]);
       pendingAsync.push(group);
       continue;
     }
@@ -2434,7 +2443,7 @@ function waitForAsyncWidgetGroups(groups) {
 
     const check = () => {
       const stillPending = groups.filter((group) => {
-        const scope = group.container || document;
+        const scope = group.container?.closest('form') || document;
         const hiddenInput = scope.querySelector(`[name="${group.name}"]`);
         return !(hiddenInput && elementHasAnswer(hiddenInput));
       });
@@ -2469,7 +2478,8 @@ function collectEntryGroups(form) {
         name,
         elements: [],
         options: null,
-        container: element.closest('[role="listitem"], .Qr7Oae, .geS5n'),
+        container: element.closest('[role="listitem"], .Qr7Oae, .geS5n')
+          || form.querySelector('[name="' + name + '_sentinel"]')?.closest('[role="listitem"], .Qr7Oae, .geS5n'),
       });
     }
 
@@ -2493,7 +2503,7 @@ function collectEntryGroups(form) {
       return;
     }
 
-    const labels = Array.from(group.container.querySelectorAll('label'));
+    const labels = getWidgetOptions(group.container, group.name);
     if (labels.length) {
       group.options = labels;
     }
@@ -2508,26 +2518,19 @@ function collectEntryGroups(form) {
   // pregunta esta ahi y sigue sin responder. Se agrupa por CONTENEDOR (no
   // por name, que todavia no existe), usando el sentinel solo para saber
   // cual seria el nombre real una vez que exista.
-  const containersYaCubiertos = new Set(
-    Array.from(groups.values()).map((g) => g.container).filter(Boolean)
-  );
   form.querySelectorAll('[name$="_sentinel"]').forEach((sentinel) => {
     const container = sentinel.closest('[role="listitem"], .Qr7Oae, .geS5n');
-    if (!container || containersYaCubiertos.has(container)) {
+    if (!container) {
       return;
     }
-    containersYaCubiertos.add(container);
 
     const sentinelName = String(sentinel.getAttribute('name') || '').trim();
     const realName = sentinelName.replace(/_sentinel$/, '');
-    if (!/^entry\.\d+$/.test(realName) || realName === sentinelName) {
+    if (!/^entry\.\d+$/.test(realName) || realName === sentinelName || groups.has(realName)) {
       return;
     }
 
-    const labels = Array.from(container.querySelectorAll('label'));
-    if (!labels.length) {
-      return;
-    }
+    const labels = getWidgetOptions(container, realName);
 
     groups.set(realName, {
       name: realName,
@@ -2548,6 +2551,26 @@ function collectEntryGroups(form) {
   });
 
   return groups;
+}
+
+function getWidgetOptions(container, entryName) {
+  // Each grid row has its own entry; never combine options from other rows.
+  const sentinels = Array.from(container.querySelectorAll('[name$="_sentinel"]'))
+    .filter((el) => /^entry\.\d+_sentinel$/.test(el.name));
+  if (sentinels.length > 1) {
+    const index = sentinels.findIndex((el) => el.name === entryName + '_sentinel');
+    const rows = Array.from(container.querySelectorAll('[role="radiogroup"], [role="row"]'))
+      .filter((row) => row.querySelector('[role="radio"], [role="checkbox"]'));
+    if (index < 0 || rows.length !== sentinels.length) return [];
+    container = rows[index];
+  }
+  const controls = Array.from(container.querySelectorAll('[role="radio"][data-value], [role="checkbox"][data-value], [role="option"][data-value]'));
+  return controls.length ? controls.filter((el) => el.getAttribute('data-value') !== '__other_option__' && el.getAttribute('aria-disabled') !== 'true') : Array.from(container.querySelectorAll('label'));
+}
+
+function clickWidgetOption(option) {
+  // Labels pointing to non-native DIV controls do not forward activation.
+  (option.querySelector('[role="radio"], [role="checkbox"]') || option).click();
 }
 
 function groupHasAnswer(group) {
@@ -2672,13 +2695,13 @@ function fillCustomWidgetGroup(group) {
   }
 
   for (const label of shuffled(candidates)) {
-    label.click();
+    clickWidgetOption(label);
     // Se busca el input oculto DE NUEVO despues de cada click, en vez de
     // guardar una referencia de antes: en algunas preguntas el input
     // entry.X ni siquiera existe en el DOM hasta que Google detecta el
     // primer click real (antes de eso solo esta su "_sentinel"), asi que
     // no hay nada que guardar de antemano.
-    const scope = group.container || document;
+    const scope = group.container?.closest('form') || document;
     const hiddenInput = scope.querySelector(`[name="${group.name}"]`);
     if (hiddenInput && elementHasAnswer(hiddenInput)) {
       return true;

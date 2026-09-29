@@ -44,6 +44,15 @@ describe('TESISTAB API regression (no API key)', () => {
     assert.ok(response.body.requestId);
   });
 
+  test('rejects an oversized count instead of silently truncating it', async () => {
+    const response = await fetchJson(server.baseUrl + '/api/tesistab/submit', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({formUrl:'https://docs.google.com/forms/d/e/test-form/formResponse',payload:{'entry.1':'qa'},count:400})
+    });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, 'invalid_count');
+  });
+
   test('POST /api/tesistab/submit creates job and job is queryable', async () => {
     const createResponse = await fetchJson(`${server.baseUrl}/api/tesistab/submit`, {
       method: 'POST',

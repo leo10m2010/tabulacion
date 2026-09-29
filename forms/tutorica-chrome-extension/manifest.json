@@ -1,7 +1,7 @@
 {
   "name": "TesisHub Forms",
   "description": "Herramienta de pruebas y QA: genera respuestas de prueba en tus propios Google Forms para validar lógica, baremos y tabulación.",
-  "version": "1.4.0",
+  "version": "1.6.2",
   "manifest_version": 3,
   "icons": {
     "16": "icons/icon16.png",
@@ -32,8 +32,12 @@
       "matches": [
         "https://docs.google.com/forms/*"
       ],
-      "js": ["content/content.js"],
-      "css": ["content/content.css"]
+      "js": [
+        "content/content.js"
+      ],
+      "css": [
+        "content/content.css"
+      ]
     }
   ]
 }
