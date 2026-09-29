@@ -55,3 +55,9 @@ El máximo de envíos por corrida se define en `content/content.js`
 ## Licencia
 
 MIT
+
+## 1.6.2
+
+Corrige lectura ARIA, respuestas ocultas fuera de preguntas, sincronizaci?n y etiquetas de perfiles (incluido Neutro). El l?mite predeterminado es 1000 respuestas por trabajo; el servidor puede configurar otro. Los lotes de 200?400 est?n dentro del l?mite predeterminado.
+
+Recarga la extensi?n descomprimida y las pesta?as de Forms despu?s de actualizarla. El cambio del servidor llega por GitHub y Render; el navegador necesita su propia actualizaci?n. Los formularios con archivos, acceso restringido o validaciones particulares pueden requerir intervenci?n; no se garantiza compatibilidad universal.

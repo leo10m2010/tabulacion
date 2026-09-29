@@ -35,7 +35,7 @@ const DEFAULT_SETTINGS = {
   compatApiMode: false,
 };
 
-const POPUP_MAX_SUBMISSIONS = 250;
+const POPUP_MAX_SUBMISSIONS = 1000;
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
 // Declarado antes de las llamadas de arranque: decoratePopupIcons() corre al
